@@ -29,6 +29,7 @@ To use an existing local Whisper Base server with OpenVINO, set
 server. Voice settings then show Whisper Base (OpenVINO GPU) without a model download.
 The URL is local to the selected environment server. A phone browser sends its
 recording through T3 Code, so the Whisper server can stay bound to loopback.
+Open T3 Code over HTTPS on the phone so the browser can use its microphone.
 Keep both servers running while dictating. This server supports English, Russian,
 and automatic language detection.
 
