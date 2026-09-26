@@ -24,6 +24,14 @@ select a transcription model. Models vary in download size, supported languages,
 speed, and accuracy. If the selected environment is remote, the audio is sent to
 that machine for transcription.
 
+To use an existing local Whisper Base server with OpenVINO, set
+`T3_SPEECH_OPENVINO_URL=http://127.0.0.1:8001/` before starting the T3 environment
+server. Voice settings then show Whisper Base (OpenVINO GPU) without a model download.
+The URL is local to the selected environment server. A phone browser sends its
+recording through T3 Code, so the Whisper server can stay bound to loopback.
+Keep both servers running while dictating. This server supports English, Russian,
+and automatic language detection.
+
 Models marked Streaming show a live preview while you speak. The tentative ending
 may change as the model hears more. Stop recording to finish and insert the text;
 cancel to discard the preview without changing your draft. Other models transcribe

@@ -11,6 +11,7 @@ import {
   updateEnvironmentSpeechModelUnloadTimeout,
   updateEnvironmentSpeechLanguage,
 } from "@t3tools/client-runtime/voice-input";
+import { OPENVINO_SPEECH_MODEL_ID } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   EnvironmentSpeechModel,
@@ -159,9 +160,17 @@ function ModelCard(props: {
                 ? languageLabel(model.languages[0]!)
                 : `${model.languages.length} languages`}
             </span>
-            <span>{formatSize(model.size)}</span>
-            <span>Accuracy {model.accuracy}</span>
-            <span>Speed {model.speed}</span>
+            {model.id === OPENVINO_SPEECH_MODEL_ID ? (
+              <span>Managed by the local OpenVINO server</span>
+            ) : (
+              <span>{formatSize(model.size)}</span>
+            )}
+            {model.id === OPENVINO_SPEECH_MODEL_ID ? null : (
+              <>
+                <span>Accuracy {model.accuracy}</span>
+                <span>Speed {model.speed}</span>
+              </>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -184,7 +193,7 @@ function ModelCard(props: {
               Use model
             </Button>
           ) : null}
-          {model.state === "installed" ? (
+          {model.state === "installed" && model.id !== OPENVINO_SPEECH_MODEL_ID ? (
             <Button
               size="icon-sm"
               variant="ghost"
@@ -1058,114 +1067,120 @@ export function VoiceSettingsPanel() {
         />
       </SettingsSection>
       <VoicePostProcessingSettings />
-      <SettingsSection title="Advanced">
-        <SettingsRow
-          {...searchableSetting("speech-model-unload")}
-          description="Unload the model after it has been idle on the selected environment. Never keeps it loaded until that environment stops."
-          control={
-            <Select
-              value={modelUnloadTimeout}
-              disabled={!currentStatus?.supported || operation !== null}
-              onValueChange={(value) => {
-                if (!prepared || !value) return;
-                setOperation("model-unload");
-                void runtime
-                  .runPromise(
-                    updateEnvironmentSpeechModelUnloadTimeout(
-                      prepared,
-                      value as SpeechModelUnloadTimeout,
-                    ),
-                  )
-                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
-                  .catch((error) => {
-                    toastManager.add({
-                      type: "error",
-                      title: "Could not update model unload setting",
-                      description: error instanceof Error ? error.message : String(error),
-                    });
-                  })
-                  .finally(() => setOperation(null));
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Model unload" className="max-w-80">
-                <SelectValue>
-                  {
+      {currentStatus?.supported && currentStatus.modelId === OPENVINO_SPEECH_MODEL_ID ? null : (
+        <SettingsSection title="Advanced">
+          <SettingsRow
+            {...searchableSetting("speech-model-unload")}
+            description="Unload the model after it has been idle on the selected environment. Never keeps it loaded until that environment stops."
+            control={
+              <Select
+                value={modelUnloadTimeout}
+                disabled={!currentStatus?.supported || operation !== null}
+                onValueChange={(value) => {
+                  if (!prepared || !value) return;
+                  setOperation("model-unload");
+                  void runtime
+                    .runPromise(
+                      updateEnvironmentSpeechModelUnloadTimeout(
+                        prepared,
+                        value as SpeechModelUnloadTimeout,
+                      ),
+                    )
+                    .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
+                    .catch((error) => {
+                      toastManager.add({
+                        type: "error",
+                        title: "Could not update model unload setting",
+                        description: error instanceof Error ? error.message : String(error),
+                      });
+                    })
+                    .finally(() => setOperation(null));
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="Model unload" className="max-w-80">
+                  <SelectValue>
                     {
-                      never: "Never",
-                      immediately: "Immediately",
-                      min_2: "2 minutes",
-                      min_5: "5 minutes",
-                      min_10: "10 minutes",
-                      min_15: "15 minutes",
-                      hour_1: "1 hour",
-                    }[modelUnloadTimeout]
-                  }
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="never">Never</SelectItem>
-                <SelectItem value="immediately">Immediately</SelectItem>
-                <SelectItem value="min_2">2 minutes</SelectItem>
-                <SelectItem value="min_5">5 minutes</SelectItem>
-                <SelectItem value="min_10">10 minutes</SelectItem>
-                <SelectItem value="min_15">15 minutes</SelectItem>
-                <SelectItem value="hour_1">1 hour</SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("speech-acceleration")}
-          description="Choose where transcription runs on the selected environment. Auto uses a GPU when available."
-          control={
-            <Select
-              value={acceleration}
-              disabled={!currentStatus?.supported || operation !== null}
-              onValueChange={(value) => {
-                if (!prepared || !value) return;
-                setOperation("acceleration");
-                void runtime
-                  .runPromise(
-                    updateEnvironmentSpeechAcceleration(prepared, value as SpeechAcceleration),
-                  )
-                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
-                  .catch((error) => {
-                    toastManager.add({
-                      type: "error",
-                      title: "Could not update acceleration",
-                      description: error instanceof Error ? error.message : String(error),
-                    });
-                  })
-                  .finally(() => setOperation(null));
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Transcription acceleration" className="max-w-80">
-                <SelectValue>
-                  {acceleration === "auto"
-                    ? "Auto"
-                    : acceleration === "cpu"
-                      ? "CPU"
-                      : (gpuDevices.find((device) => `gpu:${device.id}` === acceleration)?.name ??
-                        "Selected GPU (Unavailable)")}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="auto">Auto</SelectItem>
-                {acceleration.startsWith("gpu:") &&
-                !gpuDevices.some((device) => `gpu:${device.id}` === acceleration) ? (
-                  <SelectItem value={acceleration}>Selected GPU (Unavailable)</SelectItem>
-                ) : null}
-                {gpuDevices.map((device) => (
-                  <SelectItem key={device.id} value={`gpu:${device.id}`}>
-                    {device.name}
-                  </SelectItem>
-                ))}
-                <SelectItem value="cpu">CPU</SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-      </SettingsSection>
+                      {
+                        never: "Never",
+                        immediately: "Immediately",
+                        min_2: "2 minutes",
+                        min_5: "5 minutes",
+                        min_10: "10 minutes",
+                        min_15: "15 minutes",
+                        hour_1: "1 hour",
+                      }[modelUnloadTimeout]
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="never">Never</SelectItem>
+                  <SelectItem value="immediately">Immediately</SelectItem>
+                  <SelectItem value="min_2">2 minutes</SelectItem>
+                  <SelectItem value="min_5">5 minutes</SelectItem>
+                  <SelectItem value="min_10">10 minutes</SelectItem>
+                  <SelectItem value="min_15">15 minutes</SelectItem>
+                  <SelectItem value="hour_1">1 hour</SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("speech-acceleration")}
+            description="Choose where transcription runs on the selected environment. Auto uses a GPU when available."
+            control={
+              <Select
+                value={acceleration}
+                disabled={!currentStatus?.supported || operation !== null}
+                onValueChange={(value) => {
+                  if (!prepared || !value) return;
+                  setOperation("acceleration");
+                  void runtime
+                    .runPromise(
+                      updateEnvironmentSpeechAcceleration(prepared, value as SpeechAcceleration),
+                    )
+                    .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
+                    .catch((error) => {
+                      toastManager.add({
+                        type: "error",
+                        title: "Could not update acceleration",
+                        description: error instanceof Error ? error.message : String(error),
+                      });
+                    })
+                    .finally(() => setOperation(null));
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  aria-label="Transcription acceleration"
+                  className="max-w-80"
+                >
+                  <SelectValue>
+                    {acceleration === "auto"
+                      ? "Auto"
+                      : acceleration === "cpu"
+                        ? "CPU"
+                        : (gpuDevices.find((device) => `gpu:${device.id}` === acceleration)?.name ??
+                          "Selected GPU (Unavailable)")}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="auto">Auto</SelectItem>
+                  {acceleration.startsWith("gpu:") &&
+                  !gpuDevices.some((device) => `gpu:${device.id}` === acceleration) ? (
+                    <SelectItem value={acceleration}>Selected GPU (Unavailable)</SelectItem>
+                  ) : null}
+                  {gpuDevices.map((device) => (
+                    <SelectItem key={device.id} value={`gpu:${device.id}`}>
+                      {device.name}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="cpu">CPU</SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+        </SettingsSection>
+      )}
     </SettingsPageContainer>
   );
 }

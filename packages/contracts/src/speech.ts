@@ -1,6 +1,8 @@
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 
+export const OPENVINO_SPEECH_MODEL_ID = "local/openvino-whisper-base";
+
 export const SpeechModelId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(160));
 export type SpeechModelId = typeof SpeechModelId.Type;
 

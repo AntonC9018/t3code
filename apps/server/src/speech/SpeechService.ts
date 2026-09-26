@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off - these timers guard native speech promises outside Effect.
 import type {
   EnvironmentSpeechModel,
   EnvironmentSpeechStatus,
@@ -14,7 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
-import { SPEECH_STREAM_MAX_CHUNK_BYTES } from "@t3tools/contracts";
+import { OPENVINO_SPEECH_MODEL_ID, SPEECH_STREAM_MAX_CHUNK_BYTES } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -36,6 +37,7 @@ import {
   transcriptionCustomWords,
 } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
+import { isOpenVinoSpeechReady, loadOpenVinoSpeechModel, openVinoSpeechUrl } from "./openvino.ts";
 
 const SAMPLE_RATE = 16_000;
 const MAX_SPEECH_DURATION_SECONDS = 5 * 60;
@@ -205,6 +207,17 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const unsupportedReason = supported(platform, architecture);
   const modelDirectory = path.join(config.stateDir, "speech", "models");
+  const openVinoUrl = openVinoSpeechUrl(process.env.T3_SPEECH_OPENVINO_URL);
+  const openVinoModel = {
+    ...getSpeechModel("handy-computer/whisper-base-gguf")!,
+    id: OPENVINO_SPEECH_MODEL_ID,
+    name: "Whisper Base (OpenVINO GPU)",
+    description: "Transcribes on the existing local Whisper server in WSL.",
+    size: 0,
+    languages: ["en", "ru"],
+    recommended: true,
+    supportsStreaming: false,
+  };
   let model: LoadedModel | undefined;
   let loadedModelId: string | undefined;
   let loadedAcceleration: string | undefined;
@@ -292,10 +305,18 @@ export const make = Effect.gen(function* () {
   >;
 
   const selectedModel = (settings: SettingsSnapshot) => {
+    if (openVinoUrl) return openVinoModel;
     return getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
   };
 
   const download = async (modelId: string, signal = lifetime.signal) => {
+    if (openVinoUrl) {
+      if (modelId !== OPENVINO_SPEECH_MODEL_ID) throw new SpeechModelNotFoundError({ modelId });
+      signal.throwIfAborted();
+      if (!(await isOpenVinoSpeechReady(openVinoUrl)))
+        throw new Error(`OpenVINO speech server is unavailable at ${openVinoUrl.origin}.`);
+      return "";
+    }
     const definition = getSpeechModel(modelId);
     if (!definition) throw new SpeechModelNotFoundError({ modelId });
     if (downloading && downloading.modelId !== modelId)
@@ -348,7 +369,9 @@ export const make = Effect.gen(function* () {
       loading ??
       download(definition.id, signal)
         .then(async (modelPath) => {
-          const loaded = await loadNativeSpeechModel(modelPath, signal, undefined, acceleration);
+          const loaded = openVinoUrl
+            ? await loadOpenVinoSpeechModel(openVinoUrl, signal)
+            : await loadNativeSpeechModel(modelPath, signal, undefined, acceleration);
           if (closing) {
             await loaded.dispose();
             throw new SpeechBusyError({ operation: "model preparation" });
@@ -390,7 +413,7 @@ export const make = Effect.gen(function* () {
   // waiting for dangling native work to settle.
   const exclusiveEffect = <A, E>(operation: string, effect: Effect.Effect<A, E>) =>
     Effect.uninterruptibleMask((restore) =>
-      Effect.suspend(() => {
+      Effect.suspend((): Effect.Effect<A, E | SpeechBusyError> => {
         if (closing || activeOperation) return Effect.fail(new SpeechBusyError({ operation }));
         const gate = Promise.withResolvers<void>();
         activeOperation = gate.promise;
@@ -549,12 +572,18 @@ export const make = Effect.gen(function* () {
   const currentStatus = async (settings: SettingsSnapshot): Promise<EnvironmentSpeechStatus> => {
     if (unsupportedReason) return { supported: false, reason: unsupportedReason };
     const definition = selectedModel(settings);
+    const openVinoReady = openVinoUrl ? await isOpenVinoSpeechReady(openVinoUrl) : false;
+    if (openVinoUrl && !openVinoReady)
+      return {
+        supported: false,
+        reason: `Start the OpenVINO speech server at ${openVinoUrl.origin} on this environment.`,
+      };
     return {
       supported: true,
       state:
         activeTranscriptions > 0
           ? "transcribing"
-          : (await isSpeechModelReady(modelDirectory, definition))
+          : openVinoReady || (await isSpeechModelReady(modelDirectory, definition))
             ? "ready"
             : "missing-model",
       modelId: definition.id,
@@ -563,9 +592,11 @@ export const make = Effect.gen(function* () {
       supportsStreaming: definition.supportsStreaming,
       language: settings.speechLanguage,
       effectiveLanguage: effectiveSpeechLanguage(definition, settings.speechLanguage),
-      acceleration: settings.speechAcceleration,
+      acceleration: openVinoUrl ? "auto" : settings.speechAcceleration,
       modelUnloadTimeout: settings.speechModelUnloadTimeout,
-      gpuDevices: await (gpuDevices ??= listNativeSpeechGpuDevices().catch(() => [])),
+      gpuDevices: openVinoUrl
+        ? []
+        : await (gpuDevices ??= listNativeSpeechGpuDevices().catch(() => [])),
       customWords: normalizeSpeechCustomWords(settings.speechCustomWords),
       removeFillerWords: settings.speechRemoveFillerWords,
     };
@@ -573,6 +604,26 @@ export const make = Effect.gen(function* () {
 
   const listModels = async (settings: SettingsSnapshot) => {
     const selected = selectedModel(settings);
+    if (openVinoUrl) {
+      return {
+        models: [
+          {
+            id: openVinoModel.id,
+            name: openVinoModel.name,
+            description: openVinoModel.description,
+            size: openVinoModel.size,
+            languages: openVinoModel.languages,
+            accuracy: openVinoModel.accuracy,
+            speed: openVinoModel.speed,
+            recommended: openVinoModel.recommended,
+            supportsStreaming: false,
+            supportsLanguageDetection: true,
+            active: true,
+            state: "installed" as const,
+          },
+        ],
+      };
+    }
     return {
       models: await Promise.all(
         SPEECH_MODELS.map(async (definition) => {
@@ -668,8 +719,7 @@ export const make = Effect.gen(function* () {
       const replaceAliases = makeSpeechAliasReplacer(dictionary);
       const correct = (text: string) => replaceAliases(applySpeechCustomWords(text, customWords));
       const removeFillerWords = settings.speechRemoveFillerWords;
-      const definition =
-        getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
+      const definition = selectedModel(settings);
       const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
       const fillerWordLanguage = language === "auto" ? undefined : language;
       const preparation = yield* attemptSpeech(operation, async () => {
@@ -789,6 +839,10 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.andThen(freshStatus("model download"))),
     selectModel: (modelId) =>
       exclusive("model selection", async () => {
+        if (openVinoUrl) {
+          if (modelId !== OPENVINO_SPEECH_MODEL_ID) throw new SpeechModelNotFoundError({ modelId });
+          return;
+        }
         if (!getSpeechModel(modelId)) throw new SpeechModelNotFoundError({ modelId });
         await model?.dispose();
         model = undefined;
@@ -796,7 +850,9 @@ export const make = Effect.gen(function* () {
         loadedAcceleration = undefined;
         loading = undefined;
       }).pipe(
-        Effect.andThen(writeSettings("model selection", { speechModelId: modelId })),
+        Effect.andThen(
+          openVinoUrl ? Effect.void : writeSettings("model selection", { speechModelId: modelId }),
+        ),
         Effect.andThen(freshStatus("model selection")),
       ),
     cancelDownload: (modelId) =>
@@ -891,6 +947,7 @@ export const make = Effect.gen(function* () {
                         loading = undefined;
                       }
                       if (
+                        openVinoUrl ||
                         settings.speechAcceleration !== "auto" ||
                         inferenceModel.backend.toLowerCase() === "cpu"
                       ) {
@@ -978,6 +1035,7 @@ export const make = Effect.gen(function* () {
       readSettings("model removal").pipe(
         Effect.flatMap((settings) =>
           exclusive("model removal", async () => {
+            if (openVinoUrl) throw new SpeechModelNotFoundError({ modelId });
             const definition = getSpeechModel(modelId);
             if (!definition) throw new SpeechModelNotFoundError({ modelId });
             const selected = selectedModel(settings);

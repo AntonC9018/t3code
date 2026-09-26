@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - native inference needs a killable process, not an interruptible JS promise.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - native inference needs a killable process and timeout guard.
 import * as NodeChildProcess from "node:child_process";
 import type { SpeechStreamText } from "@t3tools/contracts";
 
