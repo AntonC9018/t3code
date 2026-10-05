@@ -10641,6 +10641,7 @@ export default function ChatView(props: ChatViewProps) {
           environmentId={activeThread.environmentId}
           cwd={activeWorkspaceRoot ?? ""}
           projectName={activeProject?.title ?? ""}
+          projectId={activeProject?.id}
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
           keybindings={keybindings}
@@ -11129,6 +11130,8 @@ export default function ChatView(props: ChatViewProps) {
                           ) : null}
                           {!composerMounted ? null : (
                             <ChatComposer
+                              projectName={activeProject?.title}
+                              projectId={activeProject?.id}
                               reportedModelSelection={reportedModelSelection}
                               multipleModelSelections={multipleModelSelections}
                               supportsMultipleModels={

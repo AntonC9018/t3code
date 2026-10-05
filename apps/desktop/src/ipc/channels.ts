@@ -121,3 +121,6 @@ export const RECEIVE_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:receive-provider-
 export const CANCEL_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:cancel-provider-auth-callback";
 export const TAKE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:take-legacy-local-storage";
 export const COMPLETE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:complete-legacy-local-storage";
+
+export const PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL = "desktop:preview-annotation-voice-event";
+export const PREVIEW_ANNOTATION_VOICE_STATE_CHANNEL = "desktop:preview-annotation-voice-state";

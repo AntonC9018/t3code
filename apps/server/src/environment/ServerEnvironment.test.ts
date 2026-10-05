@@ -17,6 +17,7 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
+import * as HostProcess from "@t3tools/shared/hostProcess";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
@@ -126,6 +127,34 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       }
     }),
   );
+  it.effect.each([
+    { platform: "darwin", architecture: "arm64", supported: true },
+    { platform: "darwin", architecture: "x64", supported: true },
+    { platform: "win32", architecture: "x64", supported: true },
+    { platform: "linux", architecture: "x64", supported: true },
+    { platform: "linux", architecture: "arm64", supported: true },
+    { platform: "win32", architecture: "arm64", supported: false },
+    { platform: "linux", architecture: "arm", supported: false },
+    { platform: "freebsd", architecture: "x64", supported: false },
+  ] as const)("advertises voice transcription on $platform-$architecture: $supported", (host) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-speech-test-",
+      });
+      const descriptor = yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        return yield* serverEnvironment.getDescriptor;
+      }).pipe(
+        Effect.provide(makeServerEnvironmentLayer(baseDir)),
+        Effect.provideService(HostProcess.HostProcessPlatform, host.platform),
+        Effect.provideService(HostProcess.HostProcessArchitecture, host.architecture),
+      );
+
+      expect(descriptor.capabilities.voiceTranscription).toBe(host.supported);
+    }),
+  );
+
   it.effect.each([
     { name: "missing", content: undefined },
     { name: "empty", content: "" },
