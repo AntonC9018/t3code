@@ -89,6 +89,7 @@ export function createDesktopSecondaryBootstrapsReader(
             entry.runningDistro !== previous.runningDistro ||
             entry.httpBaseUrl !== previous.httpBaseUrl ||
             entry.wsBaseUrl !== previous.wsBaseUrl ||
+            entry.remoteHttpBaseUrl !== previous.remoteHttpBaseUrl ||
             entry.bootstrapToken !== previous.bootstrapToken
           );
         })

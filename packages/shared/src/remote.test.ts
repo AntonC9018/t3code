@@ -6,9 +6,46 @@ import {
   RemotePairingTokenMissingError,
   RemotePairingUrlInvalidError,
   resolveRemotePairingTarget,
+  getCompanionPairingUrls,
+  setCompanionPairingUrls,
+  stripCompanionPairingUrls,
 } from "./remote.ts";
 
 describe("remote", () => {
+  it("keeps companion pairing grants in the fragment and preserves the primary grant", () => {
+    const primary = new URL("https://desktop.tail.ts.net/pair#token=windows-code");
+    const companion = "https://desktop.tail.ts.net:8443/#token=wsl-code";
+    const bundled = setCompanionPairingUrls(primary, [companion]);
+    expect(getCompanionPairingUrls(bundled)).toEqual([companion]);
+    expect(resolveRemotePairingTarget({ pairingUrl: bundled.href }).credential).toBe(
+      "windows-code",
+    );
+    expect(bundled.search).toBe("");
+    expect(stripCompanionPairingUrls(bundled).href).toBe(primary.href);
+  });
+
+  it("rejects unrelated hosts, insecure routes, repeated routes, and nested pairing bundles", () => {
+    const primary = new URL("https://desktop.tail.ts.net/pair#token=windows-code");
+    for (const companion of [
+      "https://other.tail.ts.net:8443/#token=wsl-code",
+      "http://desktop.tail.ts.net:8443/#token=wsl-code",
+      "https://desktop.tail.ts.net/#token=wsl-code",
+      "https://desktop.tail.ts.net:8443/#token=wsl-code&companions=[]",
+      "https://desktop.tail.ts.net:8443/path#token=wsl-code",
+    ])
+      expect(() => setCompanionPairingUrls(primary, [companion])).toThrow();
+    expect(() =>
+      setCompanionPairingUrls(
+        primary,
+        Array(5).fill("https://desktop.tail.ts.net:8443/#token=wsl-code"),
+      ),
+    ).toThrow();
+    expect(() =>
+      setCompanionPairingUrls(new URL("https://public.example/pair#token=code"), [
+        "https://public.example:8443/#token=wsl-code",
+      ]),
+    ).toThrow();
+  });
   it("derives backend urls and token from a pairing url", () => {
     expect(
       resolveRemotePairingTarget({

@@ -7,6 +7,8 @@ import type {
 } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
+import * as Config from "effect/Config";
+import * as Redacted from "effect/Redacted";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
@@ -37,6 +39,7 @@ import {
 } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 import { isSpeechPlatformSupported } from "./platform.ts";
+import { FetchHttpClient } from "effect/unstable/http";
 
 const SAMPLE_RATE = 16_000;
 const MAX_SPEECH_DURATION_SECONDS = 5 * 60;
@@ -182,6 +185,14 @@ export class SpeechService extends Context.Service<
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
+  const handyUrl = yield* Config.String("T3_SPEECH_HANDY_URL").pipe(Config.withDefault(""));
+  if (handyUrl) {
+    const token = yield* Config.Redacted("T3_SPEECH_HANDY_TOKEN");
+    const HandySpeechService = yield* Effect.promise(() => import("./HandySpeechService.ts"));
+    return yield* HandySpeechService.make(handyUrl, Redacted.value(token)).pipe(
+      Effect.provide(FetchHttpClient.layer),
+    );
+  }
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
   const config = yield* ServerConfig.ServerConfig;

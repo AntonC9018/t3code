@@ -18,6 +18,9 @@ import {
   parseTailscaleMagicDnsName,
   parseTailscaleStatus,
   readTailscaleStatus,
+  readTailscaleServeConfig,
+  findCompanionServePort,
+  ownsCompanionServeRoute,
   TAILSCALE_STATUS_TIMEOUT,
   TailscaleCommandExitError,
   TailscaleCommandSpawnError,
@@ -126,6 +129,44 @@ function mockSpawnerLayer(
 }
 
 describe("tailscale", () => {
+  it.effect("reads existing Serve configuration before reserving a companion listener", () => {
+    const layer = mockSpawnerLayer((command, args) => {
+      assert.equal(command, "tailscale");
+      assert.deepEqual(args, ["serve", "status", "--json"]);
+      return {
+        stdout: JSON.stringify({
+          TCP: { "8443": { HTTPS: true } },
+          Web: {},
+          AllowFunnel: { "desktop.tail.ts.net:8444": true },
+        }),
+      };
+    });
+    return Effect.gen(function* () {
+      const config = yield* readTailscaleServeConfig.pipe(Effect.provide(layer));
+      assert.equal(findCompanionServePort(config, 8445), 8446);
+    });
+  });
+  it("only releases its exact private proxy mapping", () => {
+    const host = "desktop.tail.ts.net:8443";
+    const config = {
+      TCP: { "8443": {} },
+      Web: { [host]: { Handlers: { "/": { Proxy: "http://127.0.0.1:3774" } } } },
+    };
+    assert.isTrue(
+      ownsCompanionServeRoute(config, "desktop.tail.ts.net", 8443, "http://127.0.0.1:3774"),
+    );
+    assert.isFalse(
+      ownsCompanionServeRoute(config, "desktop.tail.ts.net", 8443, "http://127.0.0.1:9999"),
+    );
+    assert.isFalse(
+      ownsCompanionServeRoute(
+        { ...config, AllowFunnel: { [host]: true } },
+        "desktop.tail.ts.net",
+        8443,
+        "http://127.0.0.1:3774",
+      ),
+    );
+  });
   it.effect("detects Tailnet IPv4 addresses", () =>
     Effect.sync(() => {
       assert.equal(isTailscaleIpv4Address("100.64.0.1"), true);

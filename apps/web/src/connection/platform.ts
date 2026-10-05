@@ -23,6 +23,7 @@ import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/cl
 import { EnvironmentRpcRequestObserver } from "@t3tools/client-runtime/rpc";
 import {
   AuthStandardClientScopes,
+  AuthAdministrativeScopes,
   type DesktopBridge,
   type DesktopEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
@@ -382,7 +383,9 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl,
     credential: entry.bootstrapToken,
-    scopes: AuthStandardClientScopes,
+    // This connection is owned by the local desktop. It must be able to mint
+    // scoped phone grants for WSL without sharing its bootstrap credential.
+    scopes: AuthAdministrativeScopes,
     clientMetadata: clientMetadata(),
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   // Keep the desktop pool's stable backend id in the connection id. The

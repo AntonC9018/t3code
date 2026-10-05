@@ -1,3 +1,9 @@
+import { setCompanionPairingUrls } from "@t3tools/shared/remote";
+import {
+  createPhonePairingCredential,
+  revokePhonePairingCredential,
+  type PhonePairingCredential,
+} from "../../connection/phonePairing";
 import {
   ChevronRightIcon,
   ChevronsLeftRightEllipsisIcon,
@@ -34,7 +40,6 @@ import {
   type AuthClientSession,
   type AuthEnvironmentScope,
   type AuthPairingLink,
-  type AuthPairingCredentialResult,
   type AdvertisedEndpoint,
   type DesktopDiscoveredSshHost,
   type DesktopSshEnvironmentTarget,
@@ -135,10 +140,8 @@ import { Textarea } from "../ui/textarea";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "../../pairingUrl";
 import { readHostedPairingRequest } from "../../hostedPairing";
 import {
-  createServerPairingCredential,
   revokeOtherServerClientSessions,
   revokeServerClientSession,
-  revokeServerPairingLink,
   isLoopbackHostname,
   usePrimarySessionState,
   type ServerClientSessionRecord,
@@ -551,6 +554,12 @@ function resolveAdvertisedEndpointPairingUrl(
   endpoint: AdvertisedEndpoint,
   credential: string,
 ): string {
+  if (
+    new URL(endpoint.httpBaseUrl).hostname.endsWith(".ts.net") &&
+    endpoint.httpBaseUrl.startsWith("https://")
+  ) {
+    return resolveDesktopPairingUrl(endpoint.httpBaseUrl, credential);
+  }
   if (endpoint.compatibility.hostedHttpsApp === "compatible") {
     return (
       resolveHostedPairingUrl(endpoint.httpBaseUrl, credential) ??
@@ -593,6 +602,7 @@ function endpointShareHint(endpoint: AdvertisedEndpoint, url: string): string {
 type PairingLinkListRowProps = {
   pairingLink: ServerPairingLinkRecord;
   credential: string | undefined;
+  companions: PhonePairingCredential["companions"];
   endpointUrl: string | null | undefined;
   endpoints: ReadonlyArray<AdvertisedEndpoint>;
   defaultEndpointKey: string | null;
@@ -604,6 +614,7 @@ type PairingLinkListRowProps = {
 const PairingLinkListRow = memo(function PairingLinkListRow({
   pairingLink,
   credential,
+  companions,
   endpointUrl,
   endpoints,
   defaultEndpointKey,
@@ -637,9 +648,18 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   const endpointPairingUrl = useMemo(() => {
     const endpoint = selectPairingEndpoint(endpoints, defaultEndpointKey);
     return endpoint && credential
-      ? resolveAdvertisedEndpointPairingUrl(endpoint, credential)
+      ? (() => {
+          const url = new URL(resolveAdvertisedEndpointPairingUrl(endpoint, credential));
+          return endpoint.httpBaseUrl.startsWith("https://") &&
+            new URL(endpoint.httpBaseUrl).hostname.endsWith(".ts.net")
+            ? setCompanionPairingUrls(
+                url,
+                companions.map((companion) => companion.url),
+              ).href
+            : url.href;
+        })()
       : null;
-  }, [defaultEndpointKey, endpoints, credential]);
+  }, [defaultEndpointKey, endpoints, credential, companions]);
   const endpointCopyOptions = useMemo(() => {
     const options: Array<{
       readonly id: string;
@@ -654,7 +674,15 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
       if (endpoint.status === "unavailable") {
         continue;
       }
-      const url = resolveAdvertisedEndpointPairingUrl(endpoint, credential);
+      const directUrl = resolveAdvertisedEndpointPairingUrl(endpoint, credential);
+      const url =
+        endpoint.httpBaseUrl.startsWith("https://") &&
+        new URL(endpoint.httpBaseUrl).hostname.endsWith(".ts.net")
+          ? setCompanionPairingUrls(
+              new URL(directUrl),
+              companions.map((companion) => companion.url),
+            ).href
+          : directUrl;
       options.push({
         id: endpoint.id,
         preferenceKey: endpointDefaultPreferenceKey(endpoint),
@@ -665,7 +693,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
       });
     }
     return options;
-  }, [endpoints, credential]);
+  }, [endpoints, credential, companions]);
   const shareablePairingUrl =
     endpointPairingUrl ??
     (credential && endpointUrl != null && endpointUrl !== ""
@@ -1057,7 +1085,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
 });
 
 type AuthorizedClientsHeaderActionProps = {
-  onPairingLinkCreated: (result: AuthPairingCredentialResult) => void;
+  onPairingLinkCreated: (result: PhonePairingCredential) => void;
   clientSessions: ReadonlyArray<ServerClientSessionRecord>;
   isRevokingOtherClients: boolean;
   onRevokeOtherClients: () => void;
@@ -1079,7 +1107,7 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
   const handleCreatePairingLink = useCallback(async () => {
     setIsCreatingPairingLink(true);
     try {
-      const created = await createServerPairingCredential({
+      const created = await createPhonePairingCredential({
         label: pairingLabel,
         scopes: pairingScopes,
       });
@@ -1243,7 +1271,7 @@ type PairingClientsListProps = {
   presentation?: AccessSectionPresentation;
   isLoading: boolean;
   pairingLinks: ReadonlyArray<ServerPairingLinkRecord>;
-  createdPairingCredentials: ReadonlyMap<string, string>;
+  createdPairingCredentials: ReadonlyMap<string, PhonePairingCredential>;
   clientSessions: ReadonlyArray<ServerClientSessionRecord>;
   revokingPairingLinkId: string | null;
   revokingClientSessionId: string | null;
@@ -1271,7 +1299,8 @@ const PairingClientsList = memo(function PairingClientsList({
         <PairingLinkListRow
           key={pairingLink.id}
           pairingLink={pairingLink}
-          credential={createdPairingCredentials.get(pairingLink.id)}
+          credential={createdPairingCredentials.get(pairingLink.id)?.credential}
+          companions={createdPairingCredentials.get(pairingLink.id)?.companions ?? []}
           endpointUrl={endpointUrl}
           endpoints={endpoints}
           defaultEndpointKey={defaultEndpointKey}
@@ -2017,10 +2046,10 @@ export function ConnectionsSettings() {
   >(null);
   // Only this client's creation response can supply a shareable credential.
   const [createdPairingCredentials, setCreatedPairingCredentials] = useState<
-    ReadonlyMap<string, string>
+    ReadonlyMap<string, PhonePairingCredential>
   >(() => new Map());
-  const handlePairingLinkCreated = useCallback((created: AuthPairingCredentialResult) => {
-    setCreatedPairingCredentials((current) => new Map(current).set(created.id, created.credential));
+  const handlePairingLinkCreated = useCallback((created: PhonePairingCredential) => {
+    setCreatedPairingCredentials((current) => new Map(current).set(created.id, created));
   }, []);
   const [revokingDesktopPairingLinkId, setRevokingDesktopPairingLinkId] = useState<string | null>(
     null,
@@ -2301,25 +2330,28 @@ export function ConnectionsSettings() {
     setDisableTailscaleServeDialogOpen(true);
   }, []);
 
-  const handleRevokeDesktopPairingLink = useCallback(async (id: string) => {
-    setRevokingDesktopPairingLinkId(id);
-    setDesktopAccessManagementMutationError(null);
-    try {
-      await revokeServerPairingLink(id);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to revoke pairing link.";
-      setDesktopAccessManagementMutationError(message);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not revoke pairing link",
-          description: message,
-        }),
-      );
-    } finally {
-      setRevokingDesktopPairingLinkId(null);
-    }
-  }, []);
+  const handleRevokeDesktopPairingLink = useCallback(
+    async (id: string) => {
+      setRevokingDesktopPairingLinkId(id);
+      setDesktopAccessManagementMutationError(null);
+      try {
+        await revokePhonePairingCredential(id, createdPairingCredentials.get(id));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to revoke pairing link.";
+        setDesktopAccessManagementMutationError(message);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not revoke pairing link",
+            description: message,
+          }),
+        );
+      } finally {
+        setRevokingDesktopPairingLinkId(null);
+      }
+    },
+    [createdPairingCredentials],
+  );
 
   const handleRevokeDesktopClientSession = useCallback(
     async (sessionId: ServerClientSessionRecord["sessionId"]) => {

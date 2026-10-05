@@ -1,5 +1,5 @@
 import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
-import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
+import { getCompanionPairingUrls, resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -158,9 +158,21 @@ export const preparePairingRegistration = Effect.fn(
 const registerPairingConnection = Effect.fn(
   "clientRuntime.connection.onboarding.registerPairingConnection",
 )(function* (input: PairingConnectionInput) {
+  const companions = yield* Effect.try({
+    try: () => (input.pairingUrl ? getCompanionPairingUrls(new URL(input.pairingUrl)) : []),
+    catch: () =>
+      new ConnectionBlockedError({
+        reason: "configuration",
+        detail: "The companion pairing details are invalid.",
+      }),
+  });
   const registration = yield* preparePairingRegistration(input);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   yield* registry.register(registration);
+  for (const pairingUrl of companions) {
+    const companion = yield* preparePairingRegistration({ pairingUrl });
+    yield* registry.register(companion);
+  }
   return registration.target.environmentId;
 });
 

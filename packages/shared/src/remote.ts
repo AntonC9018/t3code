@@ -1,6 +1,63 @@
 import * as Schema from "effect/Schema";
 
 const PAIRING_TOKEN_PARAM = "token";
+const COMPANION_PAIRING_PARAM = "companions";
+
+// Companion credentials stay in the fragment, which is not sent to HTTP
+// servers or referrers. Only other HTTPS ports on the same Tailnet host are
+// eligible: a QR must not send the phone to an unrelated credential endpoint.
+export function getCompanionPairingUrls(url: URL): readonly string[] {
+  const raw = readHashParams(url).get(COMPANION_PAIRING_PARAM);
+  if (!raw) return [];
+  if (raw.length > 8192) throw new Error("Companion pairing URL is too large.");
+  const primary = resolveRemotePairingTarget({ pairingUrl: url.href });
+  const host = new URL(primary.httpBaseUrl);
+  if (host.protocol !== "https:" || !host.hostname.endsWith(".ts.net")) {
+    throw new Error("Companion pairing requires Tailscale HTTPS.");
+  }
+  const entries: unknown = JSON.parse(raw);
+  if (!Array.isArray(entries) || entries.length > 4)
+    throw new Error("Invalid companion pairing URLs.");
+  const origins = new Set([host.origin]);
+  return entries.map((entry) => {
+    if (typeof entry !== "string" || entry.length > 2048)
+      throw new Error("Invalid companion pairing URL.");
+    const companion = new URL(entry);
+    const params = readHashParams(companion);
+    if (
+      companion.protocol !== "https:" ||
+      companion.hostname !== host.hostname ||
+      companion.username ||
+      companion.password ||
+      companion.pathname !== "/" ||
+      companion.search ||
+      !params.get(PAIRING_TOKEN_PARAM) ||
+      [...params.keys()].some((key) => key !== PAIRING_TOKEN_PARAM) ||
+      origins.has(companion.origin)
+    )
+      throw new Error("Invalid companion pairing endpoint.");
+    origins.add(companion.origin);
+    return companion.href;
+  });
+}
+
+export function setCompanionPairingUrls(url: URL, companions: readonly string[]): URL {
+  const next = new URL(url.href);
+  const params = readHashParams(next);
+  if (companions.length > 0) params.set(COMPANION_PAIRING_PARAM, JSON.stringify(companions));
+  else params.delete(COMPANION_PAIRING_PARAM);
+  next.hash = params.toString();
+  getCompanionPairingUrls(next);
+  return next;
+}
+
+export function stripCompanionPairingUrls(url: URL): URL {
+  const next = new URL(url.href);
+  const params = readHashParams(next);
+  params.delete(COMPANION_PAIRING_PARAM);
+  next.hash = params.toString();
+  return next;
+}
 const HOSTED_PAIRING_HOST_PARAM = "host";
 const HOSTED_PAIRING_LABEL_PARAM = "label";
 const SUPPORTED_REMOTE_BACKEND_PROTOCOLS = new Set(["http:", "https:", "ws:", "wss:"]);

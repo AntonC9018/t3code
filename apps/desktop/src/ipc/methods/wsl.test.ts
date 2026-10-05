@@ -34,6 +34,7 @@ function makeWslBackendLayer(input: { readonly onReconcile?: Effect.Effect<void>
     DesktopWslBackend.DesktopWslBackend.of({
       reconcile: input.onReconcile ?? Effect.void,
       lastPreflightError: Effect.succeedNone,
+      remoteHttpBaseUrl: Effect.succeed(undefined),
     }),
   );
 }

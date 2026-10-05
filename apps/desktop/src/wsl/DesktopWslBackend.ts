@@ -29,6 +29,16 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
 import * as NetService from "@t3tools/shared/Net";
+import {
+  buildTailscaleHttpsBaseUrl,
+  disableTailscaleServe,
+  ensureTailscaleServe,
+  findCompanionServePort,
+  ownsCompanionServeRoute,
+  readTailscaleServeConfig,
+  readTailscaleStatus,
+} from "@t3tools/tailscale";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopBackendConfiguration from "../backend/DesktopBackendConfiguration.ts";
@@ -57,6 +67,7 @@ export class DesktopWslBackend extends Context.Service<
     // Connections settings can show it inline. None in wsl-only mode (that path
     // surfaces via a dialog + Windows fallback).
     readonly lastPreflightError: Effect.Effect<Option.Option<string>>;
+    readonly remoteHttpBaseUrl: Effect.Effect<string | undefined>;
   }
 >()("@t3tools/desktop/wsl/DesktopWslBackend") {}
 
@@ -113,6 +124,59 @@ export const layer = Layer.effect(
     // Windows, so we record the reason rather than interrupting. Cleared on any
     // reconcile state change so it reflects the current attempt.
     const preflightErrorRef = yield* Ref.make(Option.none<string>());
+    const remoteUrlRef = yield* Ref.make<string | undefined>(undefined);
+    const serveLeaseRef = yield* Ref.make<
+      { dnsName: string; port: number; target: string } | undefined
+    >(undefined);
+    // Optional for non-Windows/unit-test contexts. Production desktop provides
+    // its host spawner, so Serve runs on Windows and reaches WSL via localhost.
+    const spawner = yield* Effect.serviceOption(ChildProcessSpawner.ChildProcessSpawner);
+    const releaseRemoteEndpoint = Effect.gen(function* () {
+      yield* Ref.set(remoteUrlRef, undefined);
+      const lease = yield* Ref.getAndSet(serveLeaseRef, undefined);
+      if (!lease || Option.isNone(spawner)) return;
+      const config = yield* readTailscaleServeConfig;
+      if (ownsCompanionServeRoute(config, lease.dnsName, lease.port, lease.target)) {
+        yield* disableTailscaleServe({ servePort: lease.port });
+      }
+    }).pipe(
+      Effect.catch(() => logWslBackendWarning("could not release WSL Tailscale endpoint")),
+      (effect) =>
+        Option.isSome(spawner)
+          ? Effect.provideService(effect, ChildProcessSpawner.ChildProcessSpawner, spawner.value)
+          : Effect.void,
+    );
+    const exposeRemoteEndpoint = (httpBaseUrl: URL) =>
+      Effect.gen(function* () {
+        yield* releaseRemoteEndpoint;
+        const settings = yield* appSettings.get;
+        if (!settings.tailscaleServeEnabled || Option.isNone(spawner)) return;
+        const status = yield* readTailscaleStatus;
+        if (!status.magicDnsName) return;
+        const config = yield* readTailscaleServeConfig;
+        const servePort = findCompanionServePort(config, settings.tailscaleServePort);
+        if (servePort === null) {
+          yield* logWslBackendWarning("no free Tailscale HTTPS port for WSL pairing");
+          return;
+        }
+        const localPort = Number(httpBaseUrl.port);
+        yield* ensureTailscaleServe({ localPort, servePort });
+        yield* Ref.set(serveLeaseRef, {
+          dnsName: status.magicDnsName,
+          port: servePort,
+          target: `http://127.0.0.1:${localPort}`,
+        });
+        yield* Ref.set(
+          remoteUrlRef,
+          buildTailscaleHttpsBaseUrl({ magicDnsName: status.magicDnsName, servePort }),
+        );
+      }).pipe(
+        Effect.catch(() => logWslBackendWarning("WSL Tailscale pairing endpoint could not start")),
+        (effect) =>
+          Option.isSome(spawner)
+            ? Effect.provideService(effect, ChildProcessSpawner.ChildProcessSpawner, spawner.value)
+            : Effect.void,
+      );
 
     const findExistingWslInstance = pool.list.pipe(
       Effect.map((instances) => instances.find((instance) => isWslInstanceId(instance.id))),
@@ -168,7 +232,11 @@ export const layer = Layer.effect(
           // fallback — Windows is the primary and keeps working.
           onPreflightFailed: (failure) =>
             Ref.set(preflightErrorRef, Option.some(failure.reason)).pipe(Effect.as(false)),
-          onReady: () => Ref.set(preflightErrorRef, Option.none()),
+          onReady: (httpBaseUrl) =>
+            Ref.set(preflightErrorRef, Option.none()).pipe(
+              Effect.andThen(exposeRemoteEndpoint(httpBaseUrl)),
+            ),
+          onShutdown: () => releaseRemoteEndpoint,
         })
         .pipe(
           Effect.asSome,
@@ -264,6 +332,7 @@ export const layer = Layer.effect(
     return DesktopWslBackend.of({
       reconcile,
       lastPreflightError: Ref.get(preflightErrorRef),
+      remoteHttpBaseUrl: Ref.get(remoteUrlRef),
     });
   }),
 );

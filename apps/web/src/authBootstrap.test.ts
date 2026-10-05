@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { installEnvironmentHttpTest } from "../test/environmentHttpTest";
 import { __setPrimaryHttpRunnerForTests, type PrimaryHttpEffectRunner } from "./lib/runtime";
+import { setCompanionPairingUrls } from "@t3tools/shared/remote";
 
 type TestWindow = {
   location: URL;
@@ -119,6 +120,29 @@ async function installAuthApi(input: {
 }
 
 describe("resolveInitialServerAuthGateState", () => {
+  it("removes QR credentials from the address bar and retains WSL only until automatic registration", async () => {
+    const nextSession = sequence(
+      unauthenticatedSession(LOOPBACK_AUTH),
+      authenticatedSession(LOOPBACK_AUTH),
+    );
+    const testApi = await installAuthApi({
+      session: nextSession,
+      browserSession: () => Effect.succeed(browserSession(["orchestration:read"])),
+    });
+    const companion = "https://desktop.tail.ts.net:8443/#token=wsl-code";
+    const testWindow = installTestBrowser(
+      setCompanionPairingUrls(new URL("https://desktop.tail.ts.net/pair#token=windows-code"), [
+        companion,
+      ]).href,
+    );
+    const { resolveInitialServerAuthGateState, takePendingCompanionPairingUrls } =
+      await import("./environments/primary/auth");
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({ status: "authenticated" });
+    expect(testApi.calls.browserSession).toEqual([{ credential: "windows-code" }]);
+    expect(testWindow.location.hash).toBe("");
+    expect(takePendingCompanionPairingUrls()).toEqual([companion]);
+    expect(takePendingCompanionPairingUrls()).toEqual([]);
+  });
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();

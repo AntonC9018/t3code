@@ -114,6 +114,13 @@ Mobile keeps its manual environment selection.
 Join both devices to the same tailnet. In the desktop app, enable **Tailscale
 HTTPS** in **Settings → Connections**. Turn it off there to remove that route.
 
+On Windows, enable the WSL backend alongside the Windows backend before creating
+a phone pairing link. Choose the Tailscale HTTPS endpoint for its QR and scan it
+with your phone's camera. The link opens the computer's browser app and adds its
+WSL connection automatically. Both devices must stay connected to Tailscale.
+Closing the desktop app stops both backends; keeping it in the tray keeps them
+available. Create a new link if a backend was still connecting when you paired.
+
 To start a command-line server with Tailscale HTTPS:
 
 ```bash

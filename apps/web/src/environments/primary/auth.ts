@@ -12,6 +12,7 @@ import type { EnvironmentHttpCommonError as EnvironmentHttpCommonErrorType } fro
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClientError } from "effect/unstable/http";
+import { getCompanionPairingUrls, stripCompanionPairingUrls } from "@t3tools/shared/remote";
 
 import {
   getPairingTokenFromUrl,
@@ -140,6 +141,12 @@ type ServerAuthGateState =
 
 let bootstrapPromise: Promise<ServerAuthGateState> | null = null;
 let resolvedAuthenticatedGateState: ServerAuthGateState | null = null;
+let pendingCompanionPairingUrls: readonly string[] = [];
+export function takePendingCompanionPairingUrls(): readonly string[] {
+  const pending = pendingCompanionPairingUrls;
+  pendingCompanionPairingUrls = [];
+  return pending;
+}
 const AUTH_SESSION_ESTABLISH_TIMEOUT_MS = 2_000;
 const AUTH_SESSION_ESTABLISH_STEP_MS = 100;
 
@@ -428,6 +435,12 @@ export async function revokeOtherServerClientSessions(): Promise<number> {
 }
 
 export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
+  const initialUrl = new URL(window.location.href);
+  const companions = getCompanionPairingUrls(initialUrl);
+  if (companions.length > 0) {
+    pendingCompanionPairingUrls = companions;
+    window.history.replaceState({}, document.title, stripCompanionPairingUrls(initialUrl).href);
+  }
   const urlCredential = takePairingTokenFromUrl();
   const previousPromise = bootstrapPromise;
   if (urlCredential) {
@@ -468,4 +481,5 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
 export function __resetServerAuthBootstrapForTests() {
   bootstrapPromise = null;
   resolvedAuthenticatedGateState = null;
+  pendingCompanionPairingUrls = [];
 }

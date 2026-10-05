@@ -10,12 +10,20 @@ import * as Option from "effect/Option";
 
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
-import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
+import {
+  BearerConnectionCredential,
+  BearerConnectionProfile,
+  type ConnectionRegistration,
+} from "./catalog.ts";
+import { setCompanionPairingUrls } from "@t3tools/shared/remote";
+import * as EnvironmentRegistry from "./registry.ts";
+import * as ConnectionCredentialStore from "./credentialStore.ts";
 import { BearerConnectionTarget } from "./model.ts";
 import {
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
   prepareSshRegistration,
+  make as makeOnboarding,
 } from "./onboarding.ts";
 
 const CLIENT_PRESENTATION_LAYER = Layer.succeed(
@@ -36,6 +44,7 @@ function pairingHttpLayer(
     readonly failDescriptor?: boolean;
     readonly protocolVersion?: number;
     readonly selfUpdate?: boolean;
+    readonly companions?: boolean;
   },
 ) {
   const fetchFn = ((input, init = {}) => {
@@ -50,7 +59,10 @@ function pairingHttpLayer(
       }
       return Promise.resolve(
         Response.json({
-          environmentId: "environment-paired",
+          environmentId:
+            options?.companions && url.includes(":8443/")
+              ? "environment-wsl"
+              : "environment-paired",
           label: "Paired environment",
           platform: {
             os: "linux",
@@ -85,6 +97,46 @@ function pairingHttpLayer(
 }
 
 describe("connection onboarding", () => {
+  it.effect("registers both Windows and WSL from one QR with separate grants", () => {
+    const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const registrations: ConnectionRegistration[] = [];
+    return Effect.gen(function* () {
+      const onboarding = yield* makeOnboarding;
+      const pairingUrl = setCompanionPairingUrls(
+        new URL("https://desktop.tail.ts.net/pair#token=windows-code"),
+        ["https://desktop.tail.ts.net:8443/#token=wsl-code"],
+      ).href;
+      expect(yield* onboarding.registerPairing({ pairingUrl })).toBe("environment-paired");
+      expect(registrations.map((entry) => entry.target.environmentId)).toEqual([
+        "environment-paired",
+        "environment-wsl",
+      ]);
+      const exchanges = calls.filter((call) => call.url.endsWith("/oauth/token"));
+      expect(exchanges).toHaveLength(2);
+      for (const [index, exchange] of exchanges.entries()) {
+        const body = exchange.init.body;
+        const params = new URLSearchParams(
+          body instanceof Uint8Array ? new TextDecoder().decode(body) : String(body),
+        );
+        expect(params.get("subject_token")).toBe(index === 0 ? "windows-code" : "wsl-code");
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          CLIENT_PRESENTATION_LAYER,
+          pairingHttpLayer(calls, { companions: true }),
+          Layer.mock(EnvironmentRegistry.EnvironmentRegistry, {
+            register: (registration) =>
+              Effect.sync(() => {
+                registrations.push(registration);
+              }),
+          }),
+          Layer.mock(ClientCapabilities.SshEnvironmentGateway, {}),
+          Layer.mock(ConnectionCredentialStore.ConnectionCredentialStore, {}),
+        ),
+      ),
+    );
+  });
   it.effect("prepares a persisted bearer registration from pairing details", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];

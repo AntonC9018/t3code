@@ -63,6 +63,8 @@ import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
+import { takePendingCompanionPairingUrls } from "../environments/primary/auth";
+import { connectPairing } from "../connection/onboarding";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { shellEnvironment } from "../state/shell";
@@ -143,6 +145,22 @@ function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
+  const registerCompanion = useAtomCommand(connectPairing, { reportFailure: false });
+  useEffect(() => {
+    if (!primaryEnvironmentAuthenticated) return;
+    for (const pairingUrl of takePendingCompanionPairingUrls()) {
+      void registerCompanion({ pairingUrl }).then((result) => {
+        if (result._tag === "Failure") {
+          toastManager.add({
+            type: "error",
+            title: "WSL pairing could not finish",
+            description:
+              "Keep Tailscale connected on both devices and scan a new desktop QR to retry.",
+          });
+        }
+      });
+    }
+  }, [primaryEnvironmentAuthenticated, registerCompanion]);
   const returningFromWelcomeRef = useRef(pathname === "/welcome");
 
   useEffect(() => {

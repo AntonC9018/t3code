@@ -367,6 +367,8 @@ export interface DesktopEnvironmentBootstrap {
   runningDistro?: string | null;
   httpBaseUrl: string | null;
   wsBaseUrl: string | null;
+  // Private HTTPS endpoint for phone pairing; never contains a credential.
+  remoteHttpBaseUrl?: string;
   bootstrapToken?: string;
 }
 
@@ -376,6 +378,7 @@ export const DesktopEnvironmentBootstrapSchema = Schema.Struct({
   runningDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
   httpBaseUrl: Schema.NullOr(Schema.String),
   wsBaseUrl: Schema.NullOr(Schema.String),
+  remoteHttpBaseUrl: Schema.optionalKey(Schema.String),
   bootstrapToken: Schema.optionalKey(Schema.String),
 });
 
