@@ -24,6 +24,7 @@ const model = {
 };
 const audio = new Uint8Array(new Float32Array([0.25, -0.5]).buffer);
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function fixture(options: { status?: number; text?: string; ready?: boolean } = {}) {
   const requests: HttpClientRequest.HttpClientRequest[] = [];
@@ -115,7 +116,7 @@ describe("HandySpeechService", () => {
         .transcribe(audio, DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
         .pipe(Effect.flip);
       expect(error._tag).toBe("SpeechOperationError");
-      expect(JSON.stringify(error)).not.toContain(token);
+      expect(yield* encodeJson(error)).not.toContain(token);
     }),
   );
 
