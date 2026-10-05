@@ -7,11 +7,15 @@ import { setPairingTokenOnUrl } from "@t3tools/shared/remote";
 import { makeEnvironmentHttpApiGroupClient } from "@t3tools/client-runtime/rpc";
 import { FetchHttpClient } from "effect/unstable/http";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import { AtomRegistry } from "effect/unstable/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { runtime } from "../lib/runtime";
 import { environmentCatalog } from "./catalog";
 import { desktopLocalBackendId, readDesktopSecondaryBootstraps } from "./desktopLocal";
-import { readPreparedConnection } from "../state/session";
+import { environmentSession } from "../state/session";
 import {
   createServerPairingCredential,
   revokeServerPairingLink,
@@ -25,6 +29,15 @@ export interface PhonePairingCredential extends AuthPairingCredentialResult {
   }[];
 }
 
+class PhonePairingConnectionError extends Schema.TaggedError<PhonePairingConnectionError>()(
+  "PhonePairingConnectionError",
+  {},
+) {
+  override get message(): string {
+    return "The WSL backend has no authenticated bearer session.";
+  }
+}
+
 async function companionAuth<A, E>(
   environmentId: EnvironmentId,
   run: (
@@ -32,13 +45,23 @@ async function companionAuth<A, E>(
     headers: { authorization: string },
   ) => Effect.Effect<A, E>,
 ) {
-  const prepared = readPreparedConnection(environmentId);
-  if (!prepared || prepared.httpAuthorization?._tag !== "Bearer") {
-    throw new Error("Wait for the WSL backend to connect before creating a phone QR.");
-  }
-  const token = prepared.httpAuthorization.token;
   return runtime.runPromise(
     Effect.gen(function* () {
+      // A settings-only visit may never have mounted this stream. A synchronous
+      // atom read returns its initial None even when the backend is connected.
+      const prepared = yield* AtomRegistry.toStreamResult(
+        appAtomRegistry,
+        environmentSession.preparedConnectionAtom(environmentId),
+      ).pipe(
+        Stream.filter(Option.isSome),
+        Stream.map((value) => value.value),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      if (prepared.httpAuthorization?._tag !== "Bearer") {
+        return yield* Effect.fail(new PhonePairingConnectionError());
+      }
+      const token = prepared.httpAuthorization.token;
       const client = yield* makeEnvironmentHttpApiGroupClient(prepared.httpBaseUrl, "auth");
       return yield* run(client, { authorization: `Bearer ${token}` });
     }).pipe(
