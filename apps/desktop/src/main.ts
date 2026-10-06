@@ -70,6 +70,7 @@ import * as BrowserSession from "./preview/BrowserSession.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
+import * as DesktopWslLoopbackBridge from "./wsl/DesktopWslLoopbackBridge.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
 
@@ -199,6 +200,7 @@ const desktopBackendLayer = DesktopBackendPool.layer.pipe(
 // pool + configuration + serverExposure; it pulls NetService and the
 // foundation services through the same provideMerge chain.
 const desktopWslBackendLayer = DesktopWslBackend.layer.pipe(
+  Layer.provideMerge(DesktopWslLoopbackBridge.layer),
   Layer.provideMerge(desktopBackendLayer),
 );
 

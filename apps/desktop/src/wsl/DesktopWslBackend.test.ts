@@ -3,6 +3,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as NetService from "@t3tools/shared/Net";
 
@@ -16,6 +20,7 @@ import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "./DesktopWslEnvironment.ts";
 import * as DesktopWslBackend from "./DesktopWslBackend.ts";
+import * as DesktopWslLoopbackBridge from "./DesktopWslLoopbackBridge.ts";
 
 function makeStubInstance(input: {
   readonly id: DesktopBackendPool.BackendInstanceId;
@@ -83,6 +88,180 @@ const netLayer = Layer.succeed(NetService.NetService, {
 } satisfies NetService.NetService["Service"]);
 
 describe("DesktopWslBackend", () => {
+  function phoneBackendTest(
+    run: (state: {
+      backend: DesktopWslBackend.DesktopWslBackend["Service"];
+      spec: DesktopBackendPool.BackendInstanceSpec;
+      commands: Array<ReadonlyArray<string>>;
+      bridgeTargets: string[];
+      setDnsReady: (ready: boolean) => void;
+      clearRoute: () => void;
+    }) => Effect.Effect<void>,
+  ) {
+    let registeredSpec: DesktopBackendPool.BackendInstanceSpec | undefined;
+    const commands: Array<ReadonlyArray<string>> = [];
+    const bridgeTargets: string[] = [];
+    const bridgeLayer = Layer.succeed(DesktopWslLoopbackBridge.DesktopWslLoopbackBridge, {
+      start: (target) =>
+        Effect.sync(() => {
+          bridgeTargets.push(target.href);
+          return { httpBaseUrl: new URL("http://127.0.0.1:14773/"), stop: Effect.void };
+        }),
+    });
+    let dnsReady = true;
+    let route: { port: number; target: string } | undefined;
+    const primary = makeStubInstance({
+      id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
+      label: "Windows",
+      snapshot: primarySnapshot,
+    });
+    const wsl = makeStubInstance({
+      id: DesktopBackendPool.BackendInstanceId("wsl:Ubuntu"),
+      label: "WSL (Ubuntu)",
+      snapshot: primarySnapshot,
+    });
+    const poolLayer = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
+      get: () => Effect.succeed(Option.some(primary)),
+      list: Effect.sync(() => (registeredSpec ? [primary, wsl] : [primary])),
+      primary: Effect.succeed(primary),
+      register: (spec) =>
+        Effect.sync(() => {
+          registeredSpec = spec;
+          return wsl;
+        }),
+      unregister: () => Effect.die("unexpected unregister"),
+    } satisfies DesktopBackendPool.DesktopBackendPool["Service"]);
+    const spawner = ChildProcessSpawner.make((command) => {
+      assert.equal(command._tag, "StandardCommand");
+      if (command._tag !== "StandardCommand") return Effect.die("unexpected pipeline");
+      commands.push([...command.args]);
+      if (command.args[1] === "--bg") {
+        route = { port: Number(command.args[2]!.split("=")[1]), target: command.args[3]! };
+      } else if (command.args[2] === "off") {
+        route = undefined;
+      }
+      const stdout =
+        command.args[0] === "status"
+          ? JSON.stringify({ Self: { DNSName: dnsReady ? "desktop.tail.ts.net." : "" } })
+          : JSON.stringify(
+              route
+                ? {
+                    TCP: { [route.port]: { HTTPS: true } },
+                    Web: {
+                      [`desktop.tail.ts.net:${route.port}`]: {
+                        Handlers: { "/": { Proxy: route.target } },
+                      },
+                    },
+                  }
+                : {},
+            );
+      return Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.make(new TextEncoder().encode(stdout)),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        }),
+      );
+    });
+    return Effect.gen(function* () {
+      const backend = yield* DesktopWslBackend.DesktopWslBackend;
+      yield* backend.reconcile;
+      const spec = registeredSpec;
+      if (!spec?.onReady) return yield* Effect.die("Expected WSL ready callback");
+      yield* run({
+        backend,
+        spec,
+        commands,
+        bridgeTargets,
+        setDnsReady: (ready) => {
+          dnsReady = ready;
+        },
+        clearRoute: () => {
+          route = undefined;
+        },
+      });
+    }).pipe(
+      Effect.provide(
+        DesktopWslBackend.layer.pipe(
+          Layer.provideMerge(poolLayer),
+          Layer.provideMerge(bridgeLayer),
+          Layer.provideMerge(backendConfigurationLayer),
+          Layer.provideMerge(serverExposureLayer),
+          Layer.provideMerge(netLayer),
+          Layer.provideMerge(
+            DesktopAppSettings.layerTest({
+              ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+              wslBackendEnabled: true,
+              wslDistro: "Ubuntu",
+              tailscaleServeEnabled: true,
+            }),
+          ),
+          Layer.provideMerge(DesktopWslEnvironment.layerTest({ isAvailable: true })),
+          Layer.provideMerge(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        ),
+      ),
+    );
+  }
+
+  it.effect("publishes the reachable WSL host instead of relying on localhost forwarding", () =>
+    phoneBackendTest(({ backend, spec, commands, bridgeTargets }) =>
+      Effect.gen(function* () {
+        yield* spec.onReady!(new URL("http://172.27.81.217:3774/"));
+        assert.equal(yield* backend.remoteHttpBaseUrl, "https://desktop.tail.ts.net:8443/");
+        assert.include(bridgeTargets, "http://172.27.81.217:3774/");
+        assert.deepInclude(commands, ["serve", "--bg", "--https=8443", "http://127.0.0.1:14773"]);
+      }),
+    ),
+  );
+
+  it.effect("retries publication when Tailscale becomes ready after the backend", () =>
+    phoneBackendTest(({ backend, spec, setDnsReady }) =>
+      Effect.gen(function* () {
+        setDnsReady(false);
+        yield* spec.onReady!(new URL("http://172.27.81.217:3774/"));
+        assert.isUndefined(yield* backend.remoteHttpBaseUrl);
+        setDnsReady(true);
+        yield* backend.reconcile;
+        assert.equal(yield* backend.remoteHttpBaseUrl, "https://desktop.tail.ts.net:8443/");
+      }),
+    ),
+  );
+
+  it.effect("restores a lost phone route automatically while the backend stays running", () =>
+    phoneBackendTest(({ spec, commands, clearRoute }) =>
+      Effect.gen(function* () {
+        yield* spec.onReady!(new URL("http://172.27.81.217:3774/"));
+        clearRoute();
+        const publishesBefore = commands.filter((args) => args[1] === "--bg").length;
+        yield* TestClock.adjust("15 seconds");
+        assert.equal(commands.filter((args) => args[1] === "--bg").length, publishesBefore + 1);
+      }),
+    ),
+  );
+
+  it.effect("keeps the same phone origin when the WSL address changes on restart", () =>
+    phoneBackendTest(({ backend, spec, commands, bridgeTargets }) =>
+      Effect.gen(function* () {
+        yield* spec.onReady!(new URL("http://172.27.81.217:3774/"));
+        yield* spec.onShutdown!();
+        yield* spec.onReady!(new URL("http://172.27.81.218:3775/"));
+        assert.deepEqual(bridgeTargets, [
+          "http://172.27.81.217:3774/",
+          "http://172.27.81.218:3775/",
+        ]);
+        assert.equal(yield* backend.remoteHttpBaseUrl, "https://desktop.tail.ts.net:8443/");
+        assert.deepInclude(commands, ["serve", "--bg", "--https=8443", "http://127.0.0.1:14773"]);
+      }),
+    ),
+  );
   it.effect("does not discover or start WSL when local execution is disabled", () =>
     Effect.gen(function* () {
       const backend = yield* DesktopWslBackend.DesktopWslBackend;
@@ -90,6 +269,8 @@ describe("DesktopWslBackend", () => {
     }).pipe(
       Effect.provide(
         DesktopWslBackend.layer.pipe(
+          Layer.provide(Layer.mock(ChildProcessSpawner.ChildProcessSpawner, {})),
+          Layer.provide(Layer.mock(DesktopWslLoopbackBridge.DesktopWslLoopbackBridge, {})),
           Layer.provide(Layer.mock(DesktopBackendPool.DesktopBackendPool, {})),
           Layer.provide(backendConfigurationLayer),
           Layer.provide(serverExposureLayer),
@@ -160,6 +341,8 @@ describe("DesktopWslBackend", () => {
     }).pipe(
       Effect.provide(
         DesktopWslBackend.layer.pipe(
+          Layer.provide(Layer.mock(ChildProcessSpawner.ChildProcessSpawner, {})),
+          Layer.provide(Layer.mock(DesktopWslLoopbackBridge.DesktopWslLoopbackBridge, {})),
           Layer.provideMerge(poolLayer),
           Layer.provideMerge(backendConfigurationLayer),
           Layer.provideMerge(serverExposureLayer),
@@ -203,6 +386,8 @@ describe("DesktopWslBackend", () => {
     }).pipe(
       Effect.provide(
         DesktopWslBackend.layer.pipe(
+          Layer.provide(Layer.mock(ChildProcessSpawner.ChildProcessSpawner, {})),
+          Layer.provide(Layer.mock(DesktopWslLoopbackBridge.DesktopWslLoopbackBridge, {})),
           Layer.provideMerge(DesktopBackendPool.layerTest([primary, wsl])),
           Layer.provideMerge(backendConfigurationLayer),
           Layer.provideMerge(serverExposureLayer),
