@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { AuthCreatePairingCredentialInput } from "@t3tools/contracts";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -59,12 +61,33 @@ vi.mock("@t3tools/client-runtime/rpc", () => ({
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { createPhonePairingCredential } from "./phonePairing";
 
+const decodePairingInput = Schema.decodeUnknownEffect(AuthCreatePairingCredentialInput);
+const decodePairingInputSync = Schema.decodeUnknownSync(AuthCreatePairingCredentialInput);
+
 afterEach(() => {
   appAtomRegistry.reset();
   vi.clearAllMocks();
 });
 
 describe("desktop phone pairing", () => {
+  it.each([undefined, "", "   ", "  Phone  "])(
+    "accepts an optional client label %j for both backends",
+    async (label) => {
+      mocks.companion.mockImplementation(({ payload }) =>
+        decodePairingInput(payload).pipe(Effect.as({ id: "wsl-grant", credential: "wsl-pairing" })),
+      );
+      mocks.primary.mockImplementation(async (payload) => {
+        decodePairingInputSync(payload);
+        return { id: "primary-grant", credential: "primary-pairing" };
+      });
+
+      await createPhonePairingCredential(label === undefined ? {} : { label });
+      const expected = label?.trim() ? { label: label.trim() } : {};
+      expect(mocks.companion.mock.calls[0]?.[0].payload).toEqual(expected);
+      expect(mocks.primary).toHaveBeenCalledWith(expected);
+    },
+  );
+
   it("pairs WSL before the primary even when no view has observed its prepared state", async () => {
     const calls: string[] = [];
     mocks.companion.mockImplementation(({ headers }) => {

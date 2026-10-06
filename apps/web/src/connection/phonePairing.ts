@@ -78,6 +78,11 @@ export async function createPhonePairingCredential(input: {
   readonly label?: string;
   readonly scopes?: readonly AuthEnvironmentScope[];
 }): Promise<PhonePairingCredential> {
+  const label = input.label?.trim();
+  const payload = {
+    ...(label ? { label } : {}),
+    ...(input.scopes ? { scopes: input.scopes } : {}),
+  };
   const companions: PhonePairingCredential["companions"][number][] = [];
   const entries = appAtomRegistry.get(environmentCatalog.catalogValueAtom).entries;
   try {
@@ -93,7 +98,7 @@ export async function createPhonePairingCredential(input: {
           "The WSL backend is still connecting. Try creating the QR again once it is ready.",
         );
       const grant = await companionAuth(entry.target.environmentId, (client, headers) =>
-        client.pairingCredential({ headers, payload: input }),
+        client.pairingCredential({ headers, payload }),
       );
       companions.push({
         environmentId: entry.target.environmentId,
@@ -101,7 +106,7 @@ export async function createPhonePairingCredential(input: {
         url: setPairingTokenOnUrl(new URL(bootstrap.remoteHttpBaseUrl), grant.credential).href,
       });
     }
-    return { ...(await createServerPairingCredential(input)), companions };
+    return { ...(await createServerPairingCredential(payload)), companions };
   } catch (error) {
     await Promise.allSettled(companions.map((companion) => revokeCompanionPairing(companion)));
     throw error;
