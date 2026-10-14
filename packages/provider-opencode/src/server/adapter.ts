@@ -101,7 +101,8 @@ const makeOpenCodeMessageId = Effect.fnUntraced(function* (
     .toString(16)
     .padStart(12, "0");
   const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-  const random = (yield* Effect.forEach(Array.from({ length: 28 }), () =>
+  // Match native OpenCode identifiers; free-tier requests reject longer suffixes.
+  const random = (yield* Effect.forEach(Array.from({ length: 14 }), () =>
     Random.nextIntBetween(0, alphabet.length - 1),
   ))
     .map((index) => alphabet[index])

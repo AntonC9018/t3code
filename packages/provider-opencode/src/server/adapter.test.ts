@@ -1619,7 +1619,7 @@ describe("OpenCodeAdapterV2", () => {
       );
       prompt.resolve();
       yield* Fiber.join(start);
-      assert.match(promptInputs[0]?.messageID ?? "", /^msg_[0-9a-f]{12}[0-9A-Za-z]{28}$/);
+      assert.match(promptInputs[0]?.messageID ?? "", /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
       yield* Effect.promise(() =>
         nativeEvents.push({
           type: "session.status",
