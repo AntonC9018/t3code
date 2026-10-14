@@ -24,6 +24,14 @@ describe("remote", () => {
     expect(stripCompanionPairingUrls(bundled).href).toBe(primary.href);
   });
 
+  it("keeps companion grants after the primary grant has been consumed", () => {
+    const primary = new URL("https://desktop.tail.ts.net/");
+    const companion = "https://desktop.tail.ts.net:8443/#token=wsl-code";
+    const bundled = setCompanionPairingUrls(primary, [companion]);
+    expect(getCompanionPairingUrls(bundled)).toEqual([companion]);
+    expect(stripCompanionPairingUrls(bundled).href).toBe(primary.href);
+  });
+
   it("rejects unrelated hosts, insecure routes, repeated routes, and nested pairing bundles", () => {
     const primary = new URL("https://desktop.tail.ts.net/pair#token=windows-code");
     for (const companion of [

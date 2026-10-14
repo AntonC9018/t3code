@@ -5,7 +5,7 @@ import type {
   SpeechModelUnloadTimeout,
   SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Config from "effect/Config";
 import * as Redacted from "effect/Redacted";
@@ -39,7 +39,7 @@ import {
 } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 import { isSpeechPlatformSupported } from "./platform.ts";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 const SAMPLE_RATE = 16_000;
 const MAX_SPEECH_DURATION_SECONDS = 5 * 60;
@@ -193,8 +193,8 @@ export const make = Effect.gen(function* () {
       Effect.provide(FetchHttpClient.layer),
     );
   }
-  const platform = yield* HostProcessPlatform;
-  const architecture = yield* HostProcessArchitecture;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
   const config = yield* ServerConfig.ServerConfig;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const path = yield* Path.Path;
@@ -805,7 +805,7 @@ export const make = Effect.gen(function* () {
         if (unsupportedReason) throw new SpeechUnsupportedPlatformError({ platform, architecture });
         await download(modelId);
       }).pipe(
-        Effect.catchTag("SpeechDownloadCancelledError", () => Effect.void),
+        Effect.catchTags({ SpeechDownloadCancelledError: () => Effect.void }),
         Effect.andThen(modelsEffect),
       ),
     selectModel: (modelId) =>

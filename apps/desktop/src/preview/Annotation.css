@@ -65,7 +65,7 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--t3-ring) 72%, transparent);
-  outline-offset: 1px;
+  outline-offset: -2px;
 }
 
 /* Utility display classes must not override the native hidden state. */

@@ -10,14 +10,8 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
-import {
-  HostProcessArguments,
-  HostProcessEnvironment,
-  HostProcessIsExecutable,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import * as HostProcess from "@t3tools/shared/hostProcess";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
@@ -32,13 +26,13 @@ const isServerEnvironmentIdPersistenceError = Schema.is(
   ServerEnvironment.ServerEnvironmentIdPersistenceError,
 );
 
-const makeServerEnvironmentLayer = (baseDir: string) =>
+const layerServerEnvironment = (baseDir: string) =>
   ServerEnvironment.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
   );
 
-const emptySecretStoreLayer = Layer.succeed(
+const layerEmptySecretStore = Layer.succeed(
   ServerSecretStore.ServerSecretStore,
   ServerSecretStore.ServerSecretStore.of({
     get: () => Effect.succeedNone,
@@ -109,14 +103,14 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         }).pipe(
           Effect.provide(
             ServerEnvironment.layer.pipe(
-              Layer.provide(emptySecretStoreLayer),
+              Layer.provide(layerEmptySecretStore),
               Layer.provide(ServerConfig.layer({ ...config, mode })),
             ),
           ),
-          Effect.provideService(HostProcessArguments, ["node", entry]),
-          Effect.provideService(HostProcessIsExecutable, false),
-          Effect.provideService(HostProcessPlatform, "linux"),
-          Effect.provideService(HostProcessEnvironment, {}),
+          Effect.provideService(HostProcess.Arguments, ["node", entry]),
+          Effect.provideService(HostProcess.IsExecutable, false),
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Environment, {}),
         );
         expect(descriptor.capabilities.serverInstallation).toEqual(
           mode === "web" ? { kind: "npm-global", prefix } : undefined,
@@ -146,9 +140,9 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
         return yield* serverEnvironment.getDescriptor;
       }).pipe(
-        Effect.provide(makeServerEnvironmentLayer(baseDir)),
-        Effect.provideService(HostProcess.HostProcessPlatform, host.platform),
-        Effect.provideService(HostProcess.HostProcessArchitecture, host.architecture),
+        Effect.provide(layerServerEnvironment(baseDir)),
+        Effect.provideService(HostProcess.Platform, host.platform),
+        Effect.provideService(HostProcess.Architecture, host.architecture),
       );
 
       expect(descriptor.capabilities.voiceTranscription).toBe(host.supported);
@@ -181,7 +175,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         return yield* identity.getEnvironmentId;
       }).pipe(
         Effect.tap(() => Deferred.succeed(firstInitialized, undefined)),
-        Effect.provide(Layer.fresh(ServerEnvironment.identityLayer)),
+        Effect.provide(Layer.fresh(ServerEnvironment.layerIdentity)),
         Effect.provideService(ServerConfig.ServerConfig, serverConfig),
         Effect.provideService(FileSystem.FileSystem, {
           ...fileSystem,
@@ -205,14 +199,15 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         }),
         Effect.provideService(Crypto.Crypto, {
           ...crypto,
-          randomUUIDv4: Effect.gen(function* () {
-            const id = yield* crypto.randomUUIDv4;
-            if (--remaining === 0) {
-              yield* Deferred.succeed(bothGenerated, undefined);
-            }
-            yield* Deferred.await(bothGenerated);
-            return id;
-          }),
+          randomUUIDv4: (() =>
+            Effect.gen(function* () {
+              const id = yield* crypto.randomUUIDv4();
+              if (--remaining === 0) {
+                yield* Deferred.succeed(bothGenerated, undefined);
+              }
+              yield* Deferred.await(bothGenerated);
+              return id;
+            })) as Crypto.Crypto["randomUUIDv4"],
         }),
       );
 
@@ -236,11 +231,11 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       const first = yield* Effect.gen(function* () {
         const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
         return yield* serverEnvironment.getDescriptor;
-      }).pipe(Effect.provide(makeServerEnvironmentLayer(baseDir)));
+      }).pipe(Effect.provide(layerServerEnvironment(baseDir)));
       const second = yield* Effect.gen(function* () {
         const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
         return yield* serverEnvironment.getDescriptor;
-      }).pipe(Effect.provide(makeServerEnvironmentLayer(baseDir)));
+      }).pipe(Effect.provide(layerServerEnvironment(baseDir)));
 
       expect(first.environmentId).toBe(second.environmentId);
       expect(first.orchestrationProtocolVersion).toBe(ORCHESTRATION_PROTOCOL_VERSION);
@@ -256,6 +251,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.threadPullRequests).toBe(true);
       expect(second.capabilities.threadPullRequestLinking).toBe(true);
       expect(second.capabilities.serverResolvedCommandContext).toBe(true);
+      expect(second.capabilities.projectProviderInstanceOverrides).toBe(true);
       expect(second.capabilities.agentActivityPublishing).toBe(false);
     }),
   );
@@ -266,7 +262,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-server-environment-publish-test-",
       });
-      const testLayer = Layer.mergeAll(
+      const layerTest = Layer.mergeAll(
         ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer)),
         ServerSecretStore.layer,
       ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));
@@ -302,7 +298,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("false"));
         const disabled = yield* serverEnvironment.getDescriptor;
         expect(disabled.capabilities.agentActivityPublishing).toBe(false);
-      }).pipe(Effect.provide(testLayer));
+      }).pipe(Effect.provide(layerTest));
     }),
   );
 
@@ -371,7 +367,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
           description: "permission denied",
           pathOrDescriptor: environmentIdPath,
         });
-        const failingFileSystemLayer = FileSystem.layerNoop({
+        const layerFailingFileSystem = FileSystem.layerNoop({
           exists: () =>
             operation === "check" ? Effect.fail(cause) : Effect.succeed(operation === "read"),
           readFileString: () => Effect.fail(cause),
@@ -388,8 +384,8 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         }).pipe(
           Effect.provide(
             ServerEnvironment.layer.pipe(
-              Layer.provide(emptySecretStoreLayer),
-              Layer.provide(Layer.merge(ServerConfig.layer(serverConfig), failingFileSystemLayer)),
+              Layer.provide(layerEmptySecretStore),
+              Layer.provide(Layer.merge(ServerConfig.layer(serverConfig), layerFailingFileSystem)),
             ),
           ),
           Effect.flip,

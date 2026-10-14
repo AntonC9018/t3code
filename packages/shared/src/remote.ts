@@ -10,8 +10,8 @@ export function getCompanionPairingUrls(url: URL): readonly string[] {
   const raw = readHashParams(url).get(COMPANION_PAIRING_PARAM);
   if (!raw) return [];
   if (raw.length > 8192) throw new Error("Companion pairing URL is too large.");
-  const primary = resolveRemotePairingTarget({ pairingUrl: url.href });
-  const host = new URL(primary.httpBaseUrl);
+  // The primary grant is already consumed when companions cross a page reload.
+  const host = new URL(url.origin);
   if (host.protocol !== "https:" || !host.hostname.endsWith(".ts.net")) {
     throw new Error("Companion pairing requires Tailscale HTTPS.");
   }

@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 import { bootstrapRemoteBearerSession } from "../authorization/remote.ts";
 import { deriveWsBaseUrl, normalizeHttpBaseUrl } from "../environment/endpoint.ts";
@@ -131,7 +131,6 @@ export const preparePairingRegistration = Effect.fn(
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl: target.httpBaseUrl,
     credential: target.credential,
-    scopes: presentation.scopes,
     clientMetadata: presentation.metadata,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   const connectionId = bearerConnectionId(descriptor.environmentId, target.httpBaseUrl);
@@ -168,10 +167,20 @@ const registerPairingConnection = Effect.fn(
   });
   const registration = yield* preparePairingRegistration(input);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-  yield* registry.register(registration);
+  const registerPairedEnvironment = Effect.fnUntraced(function* (paired: typeof registration) {
+    // A platform-managed environment belongs to the host, so pairing leaves it alone.
+    if (!(yield* registry.register(paired))) return;
+    // Pairing is an explicit request to connect, so clear stale compatibility
+    // state and re-enable the environment after the grant has been exchanged.
+    yield* registry.setCompatibility(paired.target.environmentId, null);
+    yield* registry
+      .setEnabled(paired.target.environmentId, true)
+      .pipe(Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }));
+  });
+  yield* registerPairedEnvironment(registration);
   for (const pairingUrl of companions) {
     const companion = yield* preparePairingRegistration({ pairingUrl });
-    yield* registry.register(companion);
+    yield* registerPairedEnvironment(companion);
   }
   return registration.target.environmentId;
 });

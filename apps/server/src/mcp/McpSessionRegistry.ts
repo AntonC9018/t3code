@@ -5,12 +5,12 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SynchronizedRef from "effect/SynchronizedRef";
-import { HttpServer } from "effect/unstable/http";
-import * as NetAddress from "effect/unstable/net/NetAddress";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import * as McpProviderSession from "./McpProviderSession.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
@@ -124,7 +124,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
       const issuedAt = yield* currentTimeMillis;
-      const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+      const providerSessionId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
       const browserToolsAvailable = request.browserToolsAvailable ?? true;

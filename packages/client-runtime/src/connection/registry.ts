@@ -15,6 +15,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   type ConnectionCatalogEntry,
+  type ConnectionCredential,
   type ConnectionProfile,
   type ConnectionRegistration,
   type ConnectionRoute,
@@ -46,12 +47,13 @@ import {
   RELAY_ROUTE_ID,
   connectionRouteId,
   connectionRoutes,
+  credentialConnectionId,
   entryWithRoutes,
   findRouteToSameAddress,
-  isLearned,
   mergeLearnedRoutes,
   routesAfterRemoving,
   upsertRoute,
+  type ReportedEndpoint,
 } from "./routes.ts";
 
 const isSshConnectionProfile = Schema.is(SshConnectionProfile);
@@ -97,9 +99,13 @@ export class EnvironmentRegistry extends Context.Service<
     >;
     readonly networkStatus: SubscriptionRef.SubscriptionRef<NetworkStatus>;
     readonly start: Effect.Effect<void>;
+    /**
+     * Saves a user registration. Succeeds with `false` and changes nothing when
+     * the environment is platform-managed, since the host owns that entry.
+     */
     readonly register: (
       registration: ConnectionRegistration,
-    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    ) => Effect.Effect<boolean, Persistence.ConnectionPersistenceError>;
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
@@ -451,7 +457,10 @@ export const make = Effect.gen(function* () {
       SubscriptionRef.changes(entries),
     ).pipe(
       Stream.map((current) => Option.fromUndefinedOr(current.get(environmentId))),
-      Stream.changes,
+      // Re-pairing can replace the supervisor while its catalog details stay unchanged.
+      Stream.changesWith(
+        (previous, current) => Option.getOrNull(previous) === Option.getOrNull(current),
+      ),
       Stream.switchMap(
         Option.match({
           onNone: () => Stream.empty,
@@ -481,7 +490,7 @@ export const make = Effect.gen(function* () {
       persistedRoutesByEnvironment.keys(),
       (environmentId) =>
         acquireSupervisor(environmentId).pipe(
-          Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+          Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
         ),
       {
         concurrency: "unbounded",
@@ -553,11 +562,11 @@ export const make = Effect.gen(function* () {
   ) {
     const registered = connectionRegistrationCatalogEntry(registration);
     const environmentId = registered.target.environmentId;
-    yield* withLeaseLock(
+    return yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
-          return;
+          return false;
         }
         // A new route joins the environment's saved routes. Registering one it
         // already has (the same id, or a pairing to the same address) replaces
@@ -584,6 +593,7 @@ export const make = Effect.gen(function* () {
           new Set(current).add(environmentId),
         );
         yield* installEntryLocked(entry);
+        return true;
       }),
     );
   });
@@ -654,15 +664,26 @@ export const make = Effect.gen(function* () {
           // on their own loopback origin, so they authenticate with a bearer
           // token instead of the primary's same-origin cookie. Stash it where
           // the resolver's bearer broker looks it up.
+          let bearerReplaced = false;
           if (registration._tag === "BearerConnectionRegistration") {
-            yield* credentials.put(registration.target.connectionId, registration.credential).pipe(
-              Effect.catch((error) =>
-                Effect.logWarning("Could not store the platform bearer credential.", {
-                  environmentId: target.environmentId,
-                  error,
-                }),
-              ),
-            );
+            const stored = yield* credentials
+              .get(registration.target.connectionId)
+              .pipe(Effect.orElseSucceed(() => Option.none<ConnectionCredential>()));
+            const changed =
+              Option.isSome(stored) && !Equal.equals(stored.value, registration.credential);
+            // Only a bearer that was actually stored can be retried with; a
+            // failed write leaves the rejected one in place.
+            bearerReplaced = yield* credentials
+              .put(registration.target.connectionId, registration.credential)
+              .pipe(
+                Effect.as(changed),
+                Effect.catch((error) =>
+                  Effect.logWarning("Could not store the platform bearer credential.", {
+                    environmentId: target.environmentId,
+                    error,
+                  }).pipe(Effect.as(false)),
+                ),
+              );
           }
 
           if (persisted) {
@@ -687,6 +708,46 @@ export const make = Effect.gen(function* () {
           }
 
           yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
+
+          // The catalog entry carries no credential, so a fresh bearer keeps
+          // the equivalent runtime. Anything not yet connected may be using the
+          // old bearer: an attempt in flight would fail with it and then wait
+          // blocked for a manual retry. Retry with the new one instead. A
+          // connected session keeps its socket, but the server revoked the old
+          // bearer, so its HTTP requests (such as the session's scopes) move to
+          // the new one.
+          if (bearerReplaced && registration._tag === "BearerConnectionRegistration") {
+            const scope = (yield* SubscriptionRef.get(serviceScopes)).get(target.environmentId);
+            if (scope !== undefined) {
+              const state = yield* SubscriptionRef.get(scope.supervisor.state);
+              if (
+                state.phase === "connecting" ||
+                state.phase === "backoff" ||
+                (state.phase === "blocked" &&
+                  state.lastFailure?._tag === "ConnectionBlockedError" &&
+                  state.lastFailure.reason === "authentication")
+              ) {
+                yield* scope.supervisor.retryNow;
+              } else if (state.phase === "connected") {
+                const token = registration.credential.token;
+                yield* SubscriptionRef.updateSome(scope.supervisor.prepared, (current) =>
+                  Option.isSome(current) &&
+                  current.value.target._tag === "BearerConnectionTarget" &&
+                  credentialConnectionId(current.value.target.connectionId) ===
+                    registration.target.connectionId &&
+                  current.value.httpAuthorization?._tag === "Bearer" &&
+                  current.value.httpAuthorization.token !== token
+                    ? Option.some(
+                        Option.some({
+                          ...current.value,
+                          httpAuthorization: { _tag: "Bearer", token },
+                        }),
+                      )
+                    : Option.none(),
+                );
+              }
+            }
+          }
         }),
       );
     },
@@ -855,7 +916,7 @@ export const make = Effect.gen(function* () {
   const learnRoutes = Effect.fn("EnvironmentRegistry.learnRoutes")(function* (input: {
     readonly environmentId: EnvironmentId;
     readonly activeRoute: ConnectionRoute;
-    readonly reported: ReadonlyArray<{ readonly httpBaseUrl: string }>;
+    readonly reported: ReadonlyArray<ReportedEndpoint>;
   }) {
     return yield* withLeaseLock(
       input.environmentId,
@@ -873,15 +934,24 @@ export const make = Effect.gen(function* () {
         });
         if (routes === null) return Option.none<ConnectionCatalogEntry>();
         const next = entryWithRoutes(entry, routes);
-        // A learned route owns its profile (address and authorization); the
-        // credential stays with the route it borrows from.
-        const previousIds = new Set(
-          connectionRoutes(entry).map((route) => connectionRouteId(route.target)),
+        // Save new learned profiles and any whose Tailscale mark changed. A
+        // learned route owns its profile; the credential stays with the route
+        // it borrows from.
+        const previousProfiles = new Map(
+          connectionRoutes(entry).map((route) => [
+            connectionRouteId(route.target),
+            Option.getOrNull(route.profile),
+          ]),
         );
         for (const route of routes) {
-          if (!isLearned(route) || previousIds.has(connectionRouteId(route.target))) continue;
           const profile = Option.getOrNull(route.profile);
-          if (profile !== null) yield* profiles.put(profile);
+          if (
+            profile === null ||
+            previousProfiles.get(connectionRouteId(route.target)) === profile
+          ) {
+            continue;
+          }
+          yield* profiles.put(profile);
         }
         yield* registrations.setRoutes(input.environmentId, persistedRoutes(next));
         // Update the lease in place: the live session already works, and
@@ -966,7 +1036,7 @@ export const make = Effect.gen(function* () {
         relayEnvironmentIds,
         (environmentId) =>
           removeRoute(environmentId, RELAY_ROUTE_ID).pipe(
-            Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+            Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
           ),
         {
           concurrency: "unbounded",
@@ -979,7 +1049,7 @@ export const make = Effect.gen(function* () {
   const retryNow = (environmentId: EnvironmentId) =>
     acquireSupervisor(environmentId).pipe(
       Effect.flatMap((supervisor) => supervisor.retryNow),
-      Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+      Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
       Effect.withSpan("EnvironmentRegistry.retryNow"),
     );
   const setEnabled = Effect.fn("EnvironmentRegistry.setEnabled")(function* (

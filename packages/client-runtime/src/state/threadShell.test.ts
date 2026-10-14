@@ -1,15 +1,16 @@
 import {
   EnvironmentId,
   ProjectId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
-import { v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
+import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import { createEnvironmentThreadShellAtoms } from "./threadShell.ts";
 
@@ -99,6 +100,77 @@ describe("v2 thread shell lists", () => {
     });
     expect(registry.get(threads.navigationThreadShellsAtom)).toBe(before);
     expect(registry.get(threads.threadShellsAtom)).toHaveLength(3);
+    dispose();
+    registry.dispose();
+  });
+
+  it("counts a subagent question on its parent only while the subagent runs", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const root = v2ThreadShell;
+    const child = {
+      ...root,
+      id: ThreadId.make("child"),
+      creationSource: "mcp" as const,
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+      lineage: {
+        ...root.lineage,
+        parentThreadId: root.id,
+        relationshipToParent: "subagent" as const,
+      },
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("question"),
+        kind: "user_input" as const,
+        createdAt: v2Now,
+      },
+    };
+    const inputs = threads.childThreadInputsAtom({ environmentId, threadId: root.id });
+    const dispose = registry.mount(inputs);
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [root, child] });
+    expect(registry.get(inputs).map((thread) => thread.id)).toEqual([child.id]);
+    // A follow-up queued behind the blocked run leaves the question live.
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, { ...child, status: "queued" as const }],
+    });
+    expect(registry.get(inputs).map((thread) => thread.id)).toEqual([child.id]);
+    // An async question stays pending after the run that asked it completes.
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, { ...child, status: "completed" as const, activityRunStatus: null }],
+    });
+    expect(registry.get(inputs)).toEqual([]);
+    // Older servers omit the activity run, so the latest run's status decides.
+    const { activityRunStatus: _omitted, ...legacyChild } = child;
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, { ...legacyChild, status: "completed" as const }],
+    });
+    expect(registry.get(inputs)).toEqual([]);
+    dispose();
+    registry.dispose();
+  });
+
+  it("leaves switched-off environments out of navigation", () => {
+    const { registry, threads, catalogValueAtom } = makeHarness([
+      environmentId,
+      remoteEnvironmentId,
+    ]);
+    const dispose = registry.mount(threads.navigationThreadShellsAtom);
+    const environmentsOf = () =>
+      new Set(registry.get(threads.navigationThreadShellsAtom).map((t) => t.environmentId));
+    expect(environmentsOf()).toEqual(new Set([environmentId, remoteEnvironmentId]));
+
+    const setRemoteEnabled = (enabled: boolean) => {
+      const catalog = registry.get(catalogValueAtom);
+      const entries = new Map(catalog.entries);
+      entries.set(remoteEnvironmentId, { ...entries.get(remoteEnvironmentId)!, enabled });
+      registry.set(catalogValueAtom, { ...catalog, entries });
+    };
+    setRemoteEnabled(false);
+    expect(environmentsOf()).toEqual(new Set([environmentId]));
+    setRemoteEnabled(true);
+    expect(environmentsOf()).toEqual(new Set([environmentId, remoteEnvironmentId]));
     dispose();
     registry.dispose();
   });

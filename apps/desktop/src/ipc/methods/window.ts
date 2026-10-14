@@ -13,16 +13,16 @@ import {
   type DesktopEnvironmentBootstrap,
   type PickedThemeFile,
 } from "@t3tools/contracts";
-import { WORKSPACE_IMAGE_PREVIEW_EXTENSIONS } from "@t3tools/shared/filePreview";
+import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
-import * as HostProcess from "@t3tools/shared/hostProcess";
-import * as NodeOS from "node:os";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
@@ -95,6 +95,7 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
   result: Schema.Array(DesktopEnvironmentBootstrapSchema),
   handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBootstraps")(function* () {
     const pool = yield* DesktopBackendPool.DesktopBackendPool;
+    const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
     const instances = yield* pool.list;
     const bootstraps: DesktopEnvironmentBootstrap[] = [];
     const wslBackend = yield* Effect.serviceOption(DesktopWslBackend.DesktopWslBackend);
@@ -149,9 +150,16 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
         ...(instance.id.startsWith(DesktopWslBackend.WSL_INSTANCE_ID_PREFIX) && remoteHttpBaseUrl
           ? { remoteHttpBaseUrl }
           : {}),
-        ...(bootstrap.desktopBootstrapToken
-          ? { bootstrapToken: bootstrap.desktopBootstrapToken }
-          : {}),
+        // A backend launched with the desktop secret accepts whichever token
+        // the secret derives for the current window, so hand out that one
+        // rather than the token frozen into its launch config. Every backend
+        // the desktop launches (primary, staged or mounted WSL runtime) is the
+        // server build bundled with this desktop, so it understands the secret.
+        ...(bootstrap.desktopBootstrapSecret
+          ? { bootstrapToken: yield* configuration.currentBootstrapToken }
+          : bootstrap.desktopBootstrapToken
+            ? { bootstrapToken: bootstrap.desktopBootstrapToken }
+            : {}),
       });
     }
     return bootstraps;
@@ -269,7 +277,7 @@ export const pickProjectFavicon = DesktopIpc.makeIpcMethod({
       filters: [
         {
           name: "Images",
-          extensions: WORKSPACE_IMAGE_PREVIEW_EXTENSIONS.map((extension) => extension.slice(1)),
+          extensions: PROJECT_FAVICON_EXTENSIONS.map((extension) => extension.slice(1)),
         },
       ],
     });
@@ -343,7 +351,7 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   result: Schema.Array(EditorId),
   handler: Effect.fn("desktop.ipc.window.probeRemoteEditors")(function* () {
     const available: Array<EditorId> = [];
-    const env = yield* HostProcess.HostProcessEnvironment;
+    const env = yield* HostProcess.Environment;
     for (const editorId of REMOTE_CAPABLE_EDITOR_IDS) {
       const editor = EDITORS.find((editor) => editor.id === editorId);
       if (editor && Option.isSome(yield* resolveEditorCommand(editor, env))) {
@@ -396,7 +404,7 @@ export const pickThemeFiles = DesktopIpc.makeIpcMethod({
     // The VS Code extensions directory is the same dotfolder on Windows,
     // macOS, and Linux; when it is missing the picker opens wherever the
     // platform would by default.
-    const extensionsDir = path.join(NodeOS.homedir(), ".vscode", "extensions");
+    const extensionsDir = path.join(yield* HostProcess.HomeDirectory, ".vscode", "extensions");
     const defaultPath = yield* fileSystem
       .exists(extensionsDir)
       .pipe(Effect.orElseSucceed(() => false));

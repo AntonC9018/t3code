@@ -14,7 +14,7 @@ import {
   HttpClientError,
   HttpClientRequest,
   HttpClientResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 import * as SpeechService from "./SpeechService.ts";
 import {
   applySpeechAliases,

@@ -1,16 +1,16 @@
 import type {
-  AuthEnvironmentScope,
+  AuthGrantScope,
   AuthPairingCredentialResult,
   EnvironmentId,
 } from "@t3tools/contracts";
 import { setPairingTokenOnUrl } from "@t3tools/shared/remote";
 import { makeEnvironmentHttpApiGroupClient } from "@t3tools/client-runtime/rpc";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { AtomRegistry } from "effect/unstable/reactivity";
+import { AtomRegistry } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { runtime } from "../lib/runtime";
 import { environmentCatalog } from "./catalog";
@@ -76,10 +76,10 @@ async function companionAuth<A, E>(
 
 export async function createPhonePairingCredential(input: {
   readonly label?: string;
-  readonly scopes?: readonly AuthEnvironmentScope[];
+  readonly scopes?: readonly AuthGrantScope[];
 }): Promise<PhonePairingCredential> {
   const label = input.label?.trim();
-  const payload = {
+  const payload: typeof input = {
     ...(label ? { label } : {}),
     ...(input.scopes ? { scopes: input.scopes } : {}),
   };

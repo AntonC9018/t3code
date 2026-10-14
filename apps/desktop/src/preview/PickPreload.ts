@@ -27,6 +27,7 @@ import {
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_VOICE_EVENT_CHANNEL,
   ANNOTATION_VOICE_STATE_CHANNEL,
+  ANNOTATION_SEND_ENABLED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
@@ -137,6 +138,7 @@ interface SelectedElement {
 interface AnnotationSession {
   teardown: (notifyMain: boolean) => void;
   applyTheme: (theme: DesktopPreviewAnnotationTheme) => void;
+  setSendEnabled: (enabled: boolean) => void;
 }
 
 let activeSession: AnnotationSession | null = null;
@@ -322,10 +324,41 @@ function createBox(color: string, fill: string): HTMLDivElement {
 }
 
 function positionBox(node: HTMLElement, rect: PreviewAnnotationRect): void {
+  if (rect.width <= 0 || rect.height <= 0) {
+    node.style.display = "none";
+    return;
+  }
   node.style.display = "block";
   node.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
   node.style.width = `${rect.width}px`;
   node.style.height = `${rect.height}px`;
+}
+
+/** Clamps a box to the viewport and clipping ancestors, so its border is never painted off-screen. */
+function visibleElementRect(element: Element): PreviewAnnotationRect {
+  const rect = element.getBoundingClientRect();
+  let left = Math.max(0, rect.left);
+  let top = Math.max(0, rect.top);
+  let right = Math.min(document.documentElement.clientWidth, rect.right);
+  let bottom = Math.min(document.documentElement.clientHeight, rect.bottom);
+  if (getComputedStyle(element).position !== "fixed") {
+    for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      if (ancestor === document.body || ancestor === document.documentElement) break;
+      const style = getComputedStyle(ancestor);
+      const bounds = ancestor.getBoundingClientRect();
+      const clipLeft = bounds.left + ancestor.clientLeft;
+      const clipTop = bounds.top + ancestor.clientTop;
+      if (style.overflowX !== "visible") {
+        left = Math.max(left, clipLeft);
+        right = Math.min(right, clipLeft + ancestor.clientWidth);
+      }
+      if (style.overflowY !== "visible") {
+        top = Math.max(top, clipTop);
+        bottom = Math.min(bottom, clipTop + ancestor.clientHeight);
+      }
+    }
+  }
+  return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
 }
 
 function createLabel(): HTMLDivElement {
@@ -349,11 +382,15 @@ function updateSelectedVisual(target: SelectedElement): void {
     target.label.style.display = "none";
     return;
   }
-  const rect = target.element.getBoundingClientRect();
-  positionBox(target.outline, rectFromDomRect(rect));
+  const rect = visibleElementRect(target.element);
+  positionBox(target.outline, rect);
+  if (rect.width === 0 || rect.height === 0) {
+    target.label.style.display = "none";
+    return;
+  }
   target.label.textContent = describeRawElement(target.element);
   target.label.style.display = "block";
-  target.label.style.transform = `translate(${Math.max(4, rect.left)}px, ${Math.max(4, rect.top - 22)}px)`;
+  target.label.style.transform = `translate(${Math.max(4, rect.x)}px, ${Math.max(4, rect.y - 22)}px)`;
 }
 
 function toStackFrame(frame: {
@@ -520,11 +557,15 @@ function strokeBounds(
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-function startAnnotation(voice?: DesktopPreviewAnnotationVoiceConfig): void {
+function startAnnotation(
+  voice?: DesktopPreviewAnnotationVoiceConfig,
+  initialSendEnabled = false,
+): void {
   activeSession?.teardown(false);
   let finished = false;
   const host = document.createElement("div");
   host.setAttribute(OVERLAY_ATTRIBUTE, "");
+  host.setAttribute("dir", "ltr");
   host.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
   applyAnnotationTheme(host, annotationTheme);
   const shadowRoot = host.attachShadow({ mode: "closed" });
@@ -534,6 +575,7 @@ function startAnnotation(voice?: DesktopPreviewAnnotationVoiceConfig): void {
 
   const root = document.createElement("div");
   root.setAttribute(OVERLAY_ATTRIBUTE, "");
+  root.setAttribute("dir", "ltr");
   root.className = "fixed inset-0 font-sans text-foreground";
   root.style.cssText = "pointer-events:none";
   const cursorStyle = document.createElement("style");
@@ -583,6 +625,7 @@ function startAnnotation(voice?: DesktopPreviewAnnotationVoiceConfig): void {
 
   const comment = document.createElement("textarea");
   comment.placeholder = "Describe the change…";
+  comment.setAttribute("dir", "auto");
   comment.rows = 1;
   comment.className =
     "min-h-8 max-h-24 min-w-0 flex-1 resize-none overflow-y-hidden border-0 border-b border-b-transparent bg-transparent px-0 py-1.5 font-sans text-sm leading-5 text-foreground outline-none ring-0 placeholder:text-muted-foreground focus:border-b-primary focus:outline-none focus:ring-0";
@@ -803,6 +846,13 @@ function startAnnotation(voice?: DesktopPreviewAnnotationVoiceConfig): void {
   composerRow.appendChild(dragHandle);
 
   const submit = createButton("Attach", "Attach annotation and screenshot (Enter)");
+  let sendEnabled = initialSendEnabled;
+  const updateSendHint = () => {
+    submit.title = sendEnabled
+      ? "Attach annotation and screenshot (Enter). Send with Cmd/Ctrl+Enter."
+      : "Attach annotation and screenshot (Enter)";
+  };
+  updateSendHint();
   submit.className +=
     " h-8 shrink-0 border-primary bg-primary px-3 text-primary-foreground shadow-sm hover:bg-primary/90";
   composerRow.appendChild(submit);
@@ -1209,8 +1259,9 @@ function startAnnotation(voice?: DesktopPreviewAnnotationVoiceConfig): void {
   const getAnnotationBounds = (): PreviewAnnotationRect | null =>
     unionRects(
       [
-        ...Array.from(selected.values(), (target) =>
-          rectFromDomRect(target.element.getBoundingClientRect()),
+        // Follow the visible outline, so a clipped selection does not anchor the editor off-screen.
+        ...Array.from(selected.values(), (target) => visibleElementRect(target.element)).filter(
+          (rect) => rect.width > 0 && rect.height > 0,
         ),
         ...regions.map((region) => region.rect),
         ...strokes.map((stroke) => stroke.bounds),
@@ -1322,6 +1373,8 @@ function startAnnotation(voice?: DesktopPreviewAnnotationVoiceConfig): void {
     for (const target of selected.values()) updateSelectedVisual(target);
     queueEditorLayout();
   };
+  // A scrollbar appearing narrows the viewport without a window resize.
+  const rootResizeObserver = new ResizeObserver(repaint);
 
   const removeTargetAtPoint = (x: number, y: number): boolean => {
     for (const target of Array.from(selected.values()).toReversed()) {
@@ -1406,7 +1459,7 @@ function startAnnotation(voice?: DesktopPreviewAnnotationVoiceConfig): void {
     }
     if (tool === "select" && dragStart === null) {
       const target = pickFromPoint(event.clientX, event.clientY);
-      if (target) positionBox(hoverOutline, rectFromDomRect(target.getBoundingClientRect()));
+      if (target) positionBox(hoverOutline, visibleElementRect(target));
       else clearHoverOutline();
       return;
     }
@@ -1528,6 +1581,7 @@ function startAnnotation(voice?: DesktopPreviewAnnotationVoiceConfig): void {
   const teardown = (notifyMain: boolean): void => {
     if (finished) return;
     finished = true;
+    rootResizeObserver.disconnect();
     restoreStyles();
     window.removeEventListener("pointermove", onPointerMove, true);
     window.removeEventListener("pointerdown", onPointerDown, true);
@@ -1625,6 +1679,7 @@ function startAnnotation(voice?: DesktopPreviewAnnotationVoiceConfig): void {
       }
       return;
     }
+    if (submission === "send" && !sendEnabled) return;
     if (pendingCapture || (selected.size === 0 && regions.length === 0 && strokes.length === 0))
       return;
     pendingCapture = true;
@@ -1676,7 +1731,14 @@ function startAnnotation(voice?: DesktopPreviewAnnotationVoiceConfig): void {
           ...submittedRegions.map((region) => region.rect),
           ...submittedStrokes.map((stroke) => stroke.bounds),
         ]);
-        ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect, submission);
+        ipcRenderer.send(
+          ELEMENT_PICKED_CHANNEL,
+          annotation,
+          screenshotRect,
+          submission === "send" && !sendEnabled ? "attach" : submission,
+          // Main crops a full-page capture, whose pixels are CSS px × this.
+          window.devicePixelRatio,
+        );
       })
       .catch(() => {
         // Last resort. Main is waiting on this message, so hand it an empty
@@ -1687,7 +1749,8 @@ function startAnnotation(voice?: DesktopPreviewAnnotationVoiceConfig): void {
   };
   submit.addEventListener("click", () => submitAnnotation("attach"));
   root.addEventListener("keydown", (event) => {
-    const submission = event.target === comment ? resolveAnnotationSubmission(event) : null;
+    const submission =
+      event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
     // Keep this in the bubble phase so editor inputs receive the event before
     // it is isolated from listeners installed by the inspected page.
     event.stopImmediatePropagation();
@@ -1712,11 +1775,16 @@ function startAnnotation(voice?: DesktopPreviewAnnotationVoiceConfig): void {
   window.addEventListener("keyup", onVoiceKeyUp, true);
   sendVoice(document.hasFocus() && editor.style.display !== "none" ? "focus" : "sync");
   document.documentElement.appendChild(host);
+  rootResizeObserver.observe(document.documentElement);
   refreshToolButtons();
   updateStatus();
   activeSession = {
     teardown,
     applyTheme: (theme) => applyAnnotationTheme(host, theme),
+    setSendEnabled: (enabled) => {
+      sendEnabled = enabled;
+      updateSendHint();
+    },
   };
 }
 
@@ -1726,11 +1794,15 @@ ipcRenderer.on(
     _event,
     theme: DesktopPreviewAnnotationTheme | undefined,
     voice: DesktopPreviewAnnotationVoiceConfig | undefined,
+    sendEnabled?: boolean,
   ) => {
     if (theme) annotationTheme = theme;
-    startAnnotation(voice);
+    startAnnotation(voice, sendEnabled === true);
   },
 );
+ipcRenderer.on(ANNOTATION_SEND_ENABLED_CHANNEL, (_event, enabled: boolean) => {
+  activeSession?.setSendEnabled(enabled === true);
+});
 ipcRenderer.on(ANNOTATION_THEME_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme) => {
   annotationTheme = theme;
   recordingCursor?.setTheme(theme);

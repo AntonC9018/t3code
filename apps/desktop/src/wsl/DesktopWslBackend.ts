@@ -38,7 +38,7 @@ import {
   readTailscaleServeConfig,
   readTailscaleStatus,
 } from "@t3tools/tailscale";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopBackendConfiguration from "../backend/DesktopBackendConfiguration.ts";
@@ -234,6 +234,9 @@ export const layer = Layer.effect(
         ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
+    const ownershipRefusedRef = yield* Ref.make(
+      Option.none<DesktopBackendPool.BackendInstanceId>(),
+    );
 
     const findExistingWslInstance = pool.list.pipe(
       Effect.map((instances) => instances.find((instance) => isWslInstanceId(instance.id))),
@@ -292,6 +295,7 @@ export const layer = Layer.effect(
           onReady: (httpBaseUrl) =>
             endpointMutex.withPermits(1)(
               Effect.gen(function* () {
+                yield* Ref.set(ownershipRefusedRef, Option.none());
                 yield* Ref.set(preflightErrorRef, Option.none());
                 yield* Ref.set(readyUrlRef, httpBaseUrl);
                 yield* exposeRemoteEndpoint(httpBaseUrl);
@@ -302,6 +306,17 @@ export const layer = Layer.effect(
               Ref.set(readyUrlRef, undefined).pipe(
                 Effect.andThen(releaseRemoteEndpoint),
                 Effect.andThen(releaseBridge),
+              ),
+            ),
+          onStateDirOwned: () =>
+            Ref.set(ownershipRefusedRef, Option.some(targetId)).pipe(
+              Effect.andThen(
+                Ref.set(
+                  preflightErrorRef,
+                  Option.some(
+                    "Another T3 Code server is using this distro's T3 home. Stop it, or pair with it instead.",
+                  ),
+                ),
               ),
             ),
         })
@@ -352,6 +367,8 @@ export const layer = Layer.effect(
         const isIdle =
           !snapshot.ready && Option.isNone(snapshot.activePid) && !snapshot.restartScheduled;
         if (isIdle) {
+          const refused = yield* Ref.get(ownershipRefusedRef);
+          if (Option.isSome(refused) && refused.value === existingInstance.id) return;
           yield* logWslBackendInfo("retrying idle WSL backend", { id: existingInstance.id });
           yield* Ref.set(preflightErrorRef, Option.none());
           yield* existingInstance.start;
@@ -363,6 +380,7 @@ export const layer = Layer.effect(
       // any stale secondary preflight error so it reflects this fresh attempt;
       // onPreflightFailed re-sets it only if the new secondary exhausts retries.
       yield* Ref.set(preflightErrorRef, Option.none());
+      yield* Ref.set(ownershipRefusedRef, Option.none());
 
       if (Option.isSome(existingId)) {
         yield* logWslBackendInfo("tearing down WSL backend", { id: existingId.value });

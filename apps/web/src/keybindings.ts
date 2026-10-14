@@ -1,18 +1,4 @@
 import {
-  resolveEventKeys,
-  normalizeEventKey,
-  evaluateWhenNode,
-  matchesShortcutModifiers,
-  resolveKeybindingCommand,
-  type ShortcutEventLike,
-  type ShortcutModifierStateLike,
-} from "@t3tools/shared/keybindingMatching";
-export {
-  shortcutKeyFromEvent,
-  type ShortcutEventLike,
-  type ShortcutModifierStateLike,
-} from "@t3tools/shared/keybindingMatching";
-import {
   type KeybindingCommand,
   type KeybindingShortcut,
   type KeybindingWhenNode,
@@ -22,9 +8,20 @@ import {
   type ModelPickerJumpKeybindingCommand,
   type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
+import {
+  isMacPlatform,
+  matchesKeybindingShortcut,
+  matchesKeybindingShortcutModifiers,
+  normalizeEventKey,
+  resolveEventKeys,
+  type ShortcutEventLike,
+  type ShortcutModifierStateLike,
+} from "@t3tools/shared/keybindings";
 import { isElectron } from "./env";
-import { isMacPlatform } from "./lib/utils";
+import { projectScriptIdFromCommand } from "./projectScripts";
 
+export type { ShortcutEventLike, ShortcutModifierStateLike } from "@t3tools/shared/keybindings";
+export { shortcutKeyFromEvent } from "@t3tools/shared/keybindings";
 export interface ShortcutMatchContext {
   terminalFocus: boolean;
   terminalOpen: boolean;
@@ -74,7 +71,18 @@ function matchesWhenClause(
   context: ShortcutMatchContext,
 ): boolean {
   if (!whenAst) return true;
-  return evaluateWhenNode(whenAst, context);
+  switch (whenAst.type) {
+    case "identifier":
+      if (whenAst.name === "true") return true;
+      if (whenAst.name === "false") return false;
+      return Boolean(context[whenAst.name]);
+    case "not":
+      return !matchesWhenClause(whenAst.node, context);
+    case "and":
+      return matchesWhenClause(whenAst.left, context) && matchesWhenClause(whenAst.right, context);
+    case "or":
+      return matchesWhenClause(whenAst.left, context) || matchesWhenClause(whenAst.right, context);
+  }
 }
 
 export function shortcutConflictKey(
@@ -93,14 +101,15 @@ export function shortcutConflictKey(
   ].join("|");
 }
 
-function findEffectiveShortcutForCommand(
+export function effectiveShortcutsForCommand(
   keybindings: ResolvedKeybindingsConfig,
   command: KeybindingCommand,
   options?: ShortcutMatchOptions,
-): KeybindingShortcut | null {
+): KeybindingShortcut[] {
   const platform = resolvePlatform(options);
   const context = resolveContext(options);
   const claimedShortcuts = new Set<string>();
+  const effective: KeybindingShortcut[] = [];
 
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
@@ -114,11 +123,19 @@ function findEffectiveShortcutForCommand(
 
     claimedShortcuts.add(conflictKey);
     if (binding.command === command) {
-      return binding.shortcut;
+      effective.push(binding.shortcut);
     }
   }
 
-  return null;
+  return effective;
+}
+
+function findEffectiveShortcutForCommand(
+  keybindings: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+  options?: ShortcutMatchOptions,
+): KeybindingShortcut | null {
+  return effectiveShortcutsForCommand(keybindings, command, options)[0] ?? null;
 }
 
 function matchesCommandShortcut(
@@ -135,12 +152,35 @@ export function resolveShortcutCommand(
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): KeybindingCommand | null {
-  return resolveKeybindingCommand(
-    event,
-    keybindings,
-    resolvePlatform(options),
-    resolveContext(options),
-  );
+  const platform = resolvePlatform(options);
+  const context = resolveContext(options);
+
+  for (let index = keybindings.length - 1; index >= 0; index -= 1) {
+    const binding = keybindings[index];
+    if (!binding) continue;
+    if (!matchesWhenClause(binding.whenAst, context)) continue;
+    if (!matchesKeybindingShortcut(event, binding.shortcut, platform)) continue;
+    return binding.command;
+  }
+  return null;
+}
+
+/** App shortcuts use the primary environment; script shortcuts belong to the active project. */
+export function resolveChatShortcutCommand(
+  event: ShortcutEventLike,
+  primaryKeybindings: ResolvedKeybindingsConfig,
+  activeKeybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): KeybindingCommand | null {
+  const primaryCommand = resolveShortcutCommand(event, primaryKeybindings, options);
+  if (primaryCommand !== null && projectScriptIdFromCommand(primaryCommand) === null) {
+    return primaryCommand;
+  }
+
+  const activeCommand = resolveShortcutCommand(event, activeKeybindings, options);
+  return activeCommand !== null && projectScriptIdFromCommand(activeCommand) !== null
+    ? activeCommand
+    : null;
 }
 
 export function formatShortcutKeyLabel(key: string): string {
@@ -230,7 +270,7 @@ export function shouldShowThreadJumpHintsForModifiers(
   for (const command of THREAD_JUMP_KEYBINDING_COMMANDS) {
     const shortcut = findEffectiveShortcutForCommand(keybindings, command, options);
     if (!shortcut) continue;
-    if (matchesShortcutModifiers(modifiers, shortcut, platform)) {
+    if (matchesKeybindingShortcutModifiers(modifiers, shortcut, platform)) {
       return true;
     }
   }

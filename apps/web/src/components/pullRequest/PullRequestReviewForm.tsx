@@ -1,3 +1,4 @@
+import { useAtomCommand } from "~/state/use-atom-command";
 /**
  * The review half of the floating composer: the summary and the verdict that sends it, together
  * with whatever line comments the review is holding. The count of those lives on the composer's
@@ -11,7 +12,6 @@ import { useEffect, useState, type ReactNode, type RefObject } from "react";
 import { useTextFieldSpeech, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { useAtomCommand } from "~/state/use-atom-command";
 
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import { Button } from "../ui/button";
