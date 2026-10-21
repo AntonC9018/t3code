@@ -8760,6 +8760,8 @@ export default function ChatView(props: ChatViewProps) {
     ) {
       return;
     }
+    const context = composerRef.current?.getSendContext();
+    if (resumableRunId !== null && !context?.providerAvailable) return;
     const threadId = activeThread.id;
     sendInFlightRef.current = true;
     setResumingThreadKeys((current) => new Set(current).add(routeThreadKey));
