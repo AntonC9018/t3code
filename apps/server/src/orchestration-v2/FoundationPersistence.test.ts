@@ -814,6 +814,80 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("recovers overlapping shared sessions once and stops them for every binding", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadIds = Array.from({ length: 8 }, (_, i) =>
+        ThreadId.make(`thread:shared-recovery:${i}`),
+      );
+      const sessionIds = ["first", "second"].map((id) =>
+        ProviderSessionId.make(`session:shared-recovery:${id}`),
+      );
+      const events: OrchestrationV2DomainEvent[] = [];
+      for (const threadId of threadIds) {
+        events.push(
+          threadCreatedEvent({ id: `event:${threadId}`, thread: makeThread(threadId, now), now }),
+        );
+        for (const sessionId of sessionIds) {
+          events.push({
+            id: EventId.make(`event:${threadId}:${sessionId}`),
+            type: "provider-session.attached",
+            threadId,
+            driver: providerDriver,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: sessionId,
+              driver: providerDriver,
+              providerInstanceId,
+              status: "ready",
+              cwd: "/public-fixture",
+              model: modelSelection.model,
+              capabilities: CodexProviderCapabilitiesV2,
+              createdAt: now,
+              updatedAt: now,
+              lastError: null,
+            },
+          });
+        }
+      }
+      yield* eventSink.write({ events });
+      const candidates = (yield* projectionStore.getRecoveryThreadIds("runtime")).filter((id) =>
+        threadIds.includes(id),
+      );
+      assert.deepEqual(candidates, [threadIds[0]]);
+      const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+        Effect.provide(ServerSettings.layerTest()),
+        Effect.provideService(
+          EffectWorker.OrchestrationEffectWorkerV2,
+          EffectWorker.OrchestrationEffectWorkerV2.of({
+            awaitWork: Effect.void,
+            runRecoveryOnce: Effect.succeed(false),
+            runOnce: Effect.succeed(false),
+            nextClaimableAt: Effect.succeed(Option.none()),
+            drain: () => Effect.succeed(0),
+          }),
+        ),
+      );
+      yield* recovery.recover;
+      for (const threadId of threadIds) {
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        assert.sameMembers(
+          projection.providerSessions.map((session) => session.id),
+          sessionIds,
+        );
+        assert.isTrue(projection.providerSessions.every((session) => session.status === "stopped"));
+      }
+      assert.isFalse(
+        (yield* projectionStore.getRecoveryThreadIds("runtime")).some((id) =>
+          threadIds.includes(id),
+        ),
+      );
+    }),
+  );
+
   it.effect("compacts superseded state events, imported v1 events, and legacy receipts", () =>
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;

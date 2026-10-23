@@ -3717,11 +3717,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT thread_id FROM orchestration_v2_projection_runtime_requests
                 WHERE status = 'pending'
                 UNION
-                SELECT bindings.thread_id
+                -- Stopping a canonical session updates every binding. Recover
+                -- it once; the other branches retain each thread's live work.
+                SELECT MIN(bindings.thread_id) AS thread_id
                 FROM orchestration_v2_projection_provider_sessions AS sessions
                 CROSS JOIN orchestration_v2_projection_provider_session_bindings AS bindings
                   ON bindings.provider_session_id = sessions.provider_session_id
+                JOIN orchestration_v2_projection_threads AS bound_thread
+                  ON bound_thread.thread_id = bindings.thread_id
+                  AND bound_thread.deleted_at IS NULL
                 WHERE sessions.status NOT IN ('stopped', 'error')
+                GROUP BY sessions.provider_session_id
                 UNION
                 -- A detach drops the binding but keeps the session's status.
                 SELECT sessions.thread_id
