@@ -5,6 +5,40 @@ afterEach(() => {
   vi.resetModules();
 });
 
+it.each([61, 301, 601])("captures all samples in a %s-second recording", async (seconds) => {
+  let capturedSamples = 0;
+  const events: string[] = [];
+  const port = {
+    onmessage: (_event: { data: string }) => {},
+    postMessage: (value: string | number | Float32Array) => {
+      if (value instanceof Float32Array) capturedSamples += value.length;
+      if (typeof value === "string") events.push(value);
+    },
+  };
+  let create!: () => { process(inputs: Float32Array[][]): boolean };
+  vi.stubGlobal("sampleRate", 16_000);
+  vi.stubGlobal(
+    "AudioWorkletProcessor",
+    class {
+      port = port;
+    },
+  );
+  vi.stubGlobal(
+    "registerProcessor",
+    (_name: string, Processor: new () => { process(inputs: Float32Array[][]): boolean }) => {
+      create = () => new Processor();
+    },
+  );
+  await import("./pcmWorklet");
+  const processor = create();
+  port.onmessage({ data: "start" });
+  const audio = new Float32Array(16_000).fill(0.25);
+  for (let i = 0; i < seconds; i++) processor.process([[audio]]);
+  port.onmessage({ data: "stop" });
+  expect(events).toEqual(["stopped"]);
+  expect(capturedSamples).toBe(seconds * 16_000);
+});
+
 it("mixes channels and publishes the final partial PCM block before acknowledging stop", async () => {
   const messages: (string | number | Float32Array)[] = [];
   const port = {

@@ -12,7 +12,6 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
   private length = 0;
   private recording = false;
   private flushed = false;
-  private samples = 0;
   private levelSamples = 0;
   private levelEnergy = 0;
   private level = 0;
@@ -39,13 +38,7 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
 
   private append(pcm: Float32Array) {
     for (const sample of pcm) {
-      if (this.samples === 16_000 * 300) {
-        this.recording = false;
-        this.port.postMessage("limit");
-        break;
-      }
       this.chunk[this.length++] = sample;
-      this.samples++;
       if (this.length === this.chunk.length) this.publish();
     }
   }

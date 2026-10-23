@@ -3,8 +3,6 @@ import { replaceTextRange } from "@t3tools/shared/composerTrigger";
 import type { PreparedVoiceTranscription, VoiceTranscriber } from "./transcription.ts";
 import { VoiceTranscriptionError } from "./transcription.ts";
 
-export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
-
 export const MICROPHONE_PERMISSION_ERROR =
   "Microphone access is required for voice input. Allow access in your browser or system settings and try again.";
 
@@ -65,7 +63,7 @@ export type VoiceRecorderStatus = {
 export interface VoiceRecorder {
   readonly uri: string | null;
   prepareToRecordAsync(): Promise<void>;
-  record(options: { readonly forDuration: number }): void;
+  record(options?: { readonly forDuration?: number }): void;
   stop(): Promise<void>;
 }
 
@@ -351,7 +349,7 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
         return;
       }
       this.capturedDraft = capturedDraft;
-      this.dependencies.recorder.record({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
+      this.dependencies.recorder.record();
       this.setState({ phase: "recording", error: null, errorAction: null });
     } catch (error) {
       if (this.isCurrent(operationToken))

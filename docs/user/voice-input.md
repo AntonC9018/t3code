@@ -75,6 +75,7 @@ transcriptions while preserving ambiguous words when the language is uncertain.
 ### Optional transcript cleanup
 
 Enable **Voice post-processing** in Voice settings to polish a completed transcript.
+It is disabled by default.
 Cleanup runs through a provider configured on the thread's environment. Its model
 is configured separately from the environment's general text generation model.
 The transcript and existing draft context are sent to that provider to help resolve

@@ -123,9 +123,10 @@ export function createBrowserVoiceInputPlatform(input: {
         throw error;
       }
     },
-    record: ({ forDuration }) => {
+    record: (options) => {
       worklet?.port.postMessage("start");
-      durationTimer = setTimeout(input.onDurationLimit, forDuration * 1_000);
+      if (options?.forDuration !== undefined)
+        durationTimer = setTimeout(input.onDurationLimit, options.forDuration * 1_000);
     },
     stop: async () => {
       if (!worklet) return;

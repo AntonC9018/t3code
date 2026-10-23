@@ -180,8 +180,8 @@ then confirm to transcribe. Text is inserted where your selection was when
 recording started, ready for you to review and edit before sending.
 
 The first use may download Apple's speech model and needs a network connection.
-Later transcription works offline for that language. Recordings can be up to five
-minutes long. Canceling, leaving the screen, or an audio interruption discards the
+Later transcription works offline for that language. Record until you confirm or
+cancel. Canceling, leaving the screen, or an audio interruption discards the
 recording and preserves your existing draft. While recording, the screen stays
 awake; it can sleep normally once recording stops.
 
