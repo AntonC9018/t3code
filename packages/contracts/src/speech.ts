@@ -132,7 +132,7 @@ export const DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS: SpeechTranscriptionOptions = 
   speechCustomWords: [],
   speechRemoveFillerWords: true,
   speechCorrectionWord: "",
-  speechPostProcessingEnabled: true,
+  speechPostProcessingEnabled: false,
 };
 export const SPEECH_MAX_OPTIONS_BYTES = 128_000;
 

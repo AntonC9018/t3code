@@ -417,7 +417,7 @@ describe("ServerSettings speech model", () => {
     expect(decodeClientSettings({}).speechLanguage).toBe("auto");
     expect(decodeClientSettings({}).speechCustomWords).toEqual([]);
     expect(decodeClientSettings({}).speechRemoveFillerWords).toBe(true);
-    expect(decodeClientSettings({}).speechPostProcessingEnabled).toBe(true);
+    expect(decodeClientSettings({}).speechPostProcessingEnabled).toBe(false);
     expect(decodeClientSettings({}).speechCorrectionWord).toBe("");
     expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingModelSelection).not.toBe(
       DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
