@@ -2,6 +2,7 @@ import { decodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import { expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import { FetchHttpClient } from "effect/http";
 import { EnvironmentId, DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -92,6 +93,71 @@ it.effect.each([
     expect(credentials).toBeUndefined();
     const init = fetch.mock.calls[0]?.[1];
     expect(new Headers(init?.headers).get("authorization")).toBe("Bearer secret");
+  }),
+);
+
+it.effect("cancels a long batch recording without starting later requests", () =>
+  Effect.gen(function* () {
+    const started = Promise.withResolvers<void>();
+    const fetch = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          started.resolve();
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            {
+              once: true,
+            },
+          );
+        }),
+    );
+    const fiber = yield* transcribeEnvironmentPcm(
+      prepared("https://remote.example"),
+      new Uint8Array(16_000 * 4 * 301),
+      DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+    ).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* Effect.promise(() => started.promise);
+    yield* Fiber.interrupt(fiber);
+    expect(fetch).toHaveBeenCalledOnce();
+  }),
+);
+
+it.effect("transcribes recordings longer than five minutes as bounded contiguous requests", () =>
+  Effect.gen(function* () {
+    const pcm = new Uint8Array(16_000 * 4 * 301 + 4);
+    new DataView(pcm.buffer).setFloat32(0, 0.25, true);
+    new DataView(pcm.buffer).setFloat32(pcm.byteLength - 4, 0.5, true);
+    const requests: Uint8Array[] = [];
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(new Uint8Array(await new Response(init?.body).arrayBuffer()));
+      return Response.json({ text: `part ${requests.length}` });
+    });
+    const result = yield* transcribeEnvironmentPcm(
+      prepared("https://remote.example"),
+      pcm,
+      DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+    ).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+    );
+    expect(fetch.mock.calls.length).toBeGreaterThan(1);
+    const decoded = requests.map((request) => decodeSpeechPcmRequest(request).pcm);
+    expect(decoded.every((chunk) => chunk.byteLength <= 16_000 * 4 * 30)).toBe(true);
+    expect(requests.length).toBeGreaterThan(2);
+    expect(decoded.reduce((total, chunk) => total + chunk.byteLength, 0)).toBe(pcm.byteLength);
+    expect(new DataView(decoded[0]!.buffer, decoded[0]!.byteOffset).getFloat32(0, true)).toBe(0.25);
+    expect(
+      new DataView(decoded.at(-1)!.buffer, decoded.at(-1)!.byteOffset).getFloat32(
+        decoded.at(-1)!.byteLength - 4,
+        true,
+      ),
+    ).toBe(0.5);
+    expect(result.text).toBe(requests.map((_, index) => `part ${index + 1}`).join(" "));
   }),
 );
 

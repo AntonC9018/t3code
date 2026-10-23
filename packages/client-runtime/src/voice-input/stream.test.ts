@@ -83,10 +83,10 @@ it("coalesces queued audio into fewer inference frames", async () => {
   abort.abort();
 });
 
-it("rejects recordings beyond the duration limit", async () => {
+it("caps buffered audio when inference falls behind without imposing a recording duration limit", async () => {
   const { socket, stream, onError } = await connect();
   stream.feed(new Float32Array(SPEECH_STREAM_MAX_QUEUED_BYTES / 4 + 1));
-  await expect(stream.finish()).rejects.toThrow("limited to five minutes");
+  await expect(stream.finish()).rejects.toThrow("cannot keep up with buffered microphone audio");
   expect(onError).toHaveBeenCalledOnce();
   expect(socket.sent).toHaveLength(0);
   expect(socket.closed).toBe(true);

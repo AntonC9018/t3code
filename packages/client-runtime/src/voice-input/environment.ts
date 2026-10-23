@@ -18,6 +18,9 @@ import {
 import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpAuth.ts";
 
 const VOICE_REQUEST_TIMEOUT_MS = 30 * 60_000;
+const SPEECH_BATCH_CHUNK_SECONDS = 30;
+const SPEECH_SAMPLE_RATE = 16_000;
+const SPEECH_BYTES_PER_SAMPLE = Float32Array.BYTES_PER_ELEMENT;
 type EnvironmentApiClient<G extends "voice" | "auth"> = Effect.Success<
   ReturnType<typeof makeEnvironmentHttpApiGroupClient<G>>
 >;
@@ -133,7 +136,7 @@ export const cancelEnvironmentSpeechModelDownload = (
     run: ({ client, headers }) => client.cancelModelDownload({ headers, payload: { modelId } }),
   });
 
-export const transcribeEnvironmentPcm = (
+const transcribeEnvironmentPcmRequest = (
   prepared: PreparedConnection,
   pcm: Uint8Array,
   options: SpeechTranscriptionOptions,
@@ -148,6 +151,58 @@ export const transcribeEnvironmentPcm = (
         headers,
         payload: encodeSpeechPcmRequest(pcm, options),
       }),
+  });
+
+const speechBatchChunkBytes =
+  SPEECH_BATCH_CHUNK_SECONDS * SPEECH_SAMPLE_RATE * SPEECH_BYTES_PER_SAMPLE;
+const speechBoundarySearchBytes = 5 * SPEECH_SAMPLE_RATE * SPEECH_BYTES_PER_SAMPLE;
+const speechBoundaryFrameBytes = 320 * SPEECH_BYTES_PER_SAMPLE;
+
+const nextSpeechBatchBoundary = (pcm: Uint8Array, offset: number) => {
+  const target = Math.min(offset + speechBatchChunkBytes, pcm.byteLength);
+  if (target === pcm.byteLength) return target;
+  const searchStart = Math.max(offset + speechBatchChunkBytes - speechBoundarySearchBytes, offset);
+  const view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+  let bestBoundary = target;
+  let lowestEnergy = Infinity;
+  for (
+    let frame = searchStart;
+    frame + speechBoundaryFrameBytes <= target;
+    frame += speechBoundaryFrameBytes
+  ) {
+    let energy = 0;
+    for (let sample = frame; sample < frame + speechBoundaryFrameBytes; sample += 4) {
+      const value = view.getFloat32(sample, true);
+      energy += value * value;
+    }
+    if (energy < lowestEnergy) {
+      lowestEnergy = energy;
+      bestBoundary = frame + speechBoundaryFrameBytes / 2;
+    }
+  }
+  return bestBoundary;
+};
+
+/** Split long recordings into contiguous short requests; each request stays within backend limits. */
+export const transcribeEnvironmentPcm = (
+  prepared: PreparedConnection,
+  pcm: Uint8Array,
+  options: SpeechTranscriptionOptions,
+) =>
+  Effect.gen(function* () {
+    const transcripts: string[] = [];
+    let offset = 0;
+    while (offset < pcm.byteLength) {
+      const end = nextSpeechBatchBoundary(pcm, offset);
+      const result = yield* transcribeEnvironmentPcmRequest(
+        prepared,
+        pcm.subarray(offset, end),
+        options,
+      );
+      if (result.text.trim()) transcripts.push(result.text.trim());
+      offset = end;
+    }
+    return { text: transcripts.join(" ") };
   });
 
 export const postProcessEnvironmentTranscript = (

@@ -134,7 +134,7 @@ export async function openSpeechStream(input: {
       if (closed || finishing) return;
       const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
       if (queuedBytes + inFlightBytes + bytes.byteLength > SPEECH_STREAM_MAX_QUEUED_BYTES) {
-        fail(new Error("Voice recordings are limited to five minutes."));
+        fail(new Error("Live transcription cannot keep up with buffered microphone audio."));
         return;
       }
       let offset = 0;

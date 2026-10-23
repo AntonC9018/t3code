@@ -708,7 +708,6 @@ export const make = Effect.gen(function* () {
           backend: streamModel.backend,
           durationMs: Math.round(preparation.durationMs),
         });
-        let byteLength = 0;
         const received: Float32Array[] = [];
         let usedCpuFallback = false;
         // Keep client revisions independent of native streams, which restart on CPU fallback.
@@ -727,16 +726,12 @@ export const make = Effect.gen(function* () {
         return {
           feed: (bytes: Uint8Array) =>
             run(async () => {
-              if (
-                bytes.byteLength > SPEECH_STREAM_MAX_CHUNK_BYTES ||
-                byteLength + bytes.byteLength > MAX_SPEECH_BYTES
-              )
+              if (bytes.byteLength > SPEECH_STREAM_MAX_CHUNK_BYTES)
                 throw new SpeechInvalidAudioError({
                   byteLength: bytes.byteLength,
-                  message: "Speech stream audio limit exceeded.",
+                  message: "Speech stream chunk size limit exceeded.",
                 });
               const pcm = decodeSpeechPcm(bytes, true);
-              byteLength += bytes.byteLength;
               received.push(pcm);
               try {
                 const update = await streamModel.feed(pcm);
