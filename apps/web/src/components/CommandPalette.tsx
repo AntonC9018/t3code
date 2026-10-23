@@ -55,6 +55,7 @@ import {
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigateBack } from "../hooks/useNavigateBack";
 import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
@@ -373,6 +374,8 @@ function projectFavicon(project: Project) {
 
 export function CommandPalette({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  const navigateBack = useNavigateBack();
+  const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const [state, dispatch] = useReducer(reduceCommandPaletteUiState, {
     open: false,
     mode: "command",
@@ -468,8 +471,10 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       if (command === "usage.open") {
         event.preventDefault();
         event.stopPropagation();
+        if (event.repeat) return;
         setOpen(false);
-        void navigate({ to: "/usage" });
+        if (usagePageOpen) navigateBack();
+        else void navigate({ to: "/usage" });
         return;
       }
       const mode = overlayModeForCommand(command);
@@ -486,6 +491,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     appearanceMode,
     keybindings,
     navigate,
+    navigateBack,
     previewOpen,
     resolvedTheme,
     setAppearanceMode,
@@ -494,6 +500,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     theme,
     themeHalves,
     toggleMode,
+    usagePageOpen,
   ]);
 
   useEffect(

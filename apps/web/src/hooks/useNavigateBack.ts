@@ -2,7 +2,7 @@ import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect } from "react";
 
 /** Returns to the previous app page, or home when opened without app history. */
-function useNavigateBack() {
+export function useNavigateBack() {
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
 
