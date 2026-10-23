@@ -123,9 +123,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const latestInputRef = useRef(input);
   const microphoneIdRef = useRef(microphoneId);
   const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
+  const previousDraftInputRef = useRef({ ownerKey: input.ownerKey, text: input.draftText });
 
   useEffect(() => {
     latestInputRef.current = input;
+    const previous = previousDraftInputRef.current;
+    if (previous.ownerKey === input.ownerKey && previous.text === input.draftText) return;
+    previousDraftInputRef.current = { ownerKey: input.ownerKey, text: input.draftText };
     const revision = draftRevisionRef.current;
     if (revision.ownerKey !== input.ownerKey || revision.text !== input.draftText) {
       draftRevisionRef.current = {

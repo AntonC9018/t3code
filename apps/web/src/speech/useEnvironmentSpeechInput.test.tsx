@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   transcript: null as Promise<string> | null,
   processedTranscript: null as Promise<string> | null,
   draft: "",
+  editorDraft: null as string | null,
   disabled: false,
   annotation: false,
   draftThread: false,
@@ -171,8 +172,11 @@ function Probe() {
     draftText: mocks.draft,
     disabled: mocks.disabled,
     readDraft: () => ({
-      text: mocks.draft,
-      selection: { start: mocks.draft.length, end: mocks.draft.length },
+      text: mocks.editorDraft ?? mocks.draft,
+      selection: {
+        start: (mocks.editorDraft ?? mocks.draft).length,
+        end: (mocks.editorDraft ?? mocks.draft).length,
+      },
     }),
     commitDraft: mocks.committed,
   });
@@ -244,12 +248,29 @@ afterEach(async () => {
   mocks.transcript = null;
   mocks.processedTranscript = null;
   mocks.draft = "";
+  mocks.editorDraft = null;
   mocks.disabled = false;
   mocks.annotation = false;
   mocks.draftThread = false;
   mocks.cleanup.mockClear();
   mocks.committed.mockClear();
   vi.unstubAllGlobals();
+});
+it("keeps dictation when a focus rerender arrives before the editor text prop catches up", async () => {
+  mocks.microphoneFailure = false;
+  mocks.editorDraft = "Latest editor text";
+  await mountProbe();
+  await act(() => voice.start());
+  expect(voice.state.phase).toBe("recording");
+  // The imperative editor snapshot is current, but an unrelated focus render
+  // still carries the previous React draft prop.
+  await act(() => root!.render(<Probe />));
+  await act(() => voice.stop());
+  expect(voice.state.phase).toBe("idle");
+  expect(mocks.committed).toHaveBeenCalledWith(
+    "Latest editor text Raw transcript",
+    expect.anything(),
+  );
 });
 it.each([false, true])(
   "includes project-only aliases in annotation transcription and cleanup (draft thread: %s)",
