@@ -62,10 +62,14 @@ function errorItem(
 }
 
 describe("runtime diagnostics in the v2 work log", () => {
-  it("shows the retained error message in place of a generic row label", () => {
-    const entry = workEntry(errorItem());
+  it("shows the retained error message while the provider turn is still running", () => {
+    const entry = workEntry(errorItem({ status: "running" }));
 
-    expect(entry).toMatchObject({ label: "Runtime error", detail: retainedMessage });
+    expect(entry).toMatchObject({
+      label: "Runtime error",
+      detail: retainedMessage,
+      toolLifecycleStatus: "inProgress",
+    });
     expect(workEntryDisplayLabel(entry, undefined)).toBe(retainedMessage);
   });
 

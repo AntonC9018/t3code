@@ -992,6 +992,10 @@ export const layer: Layer.Layer<
         }
         const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
         const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
+        const latestProviderFailure = yield* Ref.make<{
+          readonly failure: OrchestrationV2ProviderFailure;
+          readonly itemOrdinal: number;
+        } | null>(null);
         const latestProviderThread = yield* Ref.make(input.providerThread);
         const latestRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(null);
         const routeIdentity: ProviderEventRouteIdentity = {
@@ -1435,6 +1439,17 @@ export const layer: Layer.Layer<
                 yield* Ref.update(latestTurnItemOrdinal, (current) =>
                   Math.max(current, event.turnItem.ordinal),
                 );
+                if (event.turnItem.type === "error") {
+                  yield* Ref.set(
+                    latestProviderFailure,
+                    event.turnItem.status === "running" || event.turnItem.status === "failed"
+                      ? {
+                          failure: event.turnItem.failure,
+                          itemOrdinal: event.turnItem.ordinal,
+                        }
+                      : null,
+                  );
+                }
               }
               if (event.type === "turn.terminal") {
                 yield* Ref.set(terminalEvent, event);
@@ -1501,6 +1516,7 @@ export const layer: Layer.Layer<
                         )
                     : null;
                 const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
+                const providerFailure = yield* Ref.get(latestProviderFailure);
                 const openSubagents = yield* Ref.get(openRunOwnedSubagents);
                 let nextRetryWarningAt = completedAt;
                 yield* writeFinalRunEvents({
@@ -1517,8 +1533,9 @@ export const layer: Layer.Layer<
                   ...(interruptedProviderTurn === null ? {} : { interruptedProviderTurn }),
                   completedAt,
                   terminal: makeFailedTerminalEvent(
-                    makeProviderFailure({ cause: Cause.squash(cause), class: "unknown" }),
-                    latestItemOrdinal + 1,
+                    providerFailure?.failure ??
+                      makeProviderFailure({ cause: Cause.squash(cause), class: "unknown" }),
+                    providerFailure?.itemOrdinal ?? latestItemOrdinal + 1,
                   ),
                   failureItemPersisted: false,
                   refreshAfterTurn,

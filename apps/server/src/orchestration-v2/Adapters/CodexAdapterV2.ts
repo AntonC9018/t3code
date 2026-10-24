@@ -1193,6 +1193,31 @@ interface ActiveCodexTurnContext {
   >;
 }
 
+function makeCodexProviderFailureTurnItem(input: {
+  readonly context: ActiveCodexTurnContext;
+  readonly failure: OrchestrationV2ProviderFailure;
+  readonly itemOrdinal: number;
+  readonly occurredAt: DateTime.Utc;
+  readonly status: Extract<OrchestrationV2TurnItem, { type: "error" }>["status"];
+}): Extract<OrchestrationV2TurnItem, { type: "error" }> {
+  const item = makeProviderFailureTurnItem({
+    driver: CODEX_PROVIDER,
+    threadId: input.context.input.threadId,
+    runId: input.context.input.runId,
+    nodeId: input.context.input.rootNodeId,
+    providerThreadId: input.context.providerThread.id,
+    providerTurnId: input.context.providerTurnId,
+    itemOrdinal: input.itemOrdinal,
+    failure: input.failure,
+    occurredAt: input.occurredAt,
+  });
+  return {
+    ...item,
+    status: input.status,
+    completedAt: input.status === "running" ? null : input.occurredAt,
+  };
+}
+
 interface ActiveCodexProviderRetry {
   readonly nativeMessage: string;
   readonly nativeCode: string | null;
@@ -4610,25 +4635,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 context,
                 `terminal-failure:${context.providerTurnId}`,
               );
-              const failureItem = makeProviderFailureTurnItem({
-                driver: CODEX_PROVIDER,
-                threadId: context.input.threadId,
-                runId: context.input.runId,
-                nodeId: context.input.rootNodeId,
-                providerThreadId: context.providerThread.id,
-                providerTurnId: context.providerTurnId,
-                itemOrdinal,
+              const failureItem = makeCodexProviderFailureTurnItem({
+                context,
                 failure,
+                itemOrdinal,
                 occurredAt,
+                status: "running",
               });
               yield* emitProviderEvent({
                 type: "turn_item.updated",
                 driver: CODEX_PROVIDER,
-                turnItem: {
-                  ...failureItem,
-                  status: "running",
-                  completedAt: null,
-                },
+                turnItem: failureItem,
               });
               return;
             }
@@ -5780,29 +5797,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               context,
               `terminal-failure:${context.providerTurnId}`,
             );
-            const failureItem = makeProviderFailureTurnItem({
-              driver: CODEX_PROVIDER,
-              threadId: context.input.threadId,
-              runId: context.input.runId,
-              nodeId: context.input.rootNodeId,
-              providerThreadId: context.providerThread.id,
-              providerTurnId: context.providerTurnId,
-              itemOrdinal,
+            const failureItem = makeCodexProviderFailureTurnItem({
+              context,
               failure: context.latestProviderFailure.failure,
+              itemOrdinal,
               occurredAt,
+              status:
+                event.status === "completed"
+                  ? "completed"
+                  : event.status === "interrupted"
+                    ? "interrupted"
+                    : "cancelled",
             });
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver: CODEX_PROVIDER,
-              turnItem: {
-                ...failureItem,
-                status:
-                  event.status === "completed"
-                    ? "completed"
-                    : event.status === "interrupted"
-                      ? "interrupted"
-                      : "cancelled",
-              },
+              turnItem: failureItem,
             });
           }
           const current =

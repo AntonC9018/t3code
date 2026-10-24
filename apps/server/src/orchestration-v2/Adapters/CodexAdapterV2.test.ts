@@ -881,17 +881,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const serverConfig = yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie);
       const changes = yield* makeChangeSignal;
+      const replayDriver = yield* CodexReplay.makeReplayDriver(
+        transcript,
+        beforeEmitInbound === undefined ? {} : { beforeEmitInbound },
+      );
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
         open: (openInput) =>
-          Layer.build(CodexReplay.layerReplay(transcript)).pipe(
+          Layer.build(CodexReplay.layerReplayWithDriver(replayDriver)).pipe(
             Effect.mapError(
               (cause) =>
                 new ProviderAdapter.ProviderAdapterOpenSessionError({
@@ -4125,10 +4130,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   );
 
   it.effect.each(["failed", "completed"] as const)(
-    "surfaces a non-retry provider failure and settles its work-log item on $terminalStatus",
+    "surfaces a non-retry provider failure while $terminalStatus is withheld",
     (terminalStatus) =>
       Effect.scoped(
         Effect.gen(function* () {
+          const releaseTerminal = yield* Deferred.make<void>();
           const nativeThreadId = "native-non-retry-error";
           const nativeTurnId = "turn-non-retry-error";
           const message = "Provider quota reached.";
@@ -4171,7 +4177,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               },
             ],
           });
-          const harness = yield* makeCodexReplayHarness(transcript);
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            undefined,
+            undefined,
+            undefined,
+            (entry) =>
+              entry.label === "turn/completed" ? Deferred.await(releaseTerminal) : Effect.void,
+          );
           yield* harness.runtime.startTurn(
             makeCodexTestTurnInput({
               threadId: harness.threadId,
@@ -4181,26 +4194,67 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               attemptId: RunAttemptId.make("attempt-non-retry-error"),
             }),
           );
-          yield* harness.firstTerminal;
+          yield* harness.until(() =>
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "error" &&
+                event.turnItem.status === "running" &&
+                event.turnItem.failure.message === message,
+            ),
+          );
 
           const failureItemIndex = harness.events.findIndex(
             (event) =>
               event.type === "turn_item.updated" &&
               event.turnItem.type === "error" &&
-              event.turnItem.status === (terminalStatus === "failed" ? "running" : "completed") &&
+              event.turnItem.status === "running" &&
               event.turnItem.failure.message === message,
           );
-          const terminalIndex = harness.events.findIndex((event) => event.type === "turn.terminal");
-
           assert.isAtLeast(failureItemIndex, 0);
-          assert.isAbove(terminalIndex, failureItemIndex);
+          assert.isFalse(harness.events.some((event) => event.type === "turn.terminal"));
           const failureItem = harness.events[failureItemIndex];
+          assert.equal(
+            failureItem?.type === "turn_item.updated" && failureItem.turnItem.type === "error"
+              ? failureItem.turnItem.status
+              : null,
+            "running",
+          );
+          assert.equal(
+            failureItem?.type === "turn_item.updated" && failureItem.turnItem.type === "error"
+              ? failureItem.turnItem.failure.message
+              : null,
+            message,
+          );
           assert.equal(
             failureItem?.type === "turn_item.updated" && failureItem.turnItem.type === "error"
               ? failureItem.turnItem.failure.class
               : null,
             "usage_limit",
           );
+
+          yield* Deferred.succeed(releaseTerminal, undefined);
+          yield* harness.firstTerminal;
+          const terminal = harness.events.find((event) => event.type === "turn.terminal");
+          assert.isDefined(terminal);
+          if (terminal?.type !== "turn.terminal") return;
+          assert.equal(terminal.status, terminalStatus);
+          if (terminal.status === "failed" && failureItem?.type === "turn_item.updated") {
+            assert.equal(
+              failureItem.turnItem.type === "error" ? failureItem.turnItem.ordinal : -1,
+              terminal.failureItemOrdinal,
+            );
+          }
+          if (terminal.status === "completed" && failureItem?.type === "turn_item.updated") {
+            const settledItem = harness.events.find(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "error" &&
+                event.turnItem.id === failureItem.turnItem.id &&
+                event.turnItem.status === "completed",
+            );
+            assert.isDefined(settledItem);
+          }
         }).pipe(
           Effect.provide(
             Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

@@ -42,6 +42,7 @@ import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
@@ -2463,6 +2464,40 @@ it.effect("does not refresh pull requests for auxiliary or stale provider termin
   }),
 );
 
+it.effect("leaves a silent provider turn active until its terminal event arrives", () =>
+  Effect.gen(function* () {
+    const streamStarted = yield* Deferred.make<void>();
+    const releaseTerminal = yield* Deferred.make<void>();
+    const result = yield* captureRootRunTermination({
+      key: "silent-provider-turn",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.unwrap(
+          Deferred.succeed(streamStarted, undefined).pipe(
+            Effect.as(
+              Stream.fromEffect(
+                Deferred.await(releaseTerminal).pipe(
+                  Effect.as(rootTerminalEvent(ids, "completed")),
+                ),
+              ),
+            ),
+          ),
+        ),
+      afterStart: (_closed, state) =>
+        Effect.gen(function* () {
+          yield* Deferred.await(streamStarted);
+          assert.deepEqual(yield* state.written, []);
+          assert.deepEqual(yield* state.observed, []);
+          yield* Deferred.succeed(releaseTerminal, undefined);
+        }),
+    });
+
+    assert.deepEqual(result.written, []);
+    assert.deepEqual(result.observed, ["run:waiting", "pull-requests-refreshed"]);
+    assert.isFalse(result.written.some((item) => item.type === "error"));
+  }),
+);
+
 it.effect("refreshes pull requests after a provider stream exits with an error", () =>
   Effect.gen(function* () {
     const { written, observed } = yield* captureRootRunTermination({
@@ -2484,6 +2519,61 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
     );
     const error = written.find((item) => item.type === "error");
     assert.include(error?.failure.message ?? "", "provider event stream closed unexpectedly");
+  }),
+);
+
+it.effect("preserves a non-retry Codex failure when the provider stream closes", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const message = "Codex account usage limit reached.";
+    const failure = {
+      class: "usage_limit" as const,
+      message,
+      code: "usageLimitExceeded",
+      retryable: false,
+    };
+    let pendingFailureId: TurnItemId | null = null;
+    const { written, observed } = yield* captureRootRunTermination({
+      key: "stream-error-after-codex-limit",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) => {
+        const pendingFailure = {
+          ...makeProviderFailureTurnItem({
+            driver,
+            threadId: ids.threadId,
+            runId: ids.runId,
+            nodeId: ids.rootNodeId,
+            providerThreadId: ids.providerThreadId,
+            providerTurnId: ids.rootProviderTurnId,
+            itemOrdinal: 101,
+            failure,
+            occurredAt: now,
+          }),
+          status: "running" as const,
+          completedAt: null,
+        } satisfies Extract<OrchestrationV2TurnItem, { type: "error" }>;
+        pendingFailureId = pendingFailure.id;
+        return Stream.concat(
+          Stream.make({ type: "turn_item.updated" as const, driver, turnItem: pendingFailure }),
+          Stream.fail(
+            new ProviderAdapter.ProviderAdapterEventStreamError({
+              driver,
+              providerSessionId: ProviderSessionId.make("session:codex-limit-closed"),
+              cause: "provider process exited",
+            }),
+          ),
+        );
+      },
+    });
+
+    const settledError = written.find((item) => item.type === "error");
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    assert.isDefined(settledError);
+    if (settledError?.type !== "error") return;
+    assert.equal(settledError.status, "failed");
+    assert.equal(settledError.id, pendingFailureId);
+    assert.equal(settledError.ordinal, 101);
+    assert.deepEqual(settledError.failure, failure);
   }),
 );
 
@@ -2723,7 +2813,13 @@ function captureRootRunTermination(input: {
   readonly beforeTerminalWrite?: (
     request: Parameters<EventSink.EventSinkV2["Service"]["writeIfRunCurrent"]>[0],
   ) => Effect.Effect<boolean, EventSink.EventSinkV2Error>;
-  readonly afterStart?: (closed: Deferred.Deferred<void>) => Effect.Effect<void>;
+  readonly afterStart?: (
+    closed: Deferred.Deferred<void>,
+    state: {
+      readonly written: Effect.Effect<ReadonlyArray<OrchestrationV2TurnItem>>;
+      readonly observed: Effect.Effect<ReadonlyArray<string>>;
+    },
+  ) => Effect.Effect<void>;
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
@@ -2912,7 +3008,12 @@ function captureRootRunTermination(input: {
       yield* start.pipe(
         Effect.catch((error) => input.onStartFailure?.(error) ?? Effect.fail(error)),
       );
-      yield* input.afterStart?.(ingestionDone) ?? Effect.void;
+      yield* (
+        input.afterStart?.(ingestionDone, {
+          written: Ref.get(writtenItems),
+          observed: Ref.get(observed),
+        }) ?? Effect.void
+      );
       yield* Deferred.await(ingestionDone);
     }).pipe(Effect.provide(layerTest));
 
