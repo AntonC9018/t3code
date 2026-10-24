@@ -4590,20 +4590,46 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             const notificationCode = codexErrorInfoCode(payload.error.codexErrorInfo);
             if (!payload.willRetry) {
+              const failure = withCodexManagedFailure(
+                makeProviderFailure({
+                  message: payload.error.additionalDetails?.trim() || payload.error.message,
+                  code: notificationCode,
+                  class: codexUsageLimitError(notificationCode, payload.error.codexErrorInfo)
+                    ? "usage_limit"
+                    : "provider_error",
+                }),
+                payload.error,
+              );
               context.latestProviderFailure = {
                 nativeMessage: payload.error.message,
                 nativeCode: notificationCode,
-                failure: withCodexManagedFailure(
-                  makeProviderFailure({
-                    message: payload.error.additionalDetails?.trim() || payload.error.message,
-                    code: notificationCode,
-                    class: codexUsageLimitError(notificationCode, payload.error.codexErrorInfo)
-                      ? "usage_limit"
-                      : "provider_error",
-                  }),
-                  payload.error,
-                ),
+                failure,
               };
+              const occurredAt = yield* DateTime.now;
+              const itemOrdinal = yield* resolveItemOrdinal(
+                context,
+                `terminal-failure:${context.providerTurnId}`,
+              );
+              const failureItem = makeProviderFailureTurnItem({
+                driver: CODEX_PROVIDER,
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                nodeId: context.input.rootNodeId,
+                providerThreadId: context.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                itemOrdinal,
+                failure,
+                occurredAt,
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CODEX_PROVIDER,
+                turnItem: {
+                  ...failureItem,
+                  status: "running",
+                  completedAt: null,
+                },
+              });
               return;
             }
             const updatedAt = yield* DateTime.now;
@@ -5748,6 +5774,37 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           context: ActiveCodexTurnContext,
           event: CodexRootTerminalEvent,
         ) {
+          if (event.status !== "failed" && context.latestProviderFailure !== undefined) {
+            const occurredAt = yield* DateTime.now;
+            const itemOrdinal = yield* resolveItemOrdinal(
+              context,
+              `terminal-failure:${context.providerTurnId}`,
+            );
+            const failureItem = makeProviderFailureTurnItem({
+              driver: CODEX_PROVIDER,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId: context.input.rootNodeId,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              itemOrdinal,
+              failure: context.latestProviderFailure.failure,
+              occurredAt,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CODEX_PROVIDER,
+              turnItem: {
+                ...failureItem,
+                status:
+                  event.status === "completed"
+                    ? "completed"
+                    : event.status === "interrupted"
+                      ? "interrupted"
+                      : "cancelled",
+              },
+            });
+          }
           const current =
             event.status === "failed" && event.failure.class === "usage_limit"
               ? {

@@ -4124,6 +4124,91 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect.each(["failed", "completed"] as const)(
+    "surfaces a non-retry provider failure and settles its work-log item on $terminalStatus",
+    (terminalStatus) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "native-non-retry-error";
+          const nativeTurnId = "turn-non-retry-error";
+          const message = "Provider quota reached.";
+          const transcript = makeCodexReplayTranscript({
+            scenario: "codex-non-retry-error-before-terminal",
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+              {
+                type: "emit_inbound",
+                label: "error",
+                frame: {
+                  method: "error",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    willRetry: false,
+                    error: {
+                      message,
+                      codexErrorInfo: "usageLimitExceeded",
+                      additionalDetails: null,
+                    },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: {
+                      ...makeCodexReplayTurn({ id: nativeTurnId, status: terminalStatus }),
+                      ...(terminalStatus === "failed"
+                        ? { error: { message, codexErrorInfo: "usageLimitExceeded" } }
+                        : {}),
+                    },
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              text: "Continue.",
+              attemptId: RunAttemptId.make("attempt-non-retry-error"),
+            }),
+          );
+          yield* harness.firstTerminal;
+
+          const failureItemIndex = harness.events.findIndex(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "error" &&
+              event.turnItem.status === (terminalStatus === "failed" ? "running" : "completed") &&
+              event.turnItem.failure.message === message,
+          );
+          const terminalIndex = harness.events.findIndex((event) => event.type === "turn.terminal");
+
+          assert.isAtLeast(failureItemIndex, 0);
+          assert.isAbove(terminalIndex, failureItemIndex);
+          const failureItem = harness.events[failureItemIndex];
+          assert.equal(
+            failureItem?.type === "turn_item.updated" && failureItem.turnItem.type === "error"
+              ? failureItem.turnItem.failure.class
+              : null,
+            "usage_limit",
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   // regression: #17501 Codex 429 retry exhaustion classifies as a usage limit
   it.effect.each([
     {
