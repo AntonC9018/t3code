@@ -21,6 +21,7 @@ it.effect("upgrades the deployed fork's migration 63 without rewriting its histo
 
     // Do not accept the collision when the caller stops before its repair.
     const blocked = yield* runMigrations({ toMigrationInclusive: 68 }).pipe(Effect.flip);
+    assert(blocked._tag === "MigrationError");
     assert.equal(blocked.kind, "BadState");
     const applied = yield* runMigrations();
     assert.includeDeepMembers(applied, [[69, "ForkStartupCompatibility"]]);
