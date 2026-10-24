@@ -10,6 +10,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { useEnvironmentProviders } from "../../state/environments";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { Input } from "../ui/input";
@@ -21,7 +22,7 @@ import { searchableSetting } from "./settingsSearch";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
-import { useClientSettingsHydrated, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettingsHydrated, updateClientSettings } from "../../hooks/useSettings";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -31,10 +32,12 @@ export function VoicePostProcessingSettings() {
   const [editingCustomInstructions, setEditingCustomInstructions] = useState(false);
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  const updateClientSettings = useUpdateClientSettings();
   const clientSettingsHydrated = useClientSettingsHydrated();
   const { environment, connectedEnvironments, target } = useSettingsScope();
-  const providers = environment?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
+  const providersByEnvironment = useEnvironmentProviders();
+  const providers =
+    (environment ? providersByEnvironment.get(environment.environmentId) : null) ??
+    EMPTY_SERVER_PROVIDERS;
   const textGenerationProviders = providers.filter(
     (provider) => provider.supportsTextGeneration !== false,
   );
@@ -128,8 +131,6 @@ export function VoicePostProcessingSettings() {
                   provider={provider}
                   models={instanceEntry.models}
                   model={modelSelection.model}
-                  prompt=""
-                  onPromptChange={() => {}}
                   modelOptions={modelSelection.options}
                   allowPromptInjectedEffort={false}
                   planModeEnabled={settings.planModeEnabled}

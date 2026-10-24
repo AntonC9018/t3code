@@ -7,7 +7,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { RefreshCwIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { useEnvironment } from "../../state/environments";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
@@ -30,7 +30,6 @@ export function VoiceInputSetup(props: {
   const navigate = useNavigate();
   const environment = useEnvironment(props.environmentId);
   const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
-  const updateClientSettings = useUpdateClientSettings();
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);

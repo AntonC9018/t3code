@@ -77,7 +77,7 @@ vi.mock("../../hooks/useSettings", async () => {
       return select ? select(settings) : settings;
     },
     useClientSettingsHydrated: () => true,
-    useUpdateClientSettings: () => async (patch: Record<string, unknown>) => {
+    updateClientSettings: async (patch: Record<string, unknown>) => {
       mocks.saveClient(patch);
       if (patch.speechCustomWords)
         mocks.customWords = patch.speechCustomWords as typeof mocks.customWords;

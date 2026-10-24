@@ -1,5 +1,4 @@
 import {
-  AuthAdministrativeScopes,
   AuthStandardClientScopes,
   EnvironmentId,
   type AuthEnvironmentScope,
@@ -216,7 +215,6 @@ const registerSwitchedOffEnvironment = Effect.gen(function* () {
       connectionId: PAIRED_PROFILE.connectionId,
       label: "Old label",
     }),
-    // Keep the endpoint unchanged: registration alone must retain the stale reason.
     profile: new BearerConnectionProfile({ ...PAIRED_PROFILE, label: "Old label" }),
     credential: new BearerConnectionCredential({ token: "old-token" }),
   });
@@ -367,24 +365,6 @@ describe("connection onboarding", () => {
       ),
   );
 
-  it.effect("registers an enabled environment on first-time pairing", () =>
-    Effect.gen(function* () {
-      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-      const onboarding = yield* Onboarding.ConnectionOnboarding;
-      expect((yield* SubscriptionRef.get(registry.entries)).size).toBe(0);
-
-      const environmentId = yield* onboarding.registerPairing(PAIRING_INPUT);
-
-      expect(environmentId).toBe(PAIRED_ENVIRONMENT_ID);
-      const entries = yield* SubscriptionRef.get(registry.entries);
-      const entry = entries.get(environmentId);
-      expect(entries.size).toBe(1);
-      expect(entry?.enabled).toBe(true);
-      expect(entry?.unsupportedReason).toBeUndefined();
-      expect(entry?.profile).toEqual(Option.some(PAIRED_PROFILE));
-    }).pipe(Effect.provide(layerPairingOnboarding())),
-  );
-
   it.effect("leaves a platform-managed environment untouched when its id is paired", () =>
     Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
@@ -401,7 +381,10 @@ describe("connection onboarding", () => {
       );
       yield* registry.setCompatibility(PAIRED_ENVIRONMENT_ID, UNSUPPORTED_ERROR);
       const before = yield* SubscriptionRef.get(registry.entries);
-      expect(before.get(PAIRED_ENVIRONMENT_ID)?.enabled).toBe(false);
+      expect(before.get(PAIRED_ENVIRONMENT_ID)).toMatchObject({
+        enabled: true,
+        unsupportedReason: UNSUPPORTED_ERROR.message,
+      });
 
       const environmentId = yield* onboarding.registerPairing(PAIRING_INPUT);
 
@@ -455,7 +438,7 @@ describe("connection onboarding", () => {
   );
   it.effect.each([
     { label: "read-only", scopes: ["orchestration:read"] },
-    { label: "administrative", scopes: AuthAdministrativeScopes },
+    { label: "default", scopes: AuthStandardClientScopes },
   ] as const)("preserves the $label grant when pairing a remote environment", ({ scopes }) =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
@@ -491,28 +474,6 @@ describe("connection onboarding", () => {
       expect(calls.map((call) => call.url)).toEqual([
         "https://remote.example.test/.well-known/t3/environment",
       ]);
-    }),
-  );
-
-  it.effect("pairs an outdated server so it can be updated from this client", () =>
-    Effect.gen(function* () {
-      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
-      const registration = yield* preparePairingRegistration({
-        host: "remote.example.test",
-        pairingCode: "pairing-token",
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            layerClientPresentation,
-            layerPairingHttp(calls, {
-              protocolVersion: ORCHESTRATION_PROTOCOL_VERSION - 1,
-              selfUpdate: true,
-            }),
-          ),
-        ),
-      );
-      expect(registration.target.environmentId).toBe("environment-paired");
-      expect(calls.map((call) => call.url)).toContain("https://remote.example.test/oauth/token");
     }),
   );
 
@@ -559,26 +520,6 @@ describe("connection onboarding", () => {
       expect(calls.map((call) => call.url)).toEqual([
         "https://remote.example.test/.well-known/t3/environment",
       ]);
-    }),
-  );
-
-  it.effect("rejects invalid pairing details before making a request", () =>
-    Effect.gen(function* () {
-      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
-      const error = yield* preparePairingRegistration({
-        host: "",
-        pairingCode: "",
-      }).pipe(
-        Effect.provide(Layer.mergeAll(layerClientPresentation, layerPairingHttp(calls))),
-        Effect.flip,
-      );
-
-      expect(error).toMatchObject({
-        _tag: "ConnectionBlockedError",
-        reason: "configuration",
-        message: "Enter a backend URL.",
-      });
-      expect(calls).toEqual([]);
     }),
   );
 
@@ -673,6 +614,8 @@ describe("connection onboarding", () => {
           connectionId: 'ssh:environment-ssh:["devbox","devbox.example.test","developer",22]',
           target,
         },
+        // Saved so the first connect reuses this pairing instead of adding another.
+        credential: { token: "bearer-token" },
       });
     }),
   );

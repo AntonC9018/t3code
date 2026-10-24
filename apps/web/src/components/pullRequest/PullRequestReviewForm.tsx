@@ -1,10 +1,4 @@
 import { useAtomCommand } from "~/state/use-atom-command";
-/**
- * The review half of the floating composer: the summary and the verdict that sends it, together
- * with whatever line comments the review is holding. The count of those lives on the composer's
- * trigger and mode toggle, and each pending card can be dropped from the diff, so neither is
- * repeated here. The popover around it belongs to PullRequestComposer.
- */
 import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
 import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode, type RefObject } from "react";
@@ -122,7 +116,6 @@ export function PullRequestReviewForm({
     });
     onPendingChange(false);
     if (result._tag === "Failure") {
-      // The draft is kept: whatever went wrong, retyping the review is not the answer.
       toastManager.add({ type: "error", title: "The review could not be submitted" });
       return;
     }
@@ -138,10 +131,16 @@ export function PullRequestReviewForm({
   };
 
   // Forgejo requires a summary when requesting changes, even with inline comments.
-  const canSubmit = (verdict: PullRequestReviewVerdict, text = body) =>
+  const canSubmit = (verdict: PullRequestReviewVerdict, summary = body) =>
     verdict === "request-changes" && requestChangesSummaryRequired
-      ? text.trim().length > 0
-      : verdict === "approve" || text.trim().length > 0 || comments.length > 0;
+      ? summary.trim().length > 0
+      : verdict === "approve" || summary.trim().length > 0 || comments.length > 0;
+  const placeholder =
+    selectedVerdict === undefined || canSubmit(selectedVerdict.value, "")
+      ? "Summarize your review (optional)"
+      : selectedVerdict.value === "request-changes" && requestChangesSummaryRequired
+        ? "Summarize your review (required to request changes)"
+        : "Summarize your review or add line comments";
 
   return (
     <>
@@ -150,11 +149,7 @@ export function PullRequestReviewForm({
         rows={3}
         readOnly={speech.freezesEditor}
         value={body}
-        placeholder={
-          requestChangesSummaryRequired && verdicts.includes("request-changes")
-            ? "Summarize your review (required to request changes)"
-            : "Summarize your review (optional)"
-        }
+        placeholder={placeholder}
         aria-label="Review summary"
         onChange={(event) => setSummary(reviewKey, event.target.value)}
         onKeyDown={(event) => {
@@ -177,30 +172,36 @@ export function PullRequestReviewForm({
           <TextFieldSpeechControls speech={speech} disabled={pending} />
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <Select
-            value={selectedVerdict?.value ?? null}
-            disabled={pending}
-            onValueChange={(value) => {
-              if (value !== null) setRequestedVerdict(value);
-            }}
-          >
-            <SelectTrigger size="xs" className="w-auto min-w-0" aria-label="Review verdict">
-              <span className="flex items-center gap-1.5">
-                {selectedVerdict?.icon}
-                {selectedVerdict?.label}
-              </span>
-            </SelectTrigger>
-            <SelectPopup side="top" alignItemWithTrigger={false}>
-              {offered.map((verdict) => (
-                <SelectItem key={verdict.value} value={verdict.value}>
-                  <span className="flex items-center gap-1.5">
-                    {verdict.icon}
-                    {verdict.label}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
+          {offered.length > 1 ? (
+            <Select
+              value={selectedVerdict?.value ?? null}
+              disabled={pending}
+              onValueChange={(value) => {
+                if (value !== null) setRequestedVerdict(value);
+              }}
+            >
+              <SelectTrigger
+                size="xs"
+                className="mr-auto w-auto min-w-0"
+                aria-label="Review verdict"
+              >
+                <span className="flex items-center gap-1.5">
+                  {selectedVerdict?.icon}
+                  {selectedVerdict?.label}
+                </span>
+              </SelectTrigger>
+              <SelectPopup side="top" alignItemWithTrigger={false}>
+                {offered.map((verdict) => (
+                  <SelectItem key={verdict.value} value={verdict.value}>
+                    <span className="flex items-center gap-1.5">
+                      {verdict.icon}
+                      {verdict.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          ) : null}
           <Button
             size="xs"
             disabled={

@@ -22,7 +22,7 @@ function Probe({ preparing = false }: { preparing?: boolean }) {
       const intent = composerSubmissionIntentForKey({
         event,
         keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
-        isMobileViewport: false,
+        isSoftwareKeyboardOpen: false,
         isDraftThread: true,
         sendShortcut: "enter",
         prompt: "",

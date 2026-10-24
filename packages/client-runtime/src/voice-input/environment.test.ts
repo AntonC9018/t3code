@@ -154,14 +154,11 @@ it.effect.each([61, 301, 601])(
       expect(decoded.reduce((total, chunk) => total + chunk.byteLength, 0)).toBe(pcm.byteLength);
       let offset = 0;
       for (const chunk of decoded) {
-        // Compare native byte spans: deep-equality assertions enumerate tens
-        // of millions of array elements for the ten-minute fixture.
-        expect(
-          Buffer.compare(
-            Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength),
-            Buffer.from(pcm.buffer, pcm.byteOffset + offset, chunk.byteLength),
-          ),
-        ).toBe(0);
+        // Compare byte spans without a deep-equality assertion retaining
+        // millions of diagnostic entries for the ten-minute fixture.
+        const bytes = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+        const expected = new Uint8Array(pcm.buffer, pcm.byteOffset + offset, chunk.byteLength);
+        expect(bytes.every((byte, index) => byte === expected[index])).toBe(true);
         offset += chunk.byteLength;
       }
       expect(offset).toBe(pcm.byteLength);

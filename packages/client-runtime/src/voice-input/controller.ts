@@ -618,9 +618,7 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
       if (uri === this.retryRecording?.uri) continue;
       try {
         this.dependencies.deleteRecording(uri);
-      } catch {
-        // The cache may already have removed a failed or interrupted recording.
-      }
+      } catch {}
     }
     this.ownedRecordingUris.clear();
     if (this.retryRecording) this.ownedRecordingUris.add(this.retryRecording.uri);
@@ -635,9 +633,7 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
     try {
       await this.dependencies.releaseRecording();
       this.recordingConfigured = false;
-    } catch {
-      // Final cleanup retries if the prompt release before transcription fails.
-    }
+    } catch {}
   }
 
   private invalidateOperation(): void {

@@ -41,7 +41,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import {
   useClientSettings,
   useClientSettingsHydrated,
-  useUpdateClientSettings,
+  updateClientSettings,
 } from "../../hooks/useSettings";
 import { ensureLocalApi } from "../../localApi";
 import { runtime } from "../../lib/runtime";
@@ -335,7 +335,6 @@ export function VoiceSettingsPanel() {
   const prepared = supportsVoice ? connection : null;
   const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
   const voiceShortcutMode = useClientSettings((settings) => settings.voiceShortcutMode);
-  const updateClientSettings = useUpdateClientSettings();
   const clientSettings = useClientSettings();
   const scopedSettings = useScopedSettings();
   const updateScopedSettings = useUpdateScopedSettings();
