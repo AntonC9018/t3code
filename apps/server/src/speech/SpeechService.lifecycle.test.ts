@@ -2,6 +2,7 @@ import { beforeEach, expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -138,6 +139,7 @@ const customWordsOptions: SpeechTranscriptionOptions = {
 };
 const correctionWordOptions: SpeechTranscriptionOptions = {
   ...customWordsOptions,
+  speechPostProcessingEnabled: true,
   speechCorrectionWord: "err",
 };
 
@@ -449,6 +451,23 @@ it.effect("holds model ownership until the stream scope closes and preserves sil
     yield* speech.selectModel("fallback-model");
     expect(native.dispose).toHaveBeenCalledOnce();
   }).pipe(Effect.provide(layer)),
+);
+
+it.effect("accepts live stream audio beyond five minutes in bounded chunks", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    yield* Effect.gen(function* () {
+      const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+      const frame = new Uint8Array(new Float32Array(16_000).buffer);
+      for (let second = 0; second < 301; second++) yield* stream.feed(frame);
+      expect(native.feed).toHaveBeenCalledTimes(301);
+      expect(yield* stream.finish).toBe("hello");
+    }).pipe(Effect.scoped);
+  }).pipe(
+    Effect.provide(
+      layer.pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+    ),
+  ),
 );
 
 it.effect("resets cancelled streams and reuses the loaded model", () =>

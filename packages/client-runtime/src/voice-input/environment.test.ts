@@ -127,38 +127,46 @@ it.effect("cancels a long batch recording without starting later requests", () =
   }),
 );
 
-it.effect("transcribes recordings longer than five minutes as bounded contiguous requests", () =>
-  Effect.gen(function* () {
-    const pcm = new Uint8Array(16_000 * 4 * 301 + 4);
-    new DataView(pcm.buffer).setFloat32(0, 0.25, true);
-    new DataView(pcm.buffer).setFloat32(pcm.byteLength - 4, 0.5, true);
-    const requests: Uint8Array[] = [];
-    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      requests.push(new Uint8Array(await new Response(init?.body).arrayBuffer()));
-      return Response.json({ text: `part ${requests.length}` });
-    });
-    const result = yield* transcribeEnvironmentPcm(
-      prepared("https://remote.example"),
-      pcm,
-      DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-    ).pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provideService(FetchHttpClient.Fetch, fetch),
-    );
-    expect(fetch.mock.calls.length).toBeGreaterThan(1);
-    const decoded = requests.map((request) => decodeSpeechPcmRequest(request).pcm);
-    expect(decoded.every((chunk) => chunk.byteLength <= 16_000 * 4 * 30)).toBe(true);
-    expect(requests.length).toBeGreaterThan(2);
-    expect(decoded.reduce((total, chunk) => total + chunk.byteLength, 0)).toBe(pcm.byteLength);
-    expect(new DataView(decoded[0]!.buffer, decoded[0]!.byteOffset).getFloat32(0, true)).toBe(0.25);
-    expect(
-      new DataView(decoded.at(-1)!.buffer, decoded.at(-1)!.byteOffset).getFloat32(
-        decoded.at(-1)!.byteLength - 4,
-        true,
-      ),
-    ).toBe(0.5);
-    expect(result.text).toBe(requests.map((_, index) => `part ${index + 1}`).join(" "));
-  }),
+it.effect.each([61, 301, 601])(
+  "transcribes a %s-second recording as bounded contiguous requests without losing PCM",
+  (durationSeconds) =>
+    Effect.gen(function* () {
+      const samples = new Float32Array(16_000 * durationSeconds);
+      for (let index = 0; index < samples.length; index++)
+        samples[index] = ((index * 17) % 101) / 100;
+      const pcm = new Uint8Array(samples.buffer);
+      const requests: Uint8Array[] = [];
+      const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requests.push(new Uint8Array(await new Response(init?.body).arrayBuffer()));
+        return Response.json({ text: `part ${requests.length}` });
+      });
+      const result = yield* transcribeEnvironmentPcm(
+        prepared("https://remote.example"),
+        pcm,
+        DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      ).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, fetch),
+      );
+      const decoded = requests.map((request) => decodeSpeechPcmRequest(request).pcm);
+      expect(decoded.every((chunk) => chunk.byteLength <= 16_000 * 4 * 30)).toBe(true);
+      expect(requests.length).toBeGreaterThan(2);
+      expect(decoded.reduce((total, chunk) => total + chunk.byteLength, 0)).toBe(pcm.byteLength);
+      let offset = 0;
+      for (const chunk of decoded) {
+        // Compare native byte spans: deep-equality assertions enumerate tens
+        // of millions of array elements for the ten-minute fixture.
+        expect(
+          Buffer.compare(
+            Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength),
+            Buffer.from(pcm.buffer, pcm.byteOffset + offset, chunk.byteLength),
+          ),
+        ).toBe(0);
+        offset += chunk.byteLength;
+      }
+      expect(offset).toBe(pcm.byteLength);
+      expect(result.text).toBe(requests.map((_, index) => `part ${index + 1}`).join(" "));
+    }),
 );
 
 it.effect(
