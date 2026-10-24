@@ -105,7 +105,7 @@ export function resolveWebIconOverrides(
 
 export const DEVELOPMENT_ICON_OVERRIDES = resolveWebIconOverrides("development", "dist/client");
 
-export const DEVELOPMENT_PUBLIC_ICON_OVERRIDES = resolveWebIconOverrides(
-  "development",
+export const DEFAULT_PUBLIC_ICON_OVERRIDES = resolveWebIconOverrides(
+  "production",
   "apps/web/public",
 );

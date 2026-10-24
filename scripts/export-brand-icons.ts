@@ -13,7 +13,7 @@ import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { BRAND_ASSET_PATHS, DEVELOPMENT_PUBLIC_ICON_OVERRIDES } from "./lib/brand-assets.ts";
+import { BRAND_ASSET_PATHS, DEFAULT_PUBLIC_ICON_OVERRIDES } from "./lib/brand-assets.ts";
 import { encodePngIco, readPngDimensions, WINDOWS_ICON_SIZES } from "./lib/icon-export.ts";
 
 const DESIGN_GENERATION = 26;
@@ -751,11 +751,11 @@ export const exportBrandIcons = Effect.fn("exportBrandIcons")(function* (checkOn
     }
   }
 
-  for (const override of DEVELOPMENT_PUBLIC_ICON_OVERRIDES) {
+  for (const override of DEFAULT_PUBLIC_ICON_OVERRIDES) {
     const sourceContents = generated.get(override.sourceRelativePath);
     if (sourceContents === undefined) {
       return yield* Effect.die(
-        new Error(`Generated development web icon is missing: ${override.sourceRelativePath}`),
+        new Error(`Generated default web icon is missing: ${override.sourceRelativePath}`),
       );
     }
     generated.set(override.targetRelativePath, sourceContents);
