@@ -867,10 +867,67 @@ index 6e7b486..5b7290f 100644
  		connectedCallback() {
  			const shadowRoot = this.shadowRoot ?? this.attachShadow({ mode: "open" });
 diff --git a/dist/editor/editor.js b/dist/editor/editor.js
-index 8f04a6f..c203023 100644
+index 8f04a6f..5b70f19 100644
 --- a/dist/editor/editor.js
 +++ b/dist/editor/editor.js
-@@ -1899,7 +1899,11 @@ var Editor = class {
+@@ -107,6 +107,7 @@ var Editor = class {
+ 	#caretHighlightElements;
+ 	#primaryCaretElement;
+ 	#resizeObserver;
++	#fontMetricsElement;
+ 	#fileInstance;
+ 	#applyDocumentChange;
+ 	#applySuspendedDocumentChange;
+@@ -540,6 +541,8 @@ var Editor = class {
+ 		this.#overlayElement = void 0;
+ 		this.#resizeObserver?.disconnect();
+ 		this.#resizeObserver = void 0;
++		this.#fontMetricsElement?.remove();
++		this.#fontMetricsElement = void 0;
+ 		this.#fontRemeasureScheduled = false;
+ 		if (this.#themeSelectionRefreshFrame !== void 0) {
+ 			cancelAnimationFrame(this.#themeSelectionRefreshFrame);
+@@ -1307,7 +1310,16 @@ var Editor = class {
+ 		}
+ 		this.#markerRenderer?.listenHover(contentEl);
+ 		this.#resizeObserver?.disconnect();
++		// A font change need not resize a fixed-width, single-line editor.
++		// Observe font-relative dimensions outside the editable document as well.
++		this.#fontMetricsElement?.remove();
++		this.#fontMetricsElement = h("span", {
++			ariaHidden: "true",
++			contentEditable: "false",
++			style: { position: "absolute", visibility: "hidden", pointerEvents: "none", width: "1ch", height: "1em", overflow: "hidden" }
++		}, contentEl.parentElement);
+ 		this.#resizeObserver = new ResizeObserver(this.#handleLayoutResize);
++		this.#resizeObserver.observe(this.#fontMetricsElement);
+ 		this.#resizeObserver.observe(contentEl);
+ 		this.#resizeObserver.observe(contentEl.parentElement);
+ 		this.#computeContentOffset(contentEl);
+@@ -1769,6 +1781,8 @@ var Editor = class {
+ 		if (change !== void 0) this.#applyChange(change, nextSelections);
+ 	}
+ 	#handleLayoutResize = () => {
++		if (this.#contentElement === void 0) return;
++		const metricsChanged = this.#metrics.init(this.#contentElement);
+ 		const lineAnnotations = this.#lineAnnotations?.length ?? 0;
+ 		const prevGutterWidth = this.#gutterWidthCache;
+ 		const prevContentWidth = this.#contentWidthCache;
+@@ -1776,11 +1790,11 @@ var Editor = class {
+ 		this.#contentWidthCache = void 0;
+ 		const gutterWidthChanged = this.#getGutterWidth() !== prevGutterWidth;
+ 		const contentWidthChanged = this.#getContentWidth() !== prevContentWidth;
+-		if (!gutterWidthChanged && !contentWidthChanged) return;
++		if (!metricsChanged && !gutterWidthChanged && !contentWidthChanged) return;
+ 		this.#lineElementsCache.clear();
+ 		this.#lastAccessedCharX = void 0;
+ 		this.#metrics.clearTextWidthCache();
+-		if (contentWidthChanged) {
++		if (metricsChanged || contentWidthChanged) {
+ 			this.#wrapLineOffsetsCache.clear();
+ 			if (this.#isWrap || lineAnnotations > 0) this.#lineYCache.clear();
+ 		}
+@@ -1899,7 +1913,11 @@ var Editor = class {
  			changedDocumentLines: this.#isDiff && !didLineCountChange ? getChangedDocumentLines(textDocument, change) : void 0,
  			documentLineCount: textDocument.lineCount
  		});
@@ -918,6 +975,44 @@ index df1ba63..676751b 100644
  			this.#inputElement.focus();
  			this.#inputElement.select();
  		};
+diff --git a/dist/editor/textMeasure.d.ts b/dist/editor/textMeasure.d.ts
+index 89e938d..1df1bd8 100644
+--- a/dist/editor/textMeasure.d.ts
++++ b/dist/editor/textMeasure.d.ts
+@@ -10,7 +10,7 @@ declare class Metrics {
+   /** Padding top of the root element. */
+   paddingTop: number;
+   /** initialize the metrics */
+-  init(root: HTMLElement): void;
++  init(root: HTMLElement): boolean;
+   /**
+    * Re-measure the '0' character width against the font that is loaded right
+    * now, returning true when measurement-dependent UI should refresh.
+diff --git a/dist/editor/textMeasure.js b/dist/editor/textMeasure.js
+index 96d4fb1..814b4db 100644
+--- a/dist/editor/textMeasure.js
++++ b/dist/editor/textMeasure.js
+@@ -18,7 +18,11 @@ var Metrics = class {
+ 	paddingTop = 0;
+ 	/** initialize the metrics */
+ 	init(root) {
+-		if (this.#root === root && this.#canvasCtx !== void 0 && this.ch !== -1) return;
++		const previousFont = this.#font;
++		const previousCh = this.ch;
++		const previousLineHeight = this.lineHeight;
++		const previousTabSize = this.tabSize;
++		const previousPaddingTop = this.paddingTop;
+ 		this.#root = root;
+ 		this.#canvas ??= h("canvas", { style: { display: "none" } });
+ 		this.#canvasCtx ??= this.#canvas.getContext("2d") ?? void 0;
+@@ -40,6 +44,7 @@ var Metrics = class {
+ 		}
+ 		const nextTabSize = parseInt(tabSize, 10);
+ 		if (!Number.isNaN(nextTabSize)) this.tabSize = nextTabSize;
++		return previousFont !== this.#font || previousCh !== this.ch || previousLineHeight !== this.lineHeight || previousTabSize !== this.tabSize || previousPaddingTop !== this.paddingTop;
+ 	}
+ 	/**
+ 	* Re-measure the '0' character width against the font that is loaded right
 diff --git a/dist/managers/ResizeManager.d.ts b/dist/managers/ResizeManager.d.ts
 index 3efafc4..9e5b751 100644
 --- a/dist/managers/ResizeManager.d.ts
