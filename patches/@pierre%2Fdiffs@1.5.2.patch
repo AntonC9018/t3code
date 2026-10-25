@@ -989,10 +989,18 @@ index 89e938d..1df1bd8 100644
     * Re-measure the '0' character width against the font that is loaded right
     * now, returning true when measurement-dependent UI should refresh.
 diff --git a/dist/editor/textMeasure.js b/dist/editor/textMeasure.js
-index 96d4fb1..814b4db 100644
+index 96d4fb1..307381e 100644
 --- a/dist/editor/textMeasure.js
 +++ b/dist/editor/textMeasure.js
-@@ -18,7 +18,11 @@ var Metrics = class {
+@@ -7,6 +7,7 @@ var Metrics = class {
+ 	#canvas;
+ 	#canvasCtx;
+ 	#font;
++	#preferDomWidths = false;
+ 	#textWidthCache = /* @__PURE__ */ new Map();
+ 	/** Width of the '0' character. */
+ 	ch = -1;
+@@ -18,7 +19,11 @@ var Metrics = class {
  	paddingTop = 0;
  	/** initialize the metrics */
  	init(root) {
@@ -1005,7 +1013,13 @@ index 96d4fb1..814b4db 100644
  		this.#root = root;
  		this.#canvas ??= h("canvas", { style: { display: "none" } });
  		this.#canvasCtx ??= this.#canvas.getContext("2d") ?? void 0;
-@@ -40,6 +44,7 @@ var Metrics = class {
+@@ -35,11 +40,12 @@ var Metrics = class {
+ 		if (this.#font !== font || this.ch === -1) {
+ 			this.#font = font;
+ 			this.#setCanvasFont(font);
+-			this.ch = this.canvasMeasureTextWidth("0");
+ 			this.clearTextWidthCache();
++			this.ch = this.#measureCharacterWidth();
  		}
  		const nextTabSize = parseInt(tabSize, 10);
  		if (!Number.isNaN(nextTabSize)) this.tabSize = nextTabSize;
@@ -1013,6 +1027,42 @@ index 96d4fb1..814b4db 100644
  	}
  	/**
  	* Re-measure the '0' character width against the font that is loaded right
+@@ -59,12 +65,22 @@ var Metrics = class {
+ 	remeasureCharacterWidth() {
+ 		if (this.#canvasCtx === void 0 || this.#font === void 0) return false;
+ 		this.#setCanvasFont(this.#font);
+-		const ch = this.canvasMeasureTextWidth("0");
++		const textWidthCacheCleared = this.#clearTextWidthCache();
++		const ch = this.#measureCharacterWidth();
+ 		const characterWidthChanged = ch !== this.ch;
+ 		if (characterWidthChanged) this.ch = ch;
+-		const textWidthCacheCleared = this.#clearTextWidthCache();
+ 		return characterWidthChanged || textWidthCacheCleared;
+ 	}
++	#measureCharacterWidth() {
++		// Electron can give canvas and DOM different advances for the same font.
++		// A long DOM sample preserves fractional glyph widths; keep ASCII hit
++		// testing arithmetic-only and use cached DOM widths for other text when
++		// canvas does not agree with the surface we actually render.
++		const sample = "0".repeat(64);
++		const width = this.domMeasureTextWidth(sample) / sample.length;
++		this.#preferDomWidths = width > 0 && Math.abs(width - this.canvasMeasureTextWidth(sample) / sample.length) > 0.01;
++		return width > 0 ? width : this.canvasMeasureTextWidth("0");
++	}
+ 	/**
+ 	* Set the canvas font while the canvas is connected to the document.
+ 	*
+@@ -119,7 +135,9 @@ var Metrics = class {
+ 		return asciiColumns !== -1 ? asciiColumns * this.ch : this.measureTextWidth(segmentText);
+ 	}
+ 	#measureTextWidthWithoutTabs(text) {
+-		if (needsDomTextMeasurement(text)) return this.domMeasureTextWidth(text);
++		const asciiColumns = getExpandedAsciiTextColumns(text, this.tabSize);
++		if (asciiColumns !== -1) return asciiColumns * this.ch;
++		if (this.#preferDomWidths || needsDomTextMeasurement(text)) return this.domMeasureTextWidth(text);
+ 		return this.canvasMeasureTextWidth(text);
+ 	}
+ 	/** measure the width of the text using the canvas measureText API */
 diff --git a/dist/managers/ResizeManager.d.ts b/dist/managers/ResizeManager.d.ts
 index 3efafc4..9e5b751 100644
 --- a/dist/managers/ResizeManager.d.ts
