@@ -48,6 +48,24 @@ on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
 Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
 in Settings.
 
+## File navigation
+
+Use `mod+[` to go back and `mod+]` to go forward through opened files and app
+pages. Switching files preserves each file's scroll position during the session.
+Opening a link to a specific line still takes you to that line.
+
+## Recent chats
+
+Press `mod+e` outside a terminal to open a searchable list of chats you have
+visited, most recent first. Type part of a chat title or project name to filter.
+Use the arrow keys and Enter to open a chat, or Escape to close the list without
+switching. The list starts on the previous chat so pressing the shortcut and then
+Enter switches back and forth between the two most recent chats. Chat history for
+this list is stored on this device.
+
+Change the shortcut under **Recent Chats: Open Picker** in
+**Settings → Keybindings**. The command palette also includes **Open recent chats**.
+
 ## Copy pull request references
 
 With a PR open in the right panel or on the Pull Requests page, use `mod+shift+c`

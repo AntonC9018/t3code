@@ -637,6 +637,20 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("opens recent chats with mod+e outside the terminal", () => {
+    const shortcut = event({ key: "e", ctrlKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "Linux" }),
+      "recentChats.toggle",
+    );
+    assert.isNull(
+      resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
   it("matches punctuation shortcuts by physical key across keyboard layouts", () => {
     const keybindings = compile([
       { shortcut: modShortcut("'", { shiftKey: true }), command: "diff.toggle" },

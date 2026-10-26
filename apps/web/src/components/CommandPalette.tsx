@@ -58,6 +58,7 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
+  HistoryIcon,
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -128,6 +129,7 @@ import {
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
+import { isRecentChatsPickerOpen, openRecentChats } from "../recentChatsBus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
@@ -283,7 +285,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || isRecentChatsPickerOpen()) return;
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: isTerminalFocused(),
@@ -1255,6 +1257,26 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:recent-chats",
+    searchTerms: [
+      "recent chats",
+      "recent threads",
+      "history",
+      "switch chat",
+      "previous chat",
+      "back",
+    ],
+    title: "Open recent chats",
+    description: "Switch between recently visited chats",
+    icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "recentChats.toggle",
+    run: async () => {
+      openRecentChats();
+    },
+  });
 
   const promptLinkTarget = paletteRouteTarget
     ? paletteRouteTarget.kind === "server"

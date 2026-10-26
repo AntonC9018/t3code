@@ -9,6 +9,8 @@ import { resolveShortcutCommand } from "../../keybindings";
 
 import {
   buildKeybindingRows,
+  commandLabel,
+  groupKeybindingRows,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
@@ -17,6 +19,18 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it("labels and groups the recent chats picker under navigation", () => {
+    expect(commandLabel("recentChats.toggle")).toBe("Recent Chats: Open Picker");
+    const rows = buildKeybindingRows(
+      compileResolvedKeybindingsConfig([{ command: "recentChats.toggle", key: "mod+e" }]),
+    );
+    expect(
+      groupKeybindingRows(rows)
+        .find((group) => group.id === "navigation")
+        ?.rows.map((row) => row.command),
+    ).toContain("recentChats.toggle");
+  });
+
   it("keeps sibling row identities when a saved binding moves to the end", () => {
     const bindings = compileResolvedKeybindingsConfig([
       { command: "chat.new", key: "mod+n" },
