@@ -8,7 +8,10 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
+
+import { installFileNavigationHistory } from "../fileNavigationHistory";
+import { resolveThreadRouteRef } from "../threadRoutes";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isElectron } from "../env";
@@ -221,6 +224,15 @@ function routePanelsOpen(routeThreadRef: ReturnType<typeof useThreadRouteRef>) {
 }
 
 export function NavigationHistoryShortcuts() {
+  const router = useRouter();
+  useEffect(
+    () =>
+      installFileNavigationHistory(router.history, (pathname) => {
+        const matches = router.matchRoutes(pathname);
+        return resolveThreadRouteRef(matches[matches.length - 1]?.params ?? {});
+      }),
+    [router],
+  );
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const routeThreadRef = useThreadRouteRef();

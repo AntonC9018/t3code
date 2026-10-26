@@ -112,6 +112,7 @@ import {
   shouldShowFileExplorer,
   workspaceAssetResource,
 } from "./filePreviewMode";
+import { useFileScrollRestoration } from "./useFileScrollRestoration";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
   getOptimisticProjectFileQueryData,
@@ -134,6 +135,7 @@ interface FilePreviewPanelProps {
   openInShortcutEnabled: boolean;
   revealLine: number | null;
   revealRequestId: number;
+  revealRequestToken?: string | undefined;
   onOpenFile: (relativePath: string) => void;
   /** Moves this folder browser to another folder in place; see `navigateFolder`. */
   onNavigateFolder: (relativePath: string, folderTrail: string, keepSource: boolean) => void;
@@ -420,14 +422,14 @@ const REVEAL_GUARD_TOLERANCE_PX = 2;
 interface FileRevealState {
   frameId: number | null;
   cancelGuard: (() => void) | null;
-  handledRequestId: number | null;
-  latestRequestId: number | null;
+  handledRequestId: string | null;
+  latestRequestId: string | null;
 }
 
 function useFileLineReveal(
   relativePath: string | null,
   revealLine: number | null,
-  revealRequestId: number,
+  revealRequestId: string,
 ): FilePostRender {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
 
@@ -1011,6 +1013,7 @@ export default function FilePreviewPanel({
   openInShortcutEnabled,
   revealLine,
   revealRequestId,
+  revealRequestToken,
   onOpenFile,
   onNavigateFolder,
   folderTrail,
@@ -1160,7 +1163,21 @@ export default function FilePreviewPanel({
       : relativePath && attachment === undefined
         ? resolvePathLinkTarget(relativePath, cwd)
         : null;
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const { setRoot: setScrollRoot, restoredRevealLine } = useFileScrollRestoration(
+    JSON.stringify([
+      environmentId,
+      cwd,
+      attachment?.id ?? relativePath,
+      rendered ? renderedMode : "source",
+    ]),
+    revealRequestToken ?? `${threadRef.threadId}:${revealRequestId}`,
+    revealLine,
+  );
+  const onFilePostRender = useFileLineReveal(
+    relativePath,
+    restoredRevealLine,
+    revealRequestToken ?? `${threadRef.threadId}:${revealRequestId}`,
+  );
   useWorkspaceMutationRefresh({
     enabled:
       attachment === undefined &&
@@ -1337,6 +1354,7 @@ export default function FilePreviewPanel({
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
+          ref={setScrollRoot}
           className={cn("min-w-0 flex-1 flex-col overflow-hidden", previewPath ? "flex" : "hidden")}
         >
           {isFolder ? null : relativePath && attachment ? (

@@ -39,6 +39,18 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("gives a fresh line link a distinct request after closing and reopening its file", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "linked.ts", 40);
+    const before = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+    store.closeSurface(refA, "file:linked.ts");
+    store.openFile(refA, "linked.ts", 40);
+    const after = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+    expect(before?.kind === "file" && before.revealRequestToken).not.toBe(
+      after?.kind === "file" && after.revealRequestToken,
+    );
+  });
+
   it("records single and bulk tab closes, newest first", () => {
     const store = useRightPanelStore.getState();
     const pr = pullRequestSurface({
@@ -799,6 +811,7 @@ describe("rightPanelStore", () => {
         relativePath: "src/app.ts",
         revealLine: 40,
         revealRequestId: 1,
+        revealRequestToken: expect.any(String),
       },
       expect.objectContaining({ id: "file:src", folderTrail: "src/app.ts" }),
     ]);
@@ -813,6 +826,7 @@ describe("rightPanelStore", () => {
         relativePath: "src/app.ts",
         revealLine: 40,
         revealRequestId: 1,
+        revealRequestToken: expect.any(String),
       },
     ]);
   });
@@ -903,6 +917,7 @@ describe("rightPanelStore", () => {
           relativePath: "src/index.ts",
           revealLine: 87,
           revealRequestId: 2,
+          revealRequestToken: expect.any(String),
         },
       ],
     });

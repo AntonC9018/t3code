@@ -17,7 +17,7 @@ export function DelimitedTablePreview(props: {
           Table limited to the first 100 rows and 30 columns. Switch to source for the rest.
         </FileSurfaceNotice>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div data-file-scroll-viewport className="min-h-0 flex-1 overflow-auto">
         <table
           className="min-w-full border-separate border-spacing-0 text-xs"
           aria-label={props.name}

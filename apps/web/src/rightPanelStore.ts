@@ -8,6 +8,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { useClosedViewStore } from "./closedViewStore";
+import { randomUUID } from "./lib/utils";
 import { resolveStorage } from "./lib/storage";
 import type { ThreadPanelPresentation } from "./rightPanelLayout";
 import type { ChatFileAttachment } from "./types";
@@ -58,6 +59,7 @@ export type RightPanelSurface =
       relativePath: string;
       revealLine: number | null;
       revealRequestId: number;
+      revealRequestToken?: string;
       attachment?: ChatFileAttachment;
       /**
        * Set when breadcrumbs moved a folder browser up from a deeper path: the
@@ -245,6 +247,7 @@ const fileSurface = (
   relativePath,
   revealLine,
   revealRequestId,
+  ...(revealLine === null ? {} : { revealRequestToken: randomUUID() }),
 });
 
 const attachmentSurface = (attachment: ChatFileAttachment): RightPanelSurface => ({
