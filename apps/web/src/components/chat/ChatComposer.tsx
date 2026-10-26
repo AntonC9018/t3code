@@ -107,6 +107,7 @@ import {
   composerFileNeedsReattach,
   composerDraftHasUserContent,
   composerTargetKey,
+  persistComposerDraftPrompt,
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../../composerDraftStore";
@@ -1934,6 +1935,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ownerKey: JSON.stringify([composerDraftTarget, activePendingProgress?.activeQuestion?.id]),
     draftText: prompt,
     disabled: dictationDisabled,
+    retainedDraft: {
+      read: () => {
+        const text = getComposerDraft(composerDraftTarget)?.prompt ?? "";
+        return { text, selection: { start: text.length, end: text.length } };
+      },
+      commit: (text) => persistComposerDraftPrompt(composerDraftTarget, text),
+    },
     readDraft: () => {
       const snapshot = readComposerSnapshotStable();
       return {
@@ -1950,7 +1958,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         expectedText: snapshot.value,
         focusEditorAfterReplace: false,
       });
-      if (!applied) return;
+      if (!applied) {
+        setComposerDraftPrompt(composerDraftTarget, text);
+        return;
+      }
       const cursor = collapseExpandedComposerCursor(text, selection.start);
       setComposerCursor(cursor);
       window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));

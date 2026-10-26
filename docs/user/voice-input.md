@@ -33,14 +33,26 @@ English text when the model supports translation.
 ## Dictate into a draft
 
 Start voice input with the microphone control, then finish to insert the transcript.
-Cancel to discard the recording and preserve your draft. Recordings can be up to
-five minutes long. On web and desktop, text is inserted at the cursor or replaces
+Cancel to discard the recording and preserve your draft. Recording continues until
+you finish or cancel it. On web and desktop, text is inserted at the cursor or replaces
 the selection captured when recording starts. Editing is disabled while voice input
 is running. Send becomes available once recording starts. Press Send to finish recording and send the completed draft, including
 any existing text, after transcription and optional post-processing. You can also
 press Send while those steps are finishing. In other supported editors, the
 submit or save action works the same way. Cancelling dictation cancels the queued
 action and preserves your draft.
+
+In the web and desktop chat composer, dictation stays with the chat where you started it.
+You can switch chats while recording or transcribing; the completed text goes into
+the original chat's draft. Switching chats cancels a queued Send, so the transcript
+remains available for review.
+
+Unfinished chat recordings are saved on this device as you speak. If transcription
+fails, reconnect the transcription environment and choose **Retry transcription**
+to resend the saved audio without recording again. After a reload or app restart,
+open the original chat to retry its saved recording. Saved audio is removed after
+the text is added to the draft or you explicitly discard it. Keep the browser's
+site data to retain unfinished recordings; they do not sync between devices.
 
 Press `mod+shift+d` to start dictation and `Esc` to discard it. `mod` means Command
 on macOS and Ctrl on Windows and Linux. The shortcut targets the focused supported

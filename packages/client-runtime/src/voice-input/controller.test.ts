@@ -112,6 +112,30 @@ describe("streaming voice input", () => {
     expect(harness.deleted).toEqual(["file:///voice.m4a"]);
   });
 
+  it("retries failed streaming transcription from saved audio without reopening the microphone", async () => {
+    const transcribe = vi.fn(async () => "recovered text");
+    const harness = createHarness({
+      getTranscriber: () => ({
+        prepare: async () => ({
+          locale: "en",
+          transcribe,
+          streaming: {
+            finish: async () => {
+              throw new Error("provider offline");
+            },
+          },
+        }),
+      }),
+    });
+    await harness.controller.start();
+    await harness.controller.stop();
+    expect(harness.deleted).toEqual([]);
+    await harness.controller.start();
+    expect(transcribe).toHaveBeenCalledExactlyOnceWith("file:///voice.m4a", expect.anything());
+    expect(harness.recorder.record).toHaveBeenCalledTimes(1);
+    expect(harness.commits[0]?.text).toBe("hello recovered text");
+  });
+
   it("deletes retained failed audio when the user cancels", async () => {
     const harness = createHarness({
       getTranscriber: () => ({
@@ -125,6 +149,43 @@ describe("streaming voice input", () => {
     await harness.controller.stop();
     harness.controller.cancel();
     expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+  });
+
+  it("keeps audio when saving the completed draft fails", async () => {
+    const commitDraft = vi.fn().mockImplementationOnce(() => {
+      throw new Error("Storage full");
+    });
+    const harness = createHarness({ commitDraft });
+    await harness.controller.start();
+    await harness.controller.stop();
+    expect(harness.controller.currentState).toMatchObject({ phase: "error", hasRecording: true });
+    expect(harness.deleted).toEqual([]);
+    await harness.controller.start();
+    expect(commitDraft).toHaveBeenCalledTimes(2);
+    expect(harness.recorder.record).toHaveBeenCalledTimes(1);
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+  });
+
+  it("keeps a stale transcript's audio and lets an explicit retry insert into the updated draft", async () => {
+    const pending = deferred<string>();
+    const transcribe = vi
+      .fn()
+      .mockImplementationOnce(() => pending.promise)
+      .mockResolvedValue("Recovered");
+    const harness = createHarness({
+      getTranscriber: () => ({ prepare: async () => preparedTranscription(transcribe) }),
+    });
+    await harness.controller.start();
+    const stopping = harness.controller.stop();
+    harness.setDraft(draft({ text: "Changed", selection: { start: 7, end: 7 }, revision: 2 }));
+    pending.resolve("Recovered");
+    await stopping;
+    expect(harness.commits).toEqual([]);
+    expect(harness.deleted).toEqual([]);
+    expect(harness.controller.currentState.hasRecording).toBe(true);
+    await harness.controller.start();
+    expect(harness.commits[0]?.text).toBe("Changed Recovered");
+    expect(harness.recorder.record).toHaveBeenCalledTimes(1);
   });
 
   it("flushes capture before finalizing and commits once without a recording file", async () => {

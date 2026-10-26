@@ -27,6 +27,7 @@ export type VoiceInputState<WithPostProcessing extends boolean = false> = {
   readonly phase: VoiceInputPhase<WithPostProcessing>;
   readonly error: string | null;
   readonly errorAction: "retry" | "settings" | null;
+  readonly hasRecording?: boolean;
 };
 
 export function voiceInputBlocksSubmission<State extends Pick<VoiceInputState<true>, "phase">>(
@@ -86,6 +87,7 @@ export type VoiceInputControllerDependencies<WithPostProcessing extends boolean 
         | undefined
     : never;
   readonly onPostProcessingError?: (error: unknown) => void;
+  readonly onTranscriptReady?: (text: string) => Promise<void>;
   readonly readDraft: () => VoiceDraftSnapshot | null;
   readonly commitDraft: (
     text: string,
@@ -272,6 +274,17 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
     return this.state as VoiceInputState<WithPostProcessing>;
   }
 
+  restoreRecording(
+    uri: string,
+    draft: VoiceDraftSnapshot,
+    transcription: PreparedVoiceTranscription,
+  ): void {
+    if (this.state.phase !== "idle") return;
+    this.retryRecording = { uri, draft, transcription };
+    this.rememberRecordingUri(uri);
+    this.setError("Could not transcribe this recording.", "retry");
+  }
+
   async start(): Promise<void> {
     if (this.state.phase !== "idle" && this.state.phase !== "error") return;
     const initiatingDraft = this.dependencies.readDraft();
@@ -303,7 +316,10 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
 
       if (this.retryRecording) {
         this.recordingUri = this.retryRecording.uri;
-        this.capturedDraft = this.retryRecording.draft;
+        this.capturedDraft =
+          initiatingDraft.text === this.retryRecording.draft.text
+            ? { ...this.retryRecording.draft, revision: initiatingDraft.revision }
+            : initiatingDraft;
         this.transcription = this.retryRecording.transcription;
         this.retryRecording = null;
         await this.finishRecording(true, this.recordingUri);
@@ -503,6 +519,13 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
       const transcription = this.transcription;
       const signal = this.transcriptionAbortController.signal;
       const capturedDraft = this.capturedDraft;
+      if (recordingUri) {
+        this.retryRecording = {
+          uri: recordingUri,
+          draft: capturedDraft,
+          transcription: { locale: transcription.locale, transcribe: transcription.transcribe },
+        };
+      }
       let transcript: string;
       try {
         transcript = await runTranscriptionOperation(() =>
@@ -512,9 +535,6 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
         );
       } catch (error) {
         if (this.isCurrent(operationToken)) {
-          if (!transcription.streaming && recordingUri) {
-            this.retryRecording = { uri: recordingUri, draft: capturedDraft, transcription };
-          }
           this.setError(transcriptionErrorMessage(error), "retry");
         }
         return;
@@ -549,6 +569,8 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
         if (!this.isCurrent(operationToken)) return;
       }
 
+      await this.dependencies.onTranscriptReady?.(transcript);
+      if (!this.isCurrent(operationToken)) return;
       const result = resolveTranscriptCommit(
         capturedDraft,
         this.dependencies.readDraft(),
@@ -568,9 +590,22 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
       }
 
       this.dependencies.commitDraft(result.text, result.selection);
+      this.retryRecording = null;
       this.setState(IDLE_STATE);
     } catch {
       if (this.isCurrent(operationToken)) {
+        const uri = this.dependencies.recorder.uri ?? this.recordingUri;
+        if (uri && this.capturedDraft && this.transcription) {
+          this.retryRecording = {
+            uri,
+            draft: this.capturedDraft,
+            transcription: {
+              locale: this.transcription.locale,
+              transcribe: this.transcription.transcribe,
+            },
+          };
+          this.rememberRecordingUri(uri);
+        }
         this.setError("Could not finish voice recording.", "retry");
       }
     } finally {
@@ -637,6 +672,7 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
   }
 
   private invalidateOperation(): void {
+    this.retryRecording = null;
     this.operationToken += 1;
     if (this.sessionToken) this.sessionToken.abandoned = true;
     this.transcriptionAbortController?.abort();
@@ -648,7 +684,12 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
   }
 
   private setError(error: string, errorAction: VoiceInputState["errorAction"]): void {
-    this.setState({ phase: "error", error, errorAction });
+    this.setState({
+      phase: "error",
+      error,
+      errorAction,
+      ...(this.retryRecording ? { hasRecording: true } : {}),
+    });
   }
 
   private setState(state: VoiceInputState<true>): void {

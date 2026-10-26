@@ -44,6 +44,7 @@ export function VoiceInputErrorPill(props: {
   error: string | null;
   errorAction: "retry" | "settings" | null;
   disabled?: boolean;
+  hasRecording?: boolean | undefined;
   cancelShortcutLabel?: string | null;
   onRetry(): void;
   onDismiss(): void;
@@ -52,9 +53,10 @@ export function VoiceInputErrorPill(props: {
   const openSettings = props.errorAction === "settings";
   const actionLabel = openSettings
     ? "Open voice settings"
-    : props.error === "Could not transcribe this recording."
+    : props.hasRecording || props.error === "Could not transcribe this recording."
       ? "Retry transcription"
       : "Record again";
+  const dismissLabel = props.hasRecording ? "Discard saved recording" : "Dismiss voice input error";
   return (
     <VoiceInputPill>
       <Tooltip>
@@ -64,7 +66,7 @@ export function VoiceInputErrorPill(props: {
               type="button"
               size="icon-sm-pill"
               variant="ghost"
-              aria-label="Dismiss voice input error"
+              aria-label={dismissLabel}
               onPointerDown={(event) => event.preventDefault()}
               onClick={props.onDismiss}
             >
@@ -73,7 +75,7 @@ export function VoiceInputErrorPill(props: {
           }
         />
         <TooltipPopup side="top">
-          Dismiss voice input error
+          {dismissLabel}
           {props.cancelShortcutLabel ? ` (${props.cancelShortcutLabel})` : ""}
         </TooltipPopup>
       </Tooltip>

@@ -15,10 +15,17 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 
-import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
+import {
+  resetRetainedSpeechSessionsForTests,
+  useEnvironmentSpeechInput,
+} from "./useEnvironmentSpeechInput";
 import { PreviewAnnotationSpeech } from "../components/preview/PreviewAnnotationSpeech";
 
 const mocks = vi.hoisted(() => ({
+  retainRecording: false,
+  recoveredOwner: null as string | null,
+  transcriptions: vi.fn(),
+  backgroundCommitted: vi.fn(),
   voiceCapability: true as boolean | undefined,
   cleanupCapability: true as boolean | undefined,
   statusRequests: vi.fn(),
@@ -138,10 +145,35 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       mocks.missingModel = false;
     }),
 }));
+vi.mock("./recordingStorage", () => ({
+  recordingStorage: {
+    find: async (ownerKey: string) =>
+      mocks.recoveredOwner === ownerKey
+        ? {
+            id: "saved-audio",
+            ownerKey,
+            options: {},
+            locale: "en",
+            draft: { ownerKey, text: "", selection: { start: 0, end: 0 }, revision: 7 },
+          }
+        : null,
+  },
+}));
 vi.mock("./browserVoiceInput", () => ({
   createBrowserVoiceInputPlatform: (input: {
     getTranscriptionOptions: () => SpeechTranscriptionOptions;
   }) => ({
+    saveTranscript: async (text: string) => text,
+    restoreRecording: async () => ({
+      uri: "recording",
+      transcription: {
+        locale: "en",
+        transcribe: async () => {
+          mocks.transcriptions();
+          return mocks.transcript ?? "Raw transcript";
+        },
+      },
+    }),
     recorder: {
       uri: "recording",
       prepareToRecordAsync: async () => {
@@ -154,7 +186,13 @@ vi.mock("./browserVoiceInput", () => ({
     transcriber: {
       prepare: async () => {
         mocks.recordingOptions = input.getTranscriptionOptions();
-        return { locale: "en", transcribe: async () => mocks.transcript ?? "Raw transcript" };
+        return {
+          locale: "en",
+          transcribe: async () => {
+            mocks.transcriptions();
+            return mocks.transcript ?? "Raw transcript";
+          },
+        };
       },
     },
     cancelRecording() {},
@@ -179,6 +217,15 @@ function Probe() {
       },
     }),
     commitDraft: mocks.committed,
+    retainedDraft: mocks.retainRecording
+      ? {
+          read: () => ({ text: "", selection: { start: 0, end: 0 } }),
+          commit: (
+            (owner) => (text: string) =>
+              mocks.backgroundCommitted(owner, text)
+          )(mocks.ownerKey),
+        }
+      : undefined,
   });
   useLayoutEffect(() => {
     voice = value;
@@ -229,6 +276,11 @@ async function mountProbe() {
 afterEach(async () => {
   await act(() => root?.unmount());
   root = undefined;
+  resetRetainedSpeechSessionsForTests();
+  mocks.retainRecording = false;
+  mocks.recoveredOwner = null;
+  mocks.transcriptions.mockClear();
+  mocks.backgroundCommitted.mockClear();
   mocks.voiceCapability = true;
   mocks.cleanupCapability = true;
   mocks.statusRequests.mockClear();
@@ -722,3 +774,110 @@ it.each([false, undefined])(
     expect(mocks.committed).toHaveBeenCalledWith("Raw transcript", expect.anything());
   },
 );
+
+it("delivers a pending chat transcription to its original draft after switching chats", async () => {
+  const transcript = deferredTranscript();
+  mocks.transcript = transcript.promise;
+  mocks.microphoneFailure = false;
+  mocks.retainRecording = true;
+  await mountProbe();
+  await act(() => voice.start());
+  let stopping!: Promise<void>;
+  await act(async () => {
+    stopping = voice.stop();
+  });
+  mocks.ownerKey = "other-chat";
+  await act(() => root!.render(<Probe />));
+  await act(async () => {
+    transcript.resolve("Saved words");
+    await stopping;
+  });
+  expect(mocks.backgroundCommitted).toHaveBeenCalledWith("draft", "Saved words");
+  expect(mocks.committed).not.toHaveBeenCalled();
+});
+
+it("keeps an active recording with its original chat and reattaches its controls", async () => {
+  mocks.microphoneFailure = false;
+  mocks.retainRecording = true;
+  await mountProbe();
+  await act(() => voice.start());
+  mocks.ownerKey = "other-chat";
+  await act(() => root!.render(<Probe />));
+  expect(voice.state.phase).toBe("idle");
+  mocks.ownerKey = "draft";
+  await act(() => root!.render(<Probe />));
+  expect(voice.state.phase).toBe("recording");
+  await act(() => voice.stop());
+  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("Raw transcript", expect.anything());
+  expect(mocks.microphoneRequests).toBe(1);
+});
+
+it("finishes transcription into the original draft even after the composer unmounts", async () => {
+  const transcript = deferredTranscript();
+  mocks.transcript = transcript.promise;
+  mocks.microphoneFailure = false;
+  mocks.retainRecording = true;
+  await mountProbe();
+  await act(() => voice.start());
+  let stopping!: Promise<void>;
+  await act(async () => {
+    stopping = voice.stop();
+  });
+  await act(() => root!.unmount());
+  root = undefined;
+  await act(async () => {
+    transcript.resolve("Saved words");
+    await stopping;
+  });
+  expect(mocks.backgroundCommitted).toHaveBeenCalledExactlyOnceWith("draft", "Saved words");
+});
+
+it("restores saved chat audio after a reload and retries without requesting the microphone", async () => {
+  mocks.retainRecording = true;
+  mocks.recoveredOwner = "draft";
+  await mountProbe();
+  expect(voice.state).toMatchObject({ phase: "error", hasRecording: true });
+  await act(() => voice.start());
+  expect(mocks.microphoneRequests).toBe(0);
+  expect(mocks.transcriptions).toHaveBeenCalledOnce();
+  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("Raw transcript", expect.anything());
+});
+
+it("retries a failed transcription after leaving and returning to the chat", async () => {
+  const transcript = deferredTranscript();
+  mocks.transcript = transcript.promise;
+  mocks.microphoneFailure = false;
+  mocks.retainRecording = true;
+  await mountProbe();
+  await act(() => voice.start());
+  let stopping!: Promise<void>;
+  await act(async () => {
+    stopping = voice.stop();
+  });
+  mocks.ownerKey = "other-chat";
+  await act(() => root!.render(<Probe />));
+  await act(async () => {
+    transcript.reject(new Error("offline"));
+    await stopping;
+  });
+  mocks.ownerKey = "draft";
+  mocks.transcript = Promise.resolve("Recovered text");
+  await act(() => root!.render(<Probe />));
+  expect(voice.state).toMatchObject({ phase: "error", hasRecording: true });
+  await act(() => voice.start());
+  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("Recovered text", expect.anything());
+  expect(mocks.microphoneRequests).toBe(1);
+});
+
+it("reattaches queued Send to a remounted composer", async () => {
+  mocks.microphoneFailure = false;
+  mocks.retainRecording = true;
+  await mountProbe();
+  await act(() => voice.start());
+  await act(() => root!.unmount());
+  root = undefined;
+  await mountProbe();
+  const submitted = vi.fn();
+  await act(() => voice.submitAfterDictation(submitted));
+  expect(submitted).toHaveBeenCalledExactlyOnceWith("Raw transcript");
+});

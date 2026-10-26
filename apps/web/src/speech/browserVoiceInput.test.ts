@@ -56,9 +56,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("preserves audio when recording stops before the streaming model is ready", async () => {
-  const feed = vi.fn();
-  const onLevel = vi.fn();
+function setupCapture() {
   worklet = {
     port: { onmessage: null, postMessage: vi.fn(), close: vi.fn() },
   };
@@ -85,6 +83,12 @@ it("preserves audio when recording stops before the streaming model is ready", a
       disconnect() {}
     },
   );
+}
+
+it("preserves audio when recording stops before the streaming model is ready", async () => {
+  const feed = vi.fn();
+  const onLevel = vi.fn();
+  setupCapture();
 
   const platform = createBrowserVoiceInputPlatform({
     prepared: {} as PreparedConnection,
@@ -109,6 +113,9 @@ it("preserves audio when recording stops before the streaming model is ready", a
   const stopping = platform.recorder.stop();
   worklet.port.onmessage?.({ data: "stopped" });
   await stopping;
+  expect(platform.recorder.uri).not.toBeNull();
+  const audio = await (await fetch(platform.recorder.uri!)).arrayBuffer();
+  expect(Array.from(new Float32Array(audio))).toEqual([0.25, 0.5]);
   mocks.stream.resolve({ feed, finish: async () => "hello" });
   await expect(
     transcription.streaming?.finish({ signal: new AbortController().signal }),
@@ -199,3 +206,44 @@ it.each([true, false])(
     expect(parakeet.locale).toBe("en");
   },
 );
+
+it("keeps all audio for retry after a live stream has consumed it", async () => {
+  setupCapture();
+  const feed = vi.fn();
+  mocks.stream = {
+    promise: Promise.resolve({
+      feed,
+      finish: async () => {
+        throw new Error("provider offline");
+      },
+    }),
+    resolve() {},
+  };
+  const platform = createBrowserVoiceInputPlatform({
+    prepared: {} as PreparedConnection,
+    getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+    getMicrophoneId: () => "",
+    onLevel() {},
+    onDurationLimit() {},
+    onText() {},
+    onError() {},
+  });
+  const transcription = await platform.transcriber.prepare({
+    signal: new AbortController().signal,
+  });
+  await platform.recorder.prepareToRecordAsync();
+  platform.recorder.record();
+  worklet.port.onmessage?.({ data: new Float32Array([0.25, 0.5]) });
+  expect(feed).toHaveBeenCalled();
+  const stopping = platform.recorder.stop();
+  worklet.port.onmessage?.({ data: "stopped" });
+  await stopping;
+  expect(platform.recorder.uri).not.toBeNull();
+  const audio = await (await fetch(platform.recorder.uri!)).arrayBuffer();
+  expect(Array.from(new Float32Array(audio))).toEqual([0.25, 0.5]);
+  // The local backup remains available even if finishing the consumed stream fails.
+  await expect(
+    transcription.streaming!.finish({ signal: new AbortController().signal }),
+  ).rejects.toThrow();
+  platform.deleteRecording(platform.recorder.uri!);
+});

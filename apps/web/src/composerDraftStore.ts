@@ -4149,6 +4149,14 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
 
 export const useComposerDraftStore = composerDraftStore;
 
+export function persistComposerDraftPrompt(target: ComposerThreadTarget, prompt: string): void {
+  if (!resolveComposerDraftKey(useComposerDraftStore.getState(), target))
+    throw new Error("This draft is no longer available.");
+  useComposerDraftStore.getState().setPrompt(target, prompt);
+  // Voice audio can be removed only after its replacement text has reached storage.
+  composerDebouncedStorage.flush();
+}
+
 export function subscribeComposerDraftModelReconciliation(input: {
   readonly registry: AtomRegistry.AtomRegistry;
   readonly threadRefsAtom: Atom.Atom<ReadonlyArray<ScopedThreadRef>>;

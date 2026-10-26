@@ -2,6 +2,7 @@ export {
   VoiceInputController,
   isMicrophonePermissionError,
   MICROPHONE_PERMISSION_ERROR,
+  resolveTranscriptCommit,
   voiceInputBlocksSubmission,
   voiceInputFreezesEditor,
   type VoiceDraftSnapshot,

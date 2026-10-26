@@ -1,3 +1,4 @@
+import { randomUUID } from "../lib/utils";
 import { effectiveSpeechLanguage } from "@t3tools/shared/speech";
 import {
   getEnvironmentSpeechStatus,
@@ -10,15 +11,20 @@ import {
   type VoiceRecorder,
   type VoiceTranscriptionOptions,
   type VoiceTranscriber,
+  type VoiceDraftSnapshot,
+  type PreparedVoiceTranscription,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type { SpeechTranscriptionOptions, SpeechStreamText } from "@t3tools/contracts";
 
 import { runtime } from "../lib/runtime";
+import { recordingStorage, type SavedVoiceRecording } from "./recordingStorage";
 import workletUrl from "./pcmWorklet.ts?worker&url";
 
 export function createBrowserVoiceInputPlatform(input: {
   readonly prepared: PreparedConnection;
+  readonly getPrepared?: () => PreparedConnection | null;
+  readonly retainedDraft?: { readonly ownerKey: string; readonly read: () => VoiceDraftSnapshot };
   readonly getTranscriptionOptions: () => SpeechTranscriptionOptions;
   readonly getMicrophoneId: () => string;
   readonly onLevel: (level: number) => void;
@@ -26,6 +32,11 @@ export function createBrowserVoiceInputPlatform(input: {
   readonly onText: (text: SpeechStreamText) => void;
   readonly onError: (message: string) => void;
 }): {
+  readonly saveTranscript: (text: string) => Promise<string>;
+  readonly transcriptIsFinal: boolean;
+  readonly restoreRecording: (
+    recording: SavedVoiceRecording,
+  ) => Promise<{ uri: string; transcription: PreparedVoiceTranscription }>;
   readonly recorder: VoiceRecorder;
   readonly transcriber: VoiceTranscriber;
   readonly cancelRecording: () => void;
@@ -34,11 +45,45 @@ export function createBrowserVoiceInputPlatform(input: {
   let stream: MediaStream | undefined;
   let recordingUri: string | null = null;
   let chunks: Float32Array<ArrayBuffer>[] = [];
+  let bufferedForStream: Float32Array<ArrayBuffer>[] = [];
   let audioContext: AudioContext | undefined;
   let worklet: AudioWorkletNode | undefined;
   let durationTimer: ReturnType<typeof setTimeout> | undefined;
   let signal: AbortSignal | undefined;
   let recordingOptions: SpeechTranscriptionOptions;
+  let locale = "auto";
+  let savedRecording: SavedVoiceRecording | null = null;
+  let sequence = 0;
+  let saving = Promise.resolve();
+  let storageError: unknown;
+  let streamError: Error | undefined;
+  const preparedConnection = () => {
+    const connection = input.getPrepared ? input.getPrepared() : input.prepared;
+    if (!connection) throw new Error("The transcription environment is disconnected.");
+    return connection;
+  };
+  const saveChunk = (pcm: Float32Array<ArrayBuffer>) => {
+    if (!savedRecording) return;
+    const id = savedRecording.id;
+    const index = sequence++;
+    saving = saving
+      .then(() => recordingStorage.append(id, index, pcm))
+      .catch((error: unknown) => {
+        if (!storageError)
+          input.onError(
+            "Could not save microphone audio. The recording is kept in this tab; retry before closing it.",
+          );
+        storageError = error;
+      });
+  };
+  const saveTranscript = async (text: string, transcriptIsFinal = false) => {
+    if (savedRecording) {
+      await saving;
+      await recordingStorage.saveTranscript(savedRecording.id, text, transcriptIsFinal);
+      savedRecording = { ...savedRecording, transcript: text, transcriptIsFinal };
+    }
+    return text;
+  };
   let live: Awaited<ReturnType<typeof openSpeechStream>> | undefined;
   let stopped:
     | { readonly resolve: () => void; readonly reject: (error: Error) => void }
@@ -70,6 +115,21 @@ export function createBrowserVoiceInputPlatform(input: {
       if (recordingUri) URL.revokeObjectURL(recordingUri);
       recordingUri = null;
       chunks = [];
+      bufferedForStream = [];
+      sequence = 0;
+      storageError = undefined;
+      if (input.retainedDraft) {
+        savedRecording = {
+          id: randomUUID(),
+          ownerKey: input.retainedDraft.ownerKey,
+          draft: input.retainedDraft.read(),
+          options: recordingOptions,
+          locale,
+        };
+        await recordingStorage.create(savedRecording);
+        // Ask the browser to protect unfinished dictation from storage eviction.
+        void navigator.storage?.persist?.().catch(() => undefined);
+      }
       const microphoneId = input.getMicrophoneId();
       const captured = await navigator.mediaDevices.getUserMedia({
         audio: microphoneId ? { deviceId: { exact: microphoneId } } : true,
@@ -102,8 +162,16 @@ export function createBrowserVoiceInputPlatform(input: {
             input.onLevel(data);
             return;
           }
-          if (live) live.feed(data);
-          else chunks.push(data);
+          chunks.push(data);
+          saveChunk(data);
+          if (!live) bufferedForStream.push(data);
+          if (live && !streamError) {
+            try {
+              live.feed(data);
+            } catch (error) {
+              streamError = error instanceof Error ? error : new Error(String(error));
+            }
+          }
         };
         node.onprocessorerror = () => {
           stopped?.reject(new Error("Microphone processing failed."));
@@ -144,11 +212,13 @@ export function createBrowserVoiceInputPlatform(input: {
       worklet.port.postMessage("stop");
       try {
         await pending;
-        if (!live && chunks.length) {
+      } finally {
+        if (chunks.length) {
           const blob = new Blob(chunks, { type: "application/octet-stream" });
           recordingUri = URL.createObjectURL(blob);
+          await saving;
+          chunks = [];
         }
-      } finally {
         clearTimeout(timeout);
         cleanupCapture();
       }
@@ -160,16 +230,17 @@ export function createBrowserVoiceInputPlatform(input: {
     { signal: transcriptionSignal }: VoiceTranscriptionOptions,
   ) => {
     try {
+      if (savedRecording?.transcript !== undefined) return savedRecording.transcript;
       const response = await fetch(uri, { signal: transcriptionSignal });
       const pcm = new Uint8Array(await response.arrayBuffer());
       const result = await runtime.runPromise(
-        transcribeEnvironmentPcm(input.prepared, pcm, recordingOptions),
+        transcribeEnvironmentPcm(preparedConnection(), pcm, recordingOptions),
         {
           signal: transcriptionSignal,
         },
       );
       throwIfVoiceTranscriptionAborted(transcriptionSignal);
-      return result.text;
+      return await saveTranscript(result.text);
     } catch (cause) {
       throwIfVoiceTranscriptionAborted(transcriptionSignal);
       throw new VoiceTranscriptionError(
@@ -181,19 +252,49 @@ export function createBrowserVoiceInputPlatform(input: {
   };
 
   return {
+    saveTranscript: (text) => saveTranscript(text, true),
+    get transcriptIsFinal() {
+      return savedRecording?.transcriptIsFinal === true;
+    },
+    restoreRecording: async (recording) => {
+      savedRecording = recording;
+      recordingOptions = recording.options;
+      locale = recording.locale;
+      recordingUri = URL.createObjectURL(await recordingStorage.audio(recording.id));
+      return { uri: recordingUri, transcription: { locale, transcribe: transcribeRecording } };
+    },
     recorder,
-    cancelRecording: cleanupCapture,
+    cancelRecording: () => {
+      cleanupCapture();
+      if (savedRecording && !recordingUri && signal?.aborted) {
+        const id = savedRecording.id;
+        savedRecording = null;
+        chunks = [];
+        bufferedForStream = [];
+        void saving.then(() => recordingStorage.remove(id)).catch(() => undefined);
+      }
+    },
     deleteRecording: (uri) => {
       URL.revokeObjectURL(uri);
-      if (recordingUri === uri) recordingUri = null;
+      if (recordingUri === uri) {
+        recordingUri = null;
+        chunks = [];
+        bufferedForStream = [];
+        if (savedRecording) {
+          const id = savedRecording.id;
+          savedRecording = null;
+          void saving.then(() => recordingStorage.remove(id)).catch(() => undefined);
+        }
+      }
     },
     transcriber: {
       prepare: async (options) => {
         signal = options.signal;
         recordingOptions = input.getTranscriptionOptions();
         live = undefined;
+        streamError = undefined;
         const status = await runtime.runPromise(
-          getEnvironmentSpeechStatus(input.prepared),
+          getEnvironmentSpeechStatus(preparedConnection()),
           options,
         );
         throwIfVoiceTranscriptionAborted(options.signal);
@@ -207,7 +308,7 @@ export function createBrowserVoiceInputPlatform(input: {
               recordingOptions.speechLanguage,
             )
           : "auto";
-        const locale =
+        locale =
           !status.supportsStreaming &&
           status.supportsTranslation &&
           recordingOptions.speechTranslateToEnglish
@@ -215,7 +316,7 @@ export function createBrowserVoiceInputPlatform(input: {
             : language;
         if (status.supportsStreaming) {
           const url = await runtime.runPromise(
-            getEnvironmentSpeechStreamUrl(input.prepared),
+            getEnvironmentSpeechStreamUrl(preparedConnection()),
             options,
           );
           const session = openSpeechStream({
@@ -223,27 +324,33 @@ export function createBrowserVoiceInputPlatform(input: {
             options: recordingOptions,
             signal: options.signal,
             onText: input.onText,
-            onError: (error) => input.onError(error.message),
+            onError: (error) => {
+              streamError = error;
+            },
           }).then((prepared) => {
             live = prepared;
-            for (const chunk of chunks) prepared.feed(chunk);
-            chunks = [];
+            for (const chunk of bufferedForStream) prepared.feed(chunk);
+            bufferedForStream = [];
             return prepared;
           });
           void session.catch((error: unknown) => {
-            if (!options.signal.aborted)
-              input.onError(
-                error instanceof Error ? error.message : "Could not prepare voice input.",
-              );
+            streamError =
+              error instanceof Error ? error : new Error("Could not prepare voice input.");
           });
           return {
             locale,
             transcribe: transcribeRecording,
-            streaming: { finish: async () => (await session).finish() },
+            streaming: {
+              finish: async () => {
+                if (streamError) throw streamError;
+                const text = await (await session).finish();
+                return saveTranscript(text);
+              },
+            },
           };
         }
         const preparedModel = runtime.runPromise(
-          prepareEnvironmentSpeechModel(input.prepared),
+          prepareEnvironmentSpeechModel(preparedConnection()),
           options,
         );
         // A failed warmup should still allow the normal transcription path to retry.

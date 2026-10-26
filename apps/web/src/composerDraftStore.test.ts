@@ -85,6 +85,7 @@ import {
   type ComposerImageAttachment,
   composerFileNeedsReattach,
   partializeComposerDraftStoreState,
+  persistComposerDraftPrompt,
   useComposerDraftStore,
   DraftId,
 } from "./composerDraftStore";
@@ -205,6 +206,20 @@ function draftFor(threadId: ThreadId, environmentId: EnvironmentId = LEGACY_TEST
 function draftByKey(key: string) {
   return useComposerDraftStore.getState().draftsByThreadKey[key] ?? undefined;
 }
+
+it("persists delivered voice text immediately before its recording can be removed", async () => {
+  const target = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("voice-durable-draft"));
+  persistComposerDraftPrompt(target, "Recovered dictation");
+  const storage = useComposerDraftStore.persist.getOptions().storage!;
+  const saved = await storage.getItem(COMPOSER_DRAFT_STORAGE_KEY);
+  expect(saved).toMatchObject({
+    state: {
+      draftsByThreadKey: {
+        [scopedThreadKey(target)]: { prompt: "Recovered dictation" },
+      },
+    },
+  });
+});
 
 describe("composerDraftStore addImages", () => {
   const threadId = ThreadId.make("thread-dedupe");
