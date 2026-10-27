@@ -5,7 +5,29 @@ import { vi } from "vite-plus/test";
 
 import * as CursorSdk from "./CursorSdk.ts";
 
-vi.mock("./sdk.ts", () => ({ Agent: {}, createAgentPlatform: {}, SqliteLocalAgentStore: {} }));
+const cursorSdkMock = vi.hoisted(() => ({
+  Agent: { kind: "Agent" },
+  createAgentPlatform: { kind: "createAgentPlatform" },
+  SqliteLocalAgentStore: { kind: "SqliteLocalAgentStore" },
+  reads: [] as Array<string>,
+}));
+
+vi.mock("./sdk.ts", () => ({
+  cursorSdk: {
+    get Agent() {
+      cursorSdkMock.reads.push("Agent");
+      return cursorSdkMock.Agent;
+    },
+    get createAgentPlatform() {
+      cursorSdkMock.reads.push("createAgentPlatform");
+      return cursorSdkMock.createAgentPlatform;
+    },
+    get SqliteLocalAgentStore() {
+      cursorSdkMock.reads.push("SqliteLocalAgentStore");
+      return cursorSdkMock.SqliteLocalAgentStore;
+    },
+  },
+}));
 
 // Shaped like the SDK's minified class: the constructor is not named after the error.
 class o extends Error {
@@ -29,6 +51,26 @@ const rejectThroughGuard = (reason: unknown) =>
     }
     return exit.mock.calls;
   }).pipe(Effect.scoped);
+
+describe("CursorSdk layer", () => {
+  it.effect("reads the SDK only when the service is used", () =>
+    Effect.gen(function* () {
+      const service = yield* CursorSdk.CursorSdk;
+      assert.deepStrictEqual(cursorSdkMock.reads, []);
+      assert.strictEqual<unknown>(service.Agent, cursorSdkMock.Agent);
+      assert.strictEqual<unknown>(service.createAgentPlatform, cursorSdkMock.createAgentPlatform);
+      assert.strictEqual<unknown>(
+        service.SqliteLocalAgentStore,
+        cursorSdkMock.SqliteLocalAgentStore,
+      );
+      assert.deepStrictEqual(cursorSdkMock.reads, [
+        "Agent",
+        "createAgentPlatform",
+        "SqliteLocalAgentStore",
+      ]);
+    }).pipe(Effect.provide(CursorSdk.layer)),
+  );
+});
 
 describe("CursorSdk unhandled rejection guard", () => {
   it.effect("keeps the server running when the SDK writes to a closed stream", () =>

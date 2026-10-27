@@ -3,7 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { Agent, createAgentPlatform, SqliteLocalAgentStore } from "./sdk.ts";
+import { cursorSdk } from "./sdk.ts";
 
 /**
  * The SDK listens for that error, then rejects an internal promise nothing awaits.
@@ -66,11 +66,23 @@ function onUnhandledRejection(reason: unknown): void {
 export class CursorSdk extends Context.Service<
   CursorSdk,
   {
-    readonly Agent: typeof Agent;
-    readonly createAgentPlatform: typeof createAgentPlatform;
-    readonly SqliteLocalAgentStore: typeof SqliteLocalAgentStore;
+    readonly Agent: typeof cursorSdk.Agent;
+    readonly createAgentPlatform: typeof cursorSdk.createAgentPlatform;
+    readonly SqliteLocalAgentStore: typeof cursorSdk.SqliteLocalAgentStore;
   }
 >()("@t3tools/provider-cursor/server/CursorSdk") {}
+
+const service = CursorSdk.of({
+  get Agent() {
+    return cursorSdk.Agent;
+  },
+  get createAgentPlatform() {
+    return cursorSdk.createAgentPlatform;
+  },
+  get SqliteLocalAgentStore() {
+    return cursorSdk.SqliteLocalAgentStore;
+  },
+});
 
 /** Provide once per process: a second guard would defer to the first and swallow real rejections. */
 export const layer = Layer.effect(
@@ -83,5 +95,5 @@ export const layer = Layer.effect(
       Effect.sync(() => {
         process.off("unhandledRejection", onUnhandledRejection);
       }),
-  ).pipe(Effect.as(CursorSdk.of({ Agent, createAgentPlatform, SqliteLocalAgentStore }))),
+  ).pipe(Effect.as(service)),
 );

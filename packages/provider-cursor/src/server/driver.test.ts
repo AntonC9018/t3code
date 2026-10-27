@@ -35,7 +35,7 @@ import * as CursorKeychain from "./CursorKeychain.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { Cursor } from "./sdk.ts";
+import { cursorSdk } from "./sdk.ts";
 
 const layerTest = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -71,25 +71,27 @@ it.layer(layerTest)("CursorDriver", (it) => {
     "persists browser credentials, uses them for chat, and closes the SDK session on logout",
     () =>
       Effect.gen(function* () {
-        const login = vi.spyOn(Cursor.auth, "login").mockImplementation(async (options) => {
-          options?.onLoginUrl?.("https://cursor.com/loginDeepControl?challenge=test-only");
-          await options?.store?.save({
-            version: 1,
-            backendUrl: "https://api2.cursor.sh",
-            apiKey: "instance-browser-key",
-            createdAtMs: 0,
-            apiKeyExpiresAtMs: 4_000_000_000_000,
-            email: "cursor@example.com",
+        const login = vi
+          .spyOn(cursorSdk.Cursor.auth, "login")
+          .mockImplementation(async (options) => {
+            options?.onLoginUrl?.("https://cursor.com/loginDeepControl?challenge=test-only");
+            await options?.store?.save({
+              version: 1,
+              backendUrl: "https://api2.cursor.sh",
+              apiKey: "instance-browser-key",
+              createdAtMs: 0,
+              apiKeyExpiresAtMs: 4_000_000_000_000,
+              email: "cursor@example.com",
+            });
+            return { apiKey: "instance-browser-key", apiKeyExpiresAtMs: 4_000_000_000_000 };
           });
-          return { apiKey: "instance-browser-key", apiKeyExpiresAtMs: 4_000_000_000_000 };
-        });
-        const me = vi.spyOn(Cursor, "me").mockResolvedValue({
+        const me = vi.spyOn(cursorSdk.Cursor, "me").mockResolvedValue({
           apiKeyName: "T3 Code",
           createdAt: "2026-01-01T00:00:00.000Z",
           userEmail: "cursor@example.com",
         });
         const models = vi
-          .spyOn(Cursor.models, "list")
+          .spyOn(cursorSdk.Cursor.models, "list")
           .mockResolvedValue([{ id: "auto", displayName: "Auto" }]);
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
@@ -179,11 +181,11 @@ it.layer(layerTest)("CursorDriver", (it) => {
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-window-" });
       const catalog = Promise.withResolvers<Array<SDKModel>>();
       const catalogRequested = Promise.withResolvers<void>();
-      const me = vi.spyOn(Cursor, "me").mockResolvedValue({
+      const me = vi.spyOn(cursorSdk.Cursor, "me").mockResolvedValue({
         apiKeyName: "T3 Code",
         createdAt: "2026-01-01T00:00:00.000Z",
       });
-      const models = vi.spyOn(Cursor.models, "list").mockImplementation(() => {
+      const models = vi.spyOn(cursorSdk.Cursor.models, "list").mockImplementation(() => {
         catalogRequested.resolve();
         return catalog.promise;
       });
