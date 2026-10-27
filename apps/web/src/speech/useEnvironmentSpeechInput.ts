@@ -36,6 +36,11 @@ import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { toastManager } from "../components/ui/toast";
+import { isVoiceRecordingLocked, recordingStorage } from "./recordingStorage";
+import {
+  notifyVoiceRecordingRecoveryChange,
+  subscribeVoiceRecordingRecovery,
+} from "./recordingRecoveryEvents";
 
 const decodeTranscriptionOptions = Schema.decodeSync(SpeechTranscriptionOptions);
 
@@ -54,10 +59,18 @@ type HookInput = {
   readonly ownerKey: string;
   readonly draftText: string;
   readonly disabled?: boolean | undefined;
+  readonly closedQuestionRecordings?:
+    | {
+        readonly ownerKeyPrefix: string;
+        readonly isDestinationAvailable: (ownerKey: string) => boolean;
+      }
+    | undefined;
   readonly retainedDraft?:
     | {
         readonly read: () => DraftInput | null;
-        readonly commit: (text: string) => void;
+        readonly commit: (text: string, recordingId?: string) => string | void;
+        readonly hasDelivered?: (recordingId: string) => boolean;
+        readonly forgetDelivered?: (recordingId: string) => void;
       }
     | undefined;
   readonly readDraft: () => DraftInput | null;
@@ -69,6 +82,7 @@ type HookInput = {
 
 type SpeechSessionContext = {
   ownerKey: string;
+  closedQuestionRecovery: boolean;
   projectId: ProjectId | undefined;
   projectName: string | undefined;
   retainedDraft: HookInput["retainedDraft"];
@@ -85,6 +99,7 @@ type DraftRevision = { ownerKey: string; text: string; revision: number };
 
 type SpeechSession = {
   context: SpeechSessionContext;
+  recoveryAccepted: boolean;
   revision: DraftRevision;
   attachment: {
     disabled: boolean | undefined;
@@ -111,6 +126,7 @@ function releaseUnusedSession(session: SpeechSession) {
 }
 
 function readSessionDraft(session: SpeechSession): VoiceDraftSnapshot | null {
+  if (session.context.closedQuestionRecovery && !session.recoveryAccepted) return null;
   const draft = session.attachment
     ? session.attachment.readDraft()
     : session.context.retainedDraft?.read();
@@ -142,6 +158,13 @@ function createSpeechSession(
   let recordingPreferences: SpeechPostProcessingOptions | undefined;
   const platform = createBrowserVoiceInputPlatform({
     prepared: context.prepared,
+    onRecordingRemoved: (recordingId) => {
+      try {
+        session.context.retainedDraft?.forgetDelivered?.(recordingId);
+      } catch {
+        // A stale receipt is harmless once its audio has been removed.
+      }
+    },
     getPrepared: () => session.context.prepared,
     ...(context.retainedDraft
       ? {
@@ -260,25 +283,41 @@ function createSpeechSession(
       }),
     readDraft: () => readSessionDraft(session),
     commitDraft: (text, selection) => {
+      if (session.context.closedQuestionRecovery && !session.recoveryAccepted)
+        throw new Error("Choose Recover to draft to insert this saved question recording.");
       const attachment = session.attachment;
+      let deliveredText = text;
       if (session.context.retainedDraft) {
-        if (attachment && !attachment.disabled) attachment.commitDraft(text, selection);
-        session.context.retainedDraft.commit(text);
+        deliveredText =
+          session.context.retainedDraft.commit(text, platform.recordingId ?? undefined) ?? text;
+        if (attachment && !attachment.disabled) {
+          const deliveredSelection =
+            deliveredText === text
+              ? selection
+              : (attachment.readDraft()?.selection ?? {
+                  start: deliveredText.length,
+                  end: deliveredText.length,
+                });
+          attachment.commitDraft(deliveredText, deliveredSelection);
+        }
       } else {
         if (!attachment || attachment.disabled) return;
         attachment.commitDraft(text, selection);
       }
-      attachment?.onCommit(text);
+      attachment?.onCommit(deliveredText);
     },
     onStateChange: (value) => {
       session.state = value;
       if (value.phase !== "recording" && value.phase !== "transcribing") session.preview = null;
       session.attachment?.notify();
       releaseUnusedSession(session);
+      if (session.context.retainedDraft && (value.phase === "idle" || value.phase === "error"))
+        notifyVoiceRecordingRecoveryChange();
     },
   });
   session = {
     context,
+    recoveryAccepted: false,
     revision,
     attachment: null,
     controller,
@@ -295,7 +334,15 @@ function createSpeechSession(
         .findRecording()
         .then(async (saved) => {
           if (!saved) return;
-          if (saved.transcriptIsFinal === true && saved.transcript !== undefined) {
+          if (session.context.retainedDraft?.hasDelivered?.(saved.id)) {
+            await platform.discardSavedRecording();
+            return;
+          }
+          if (
+            !session.context.retainedDraft?.hasDelivered &&
+            saved.transcriptIsFinal === true &&
+            saved.transcript !== undefined
+          ) {
             const result = resolveTranscriptCommit(
               saved.draft,
               saved.draft,
@@ -341,7 +388,65 @@ export function resetRetainedSpeechSessionsForTests() {
 }
 
 export function useEnvironmentSpeechInput(input: HookInput) {
-  const retainedKey = input.retainedDraft ? input.ownerKey : null;
+  const [closedQuestionSelection, setClosedQuestionSelection] = useState<{
+    chatOwnerKey: string;
+    recordingOwnerKey: string | null;
+  } | null>(null);
+  const closedQuestionOwner =
+    input.closedQuestionRecordings && closedQuestionSelection?.chatOwnerKey === input.ownerKey
+      ? closedQuestionSelection.recordingOwnerKey
+      : null;
+  const retainedKey = input.retainedDraft ? (closedQuestionOwner ?? input.ownerKey) : null;
+  const closedQuestionRecordings = input.closedQuestionRecordings;
+  useEffect(() => {
+    if (!closedQuestionRecordings || !input.retainedDraft) return;
+    let disposed = false;
+    let request = 0;
+    const chatOwnerKey = input.ownerKey;
+    const refresh = async () => {
+      const currentRequest = ++request;
+      const normalSession = retainedSessions.get(chatOwnerKey);
+      if (normalSession && normalSession.state.phase !== "idle") return;
+      const prefix = closedQuestionRecordings.ownerKeyPrefix;
+      const saved = await recordingStorage.listByOwnerPrefix(prefix);
+      const owners = new Set([
+        ...saved.map((recording) => recording.ownerKey),
+        ...[...retainedSessions.entries()]
+          .filter(
+            ([owner, session]) =>
+              owner.startsWith(prefix) &&
+              (session.state.hasRecording || voiceInputBlocksSubmission(session.state)),
+          )
+          .map(([owner]) => owner),
+      ]);
+      let recordingOwnerKey: string | null = null;
+      for (const owner of owners) {
+        if (closedQuestionRecordings.isDestinationAvailable(owner)) continue;
+        if (retainedSessions.has(owner)) {
+          recordingOwnerKey = owner;
+          break;
+        }
+        if (!(await isVoiceRecordingLocked(owner))) {
+          recordingOwnerKey = owner;
+          break;
+        }
+      }
+      if (!disposed && currentRequest === request)
+        setClosedQuestionSelection((previous) =>
+          previous?.chatOwnerKey === chatOwnerKey &&
+          previous.recordingOwnerKey === recordingOwnerKey
+            ? previous
+            : { chatOwnerKey, recordingOwnerKey },
+        );
+    };
+    const notify = () => void refresh().catch(() => undefined);
+    const unsubscribe = subscribeVoiceRecordingRecovery(notify);
+    notify();
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [closedQuestionRecordings, input.ownerKey, input.retainedDraft]);
   const clientSettingsHydrated = useClientSettingsHydrated();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const configuredEnvironmentId = useClientSettings(
@@ -367,7 +472,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const clientSettings = useClientSettings();
   const microphoneId = useClientSettings((settings) => settings.voiceMicrophone);
   const sessionContext: SpeechSessionContext = {
-    ownerKey: input.ownerKey,
+    ownerKey: retainedKey ?? input.ownerKey,
+    closedQuestionRecovery: closedQuestionOwner !== null,
     projectId: input.projectId,
     projectName: input.projectName,
     retainedDraft: input.retainedDraft,
@@ -598,7 +704,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     }
     if (!stillCurrent()) return;
     if (expectedController.currentState.hasRecording) {
-      await expectedController.start();
+      if (session?.context.closedQuestionRecovery && !session.recoveryAccepted) {
+        session.recoveryAccepted = true;
+        await expectedController.retryIntoCurrentDraft();
+      } else await expectedController.start();
       return;
     }
     if (!prepared || !currentStatus?.supported) return;
@@ -705,6 +814,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       startRecording: startAfterSetup,
     },
     state,
+    recoveringClosedQuestion: closedQuestionOwner !== null,
     progress: null,
     preview: state.phase === "recording" || state.phase === "transcribing" ? preview : null,
     level,

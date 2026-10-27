@@ -3,6 +3,7 @@ import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contract
 import { create } from "zustand";
 import { DraftId, useComposerDraftStore } from "./composerDraftStore";
 import { releaseDraftAttachments } from "./lib/attachmentUploadQueue";
+import { notifyVoiceRecordingRecoveryChange } from "./speech/recordingRecoveryEvents";
 
 export function questionAttachmentDraftPrefix(
   environmentId: EnvironmentId,
@@ -86,6 +87,7 @@ export function clearQuestionAttachmentDraft(key: DraftId): void {
     }
   }
   store.clearComposerContent(key);
+  if (draft?.questionAnswer !== undefined) notifyVoiceRecordingRecoveryChange();
   useQuestionAttachmentPreparation.setState(({ counts }) => {
     const next = { ...counts };
     delete next[key];

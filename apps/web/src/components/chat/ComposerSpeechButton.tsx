@@ -232,6 +232,7 @@ export function ComposerSpeechRecordingPill(props: {
   recordingLimitSeconds?: number | undefined;
   onStart(): void;
   disabled?: boolean;
+  recoveringClosedQuestion?: boolean | undefined;
   onStop(): void;
   onCancel(): void;
   onSkipPostProcessing(): void;
@@ -243,6 +244,7 @@ export function ComposerSpeechRecordingPill(props: {
         error={props.state.error}
         errorAction={props.state.errorAction}
         hasRecording={props.state.hasRecording}
+        recoveringClosedQuestion={props.recoveringClosedQuestion}
         disabled={props.disabled ?? false}
         cancelShortcutLabel={props.cancelShortcutLabel ?? null}
         onRetry={props.onStart}

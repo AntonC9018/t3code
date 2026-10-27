@@ -54,6 +54,10 @@ open the original chat to retry its saved recording. Saved audio is removed afte
 the text is added to the draft or you explicitly discard it. Keep the browser's
 site data to retain unfinished recordings; they do not sync between devices.
 
+If a question closes before its dictation finishes, the recording stays in the
+original chat. Choose **Recover to draft** to insert it into the chat draft, or
+explicitly discard it. Closing a question does not delete its recording.
+
 Press `mod+shift+d` to start dictation and `Esc` to discard it. `mod` means Command
 on macOS and Ctrl on Windows and Linux. The shortcut targets the focused supported
 editor, or the composer when no supported editor is focused. The default **Auto**

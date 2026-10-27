@@ -41,8 +41,10 @@ export function createBrowserVoiceInputPlatform(input: {
   readonly onText: (text: SpeechStreamText) => void;
   readonly onError: (message: string) => void;
   readonly onStorageWarning?: (message: string) => void;
+  readonly onRecordingRemoved?: (recordingId: string) => void;
 }): {
   readonly saveTranscript: (text: string, draft: VoiceDraftSnapshot) => Promise<string>;
+  readonly recordingId: string | null;
   readonly postProcessingOptions: SpeechPostProcessingOptions | undefined;
   readonly findRecording: () => Promise<SavedVoiceRecording | null>;
   readonly discardSavedRecording: () => Promise<void>;
@@ -89,7 +91,10 @@ export function createBrowserVoiceInputPlatform(input: {
     bufferedForStream = [];
     const removal = saving.then(async () => {
       try {
-        if (recording) await recordingStorage.remove(recording.id);
+        if (recording) {
+          await recordingStorage.remove(recording.id);
+          input.onRecordingRemoved?.(recording.id);
+        }
       } finally {
         await releaseRecordingLock();
       }
@@ -325,6 +330,9 @@ export function createBrowserVoiceInputPlatform(input: {
   };
 
   return {
+    get recordingId() {
+      return savedRecording?.id ?? null;
+    },
     get postProcessingOptions() {
       return savedRecording?.postProcessingOptions;
     },

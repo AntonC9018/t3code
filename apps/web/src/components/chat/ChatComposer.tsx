@@ -22,7 +22,10 @@ import {
   trackOpenQuestionAttachmentDraft,
   useQuestionAttachmentPreparation,
 } from "../../questionAttachments";
-import { makeRetainedQuestionAnswerDraft } from "../../questionAnswerDrafts";
+import {
+  makeClosedQuestionRecordingRecovery,
+  makeRetainedQuestionAnswerDraft,
+} from "../../questionAnswerDrafts";
 import type {
   KeybindingCommand,
   AssistantCitation,
@@ -1954,6 +1957,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     draftText: activePendingProgress?.customAnswer ?? prompt,
     disabled: dictationDisabled,
     retainedDraft,
+    closedQuestionRecordings: questionAttachmentTarget
+      ? undefined
+      : makeClosedQuestionRecordingRecovery(routeThreadRef),
     readDraft: () => {
       if (speechDraftOwnerKeyRef.current !== speechDraftOwnerKey) return retainedDraft.read();
       const snapshot = readComposerSnapshotStable();
@@ -4142,6 +4148,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     {speechInput.available ? (
                       <ComposerSpeechRecordingPill
                         state={speechInput.state}
+                        recoveringClosedQuestion={speechInput.recoveringClosedQuestion}
                         progress={speechInput.progress}
                         finishShortcutLabel={dictationShortcutLabel}
                         cancelShortcutLabel="Esc"

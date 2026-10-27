@@ -377,3 +377,39 @@ it("delivers and caches provider text when its recovery journal cannot be writte
     platform.deleteRecording(uri);
   }
 });
+
+it("acknowledges delivery cleanup only after the audio backup has been removed", async () => {
+  setupCapture();
+  using _audio = vi.spyOn(recordingStorage, "audio").mockResolvedValue(new Blob());
+  using remove = vi
+    .spyOn(recordingStorage, "remove")
+    .mockRejectedValueOnce(new Error("Storage unavailable"))
+    .mockResolvedValue();
+  const onRecordingRemoved = vi.fn();
+  const platform = createBrowserVoiceInputPlatform({
+    prepared: {} as PreparedConnection,
+    getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+    getMicrophoneId: () => "",
+    onLevel() {},
+    onDurationLimit() {},
+    onText() {},
+    onError() {},
+    onRecordingRemoved,
+  });
+  const saved = {
+    id: "cleanup-receipt",
+    ownerKey: "chat",
+    locale: "en",
+    options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+    draft: { ownerKey: "chat", text: "", selection: { start: 0, end: 0 }, revision: 0 },
+  };
+  const first = await platform.restoreRecording(saved);
+  await expect(platform.discardSavedRecording()).rejects.toThrow("Storage unavailable");
+  expect(onRecordingRemoved).not.toHaveBeenCalled();
+  URL.revokeObjectURL(first.uri);
+  const second = await platform.restoreRecording(saved);
+  await platform.discardSavedRecording();
+  URL.revokeObjectURL(second.uri);
+  expect(remove).toHaveBeenCalledTimes(2);
+  expect(onRecordingRemoved).toHaveBeenCalledExactlyOnceWith(saved.id);
+});

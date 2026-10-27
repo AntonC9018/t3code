@@ -1,7 +1,11 @@
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
-import { recordingStorage, type SavedVoiceRecording } from "./recordingStorage";
+import {
+  isVoiceRecordingLocked,
+  recordingStorage,
+  type SavedVoiceRecording,
+} from "./recordingStorage";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 
@@ -19,6 +23,7 @@ it("restores audio and transcription across database connections, isolated by ch
   try {
     await recordingStorage.create(first);
     await recordingStorage.create(second);
+    expect(await recordingStorage.listByOwnerPrefix("chat-first")).toEqual([first]);
     await recordingStorage.append(first.id, 1, new Float32Array([0.5]));
     await recordingStorage.append(first.id, 0, new Float32Array([0.25]));
     await recordingStorage.append(second.id, 0, new Float32Array([-0.5]));
@@ -98,11 +103,18 @@ it("prevents another tab's session from recovering or discarding an owned record
     await recordingStorage.create(saved);
     await recordingStorage.append(saved.id, 0, new Float32Array([0.25]));
     expect(await first.findRecording()).toEqual(saved);
+    expect(await isVoiceRecordingLocked(saved.ownerKey)).toBe(true);
     expect(await second.findRecording()).toBeNull();
     await expect(second.restoreRecording(saved)).rejects.toThrow("another tab");
     await second.discardSavedRecording();
     expect(await recordingStorage.find(saved.ownerKey)).toEqual(saved);
     await first.discardSavedRecording();
+    expect(
+      await Promise.all([
+        isVoiceRecordingLocked(saved.ownerKey),
+        isVoiceRecordingLocked(saved.ownerKey),
+      ]),
+    ).toEqual([false, false]);
     expect(await second.findRecording()).toBeNull();
   } finally {
     await first.discardSavedRecording();

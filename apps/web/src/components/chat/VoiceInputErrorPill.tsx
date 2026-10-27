@@ -45,6 +45,7 @@ export function VoiceInputErrorPill(props: {
   errorAction: "retry" | "settings" | null;
   disabled?: boolean;
   hasRecording?: boolean | undefined;
+  recoveringClosedQuestion?: boolean | undefined;
   cancelShortcutLabel?: string | null;
   onRetry(): void;
   onDismiss(): void;
@@ -53,9 +54,11 @@ export function VoiceInputErrorPill(props: {
   const openSettings = props.errorAction === "settings";
   const actionLabel = openSettings
     ? "Open voice settings"
-    : props.hasRecording || props.error === "Could not transcribe this recording."
-      ? "Retry transcription"
-      : "Record again";
+    : props.recoveringClosedQuestion
+      ? "Recover to draft"
+      : props.hasRecording || props.error === "Could not transcribe this recording."
+        ? "Retry transcription"
+        : "Record again";
   const dismissLabel = props.hasRecording ? "Discard saved recording" : "Dismiss voice input error";
   return (
     <VoiceInputPill>
@@ -90,7 +93,9 @@ export function VoiceInputErrorPill(props: {
             />
           }
         >
-          {voiceErrorLabel(props.error)}
+          {props.recoveringClosedQuestion
+            ? "Saved question recording"
+            : voiceErrorLabel(props.error)}
         </TooltipTrigger>
         <TooltipPopup side="top">{props.error ?? "Voice input failed"}</TooltipPopup>
       </Tooltip>

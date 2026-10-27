@@ -112,6 +112,14 @@ describe("streaming voice input", () => {
     expect(harness.deleted).toEqual(["file:///voice.m4a"]);
   });
 
+  it("uses the current insertion point when explicitly recovering a recording into another draft", async () => {
+    const harness = createHarness({}, draft({ selection: { start: 11, end: 11 } }));
+    harness.controller.restoreRecording("saved-question", draft(), preparedTranscription());
+    await harness.controller.retryIntoCurrentDraft();
+    expect(harness.commits[0]?.text).toBe("hello world new text");
+    expect(harness.recorder.record).not.toHaveBeenCalled();
+  });
+
   it("retries failed streaming transcription from saved audio without reopening the microphone", async () => {
     const transcribe = vi.fn(async () => "recovered text");
     const harness = createHarness({

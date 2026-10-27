@@ -1,5 +1,6 @@
 import type { SpeechPostProcessingOptions, SpeechTranscriptionOptions } from "@t3tools/contracts";
 import type { VoiceDraftSnapshot } from "@t3tools/client-runtime/voice-input";
+import { notifyVoiceRecordingRecoveryChange } from "./recordingRecoveryEvents";
 
 export type SavedVoiceRecording = {
   readonly id: string;
@@ -13,6 +14,16 @@ export type SavedVoiceRecording = {
 };
 
 // Web Locks are origin-wide and are released by the browser when a tab exits.
+function voiceRecordingLockName(ownerKey: string): string {
+  return `t3code:voice:${ownerKey}`;
+}
+
+export async function isVoiceRecordingLocked(ownerKey: string): Promise<boolean> {
+  if (!navigator.locks) return true;
+  const locks = await navigator.locks.query();
+  return locks.held?.some((lock) => lock.name === voiceRecordingLockName(ownerKey)) ?? true;
+}
+
 export function acquireVoiceRecordingLock(ownerKey: string): Promise<(() => Promise<void>) | null> {
   return new Promise((resolve, reject) => {
     if (!navigator.locks) {
@@ -24,7 +35,7 @@ export function acquireVoiceRecordingLock(ownerKey: string): Promise<(() => Prom
       unlock = accept;
     });
     const request = navigator.locks.request(
-      `t3code:voice:${ownerKey}`,
+      voiceRecordingLockName(ownerKey),
       { ifAvailable: true },
       (lock) => {
         if (!lock) {
@@ -90,7 +101,7 @@ async function transact<T>(
 
 export const recordingStorage = {
   create(recording: SavedVoiceRecording): Promise<void> {
-    return transact("readwrite", (tx) => {
+    return transact<void>("readwrite", (tx) => {
       const store = tx.objectStore(RECORDINGS);
       const existing = store.index("ownerKey").getKey(recording.ownerKey);
       existing.addEventListener("success", () => {
@@ -98,7 +109,7 @@ export const recordingStorage = {
         if (existing.result !== undefined) tx.abort();
         else store.add(recording);
       });
-    });
+    }).then(notifyVoiceRecordingRecoveryChange);
   },
   append(id: string, sequence: number, pcm: Float32Array<ArrayBuffer>): Promise<void> {
     return transact("readwrite", (tx) => {
@@ -115,7 +126,7 @@ export const recordingStorage = {
     transcriptIsFinal = false,
     draft?: VoiceDraftSnapshot,
   ): Promise<void> {
-    return transact("readwrite", (tx) => {
+    return transact<void>("readwrite", (tx) => {
       const store = tx.objectStore(RECORDINGS);
       const request = store.get(id);
       request.addEventListener("success", () => {
@@ -127,6 +138,15 @@ export const recordingStorage = {
             ...(draft ? { draft } : {}),
           });
       });
+    }).then(notifyVoiceRecordingRecoveryChange);
+  },
+  listByOwnerPrefix(prefix: string): Promise<SavedVoiceRecording[]> {
+    return transact("readonly", (tx, result) => {
+      const request = tx
+        .objectStore(RECORDINGS)
+        .index("ownerKey")
+        .getAll(IDBKeyRange.bound(prefix, `${prefix}\uffff`));
+      request.addEventListener("success", () => result(request.result as SavedVoiceRecording[]));
     });
   },
   find(ownerKey: string): Promise<SavedVoiceRecording | null> {
@@ -156,7 +176,7 @@ export const recordingStorage = {
     });
   },
   remove(id: string): Promise<void> {
-    return transact("readwrite", (tx) => {
+    return transact<void>("readwrite", (tx) => {
       tx.objectStore(RECORDINGS).delete(id);
       const request = tx.objectStore(CHUNKS).index("id").openKeyCursor(IDBKeyRange.only(id));
       request.addEventListener("success", () => {
@@ -165,6 +185,6 @@ export const recordingStorage = {
         tx.objectStore(CHUNKS).delete(cursor.primaryKey);
         cursor.continue();
       });
-    });
+    }).then(notifyVoiceRecordingRecoveryChange);
   },
 };

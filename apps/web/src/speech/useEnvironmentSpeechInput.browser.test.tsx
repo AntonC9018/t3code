@@ -21,12 +21,19 @@ import {
   useEnvironmentSpeechInput,
 } from "./useEnvironmentSpeechInput";
 import { PreviewAnnotationSpeech } from "../components/preview/PreviewAnnotationSpeech";
+import { ComposerSpeechRecordingPill } from "../components/chat/ComposerSpeechButton";
+import { notifyVoiceRecordingRecoveryChange } from "./recordingRecoveryEvents";
 
 const mocks = vi.hoisted(() => ({
   voice: null as ReturnType<typeof useEnvironmentSpeechInput> | null,
   retainRecording: false,
   recoveredPostProcessing: undefined as SpeechPostProcessingOptions | undefined,
   recoveredOwner: null as string | null,
+  closedQuestionPrefix: undefined as string | undefined,
+  questionAvailable: true,
+  savedQuestionOwners: [] as string[],
+  deliveredRecording: null as string | null,
+  deletedRecordings: vi.fn(),
   recovery: null as Promise<null> | null,
   transcriptions: vi.fn(),
   backgroundCommitted: vi.fn(),
@@ -81,7 +88,8 @@ vi.mock("./useDictationShortcut", () => ({
   },
 }));
 vi.mock("../components/chat/VoiceInputSetup", () => ({ VoiceInputSetup: () => null }));
-vi.mock("../components/chat/ComposerSpeechButton", () => ({
+vi.mock("../components/chat/ComposerSpeechButton", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../components/chat/ComposerSpeechButton")>()),
   resolveSpeechPresentation: () => ({ status: "Idle" }),
 }));
 vi.mock("../components/preview/previewBridge", () => ({ previewBridge: null }));
@@ -150,9 +158,20 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
     }),
 }));
 vi.mock("./recordingStorage", () => ({
+  isVoiceRecordingLocked: async () => false,
   recordingStorage: {
+    listByOwnerPrefix: async (prefix: string) =>
+      mocks.savedQuestionOwners
+        .filter((owner) => owner.startsWith(prefix))
+        .map((ownerKey) => ({
+          id: ownerKey,
+          ownerKey,
+          options: {},
+          locale: "en",
+          draft: { ownerKey, text: "", selection: { start: 0, end: 0 }, revision: 0 },
+        })),
     find: async (ownerKey: string) =>
-      mocks.recoveredOwner === ownerKey
+      mocks.recoveredOwner === ownerKey || mocks.savedQuestionOwners.includes(ownerKey)
         ? {
             id: "saved-audio",
             ownerKey,
@@ -169,13 +188,19 @@ vi.mock("./browserVoiceInput", () => ({
     getTranscriptionOptions: () => SpeechTranscriptionOptions;
     retainedDraft?: { ownerKey: string };
   }) => ({
+    recordingId: input.retainedDraft?.ownerKey ?? null,
     get postProcessingOptions() {
       return mocks.recoveredPostProcessing;
     },
     findRecording: async () =>
       mocks.recovery ??
       (await import("./recordingStorage")).recordingStorage.find(input.retainedDraft!.ownerKey),
-    discardSavedRecording: async () => {},
+    discardSavedRecording: async () => {
+      const owner = input.retainedDraft?.ownerKey;
+      mocks.deletedRecordings(owner);
+      mocks.savedQuestionOwners = mocks.savedQuestionOwners.filter((key) => key !== owner);
+      notifyVoiceRecordingRecoveryChange();
+    },
     saveTranscript: async (text: string) => text,
     restoreRecording: async () => ({
       uri: "recording",
@@ -209,17 +234,29 @@ vi.mock("./browserVoiceInput", () => ({
       },
     },
     cancelRecording() {},
-    deleteRecording() {},
+    deleteRecording() {
+      const owner = input.retainedDraft?.ownerKey;
+      mocks.deletedRecordings(owner);
+      mocks.savedQuestionOwners = mocks.savedQuestionOwners.filter((key) => key !== owner);
+      notifyVoiceRecordingRecoveryChange();
+    },
   }),
 }));
 
 function probeInput(): Parameters<typeof useEnvironmentSpeechInput>[0] {
+  const owner = mocks.ownerKey;
   return {
     environmentId: "project-environment" as EnvironmentId,
     projectId: mocks.projectId,
     ownerKey: mocks.ownerKey,
     draftText: mocks.draft,
     disabled: mocks.disabled,
+    closedQuestionRecordings: mocks.closedQuestionPrefix
+      ? {
+          ownerKeyPrefix: mocks.closedQuestionPrefix,
+          isDestinationAvailable: () => mocks.questionAvailable,
+        }
+      : undefined,
     readDraft: () => ({
       text: mocks.editorDraft ?? mocks.draft,
       selection: {
@@ -230,7 +267,11 @@ function probeInput(): Parameters<typeof useEnvironmentSpeechInput>[0] {
     commitDraft: mocks.committed,
     retainedDraft: mocks.retainRecording
       ? {
-          read: () => ({ text: "", selection: { start: 0, end: 0 } }),
+          hasDelivered: (id: string) => mocks.deliveredRecording === id,
+          read: () =>
+            owner.startsWith("question-") && !mocks.questionAvailable
+              ? null
+              : { text: "", selection: { start: 0, end: 0 } },
           commit: (
             (owner) => (text: string) =>
               mocks.backgroundCommitted(owner, text)
@@ -240,15 +281,32 @@ function probeInput(): Parameters<typeof useEnvironmentSpeechInput>[0] {
   };
 }
 
-function Probe({ input }: { input: Parameters<typeof useEnvironmentSpeechInput>[0] }) {
+function Probe({
+  input,
+  controls = false,
+}: {
+  input: Parameters<typeof useEnvironmentSpeechInput>[0];
+  controls?: boolean;
+}) {
   const value = useEnvironmentSpeechInput(input);
   useLayoutEffect(() => {
     mocks.voice = value;
   });
-  return null;
+  return controls ? (
+    <ComposerSpeechRecordingPill
+      state={value.state}
+      progress={null}
+      level={0}
+      recoveringClosedQuestion={value.recoveringClosedQuestion}
+      onStart={() => void value.start()}
+      onStop={() => void value.stop()}
+      onCancel={value.cancel}
+      onSkipPostProcessing={value.skipPostProcessing}
+    />
+  ) : null;
 }
 
-async function mountProbe() {
+async function mountProbe(controls = false) {
   return render(
     mocks.annotation ? (
       <PreviewAnnotationSpeech
@@ -260,7 +318,7 @@ async function mountProbe() {
         config={{ sessionId: "annotation-session", keybindings: [] }}
       />
     ) : (
-      <Probe input={probeInput()} />
+      <Probe input={probeInput()} controls={controls} />
     ),
   );
 }
@@ -271,6 +329,11 @@ function resetMocks() {
   mocks.retainRecording = false;
   mocks.recoveredPostProcessing = undefined;
   mocks.recoveredOwner = null;
+  mocks.closedQuestionPrefix = undefined;
+  mocks.questionAvailable = true;
+  mocks.savedQuestionOwners = [];
+  mocks.deliveredRecording = null;
+  mocks.deletedRecordings.mockClear();
   mocks.recovery = null;
   mocks.transcriptions.mockClear();
   mocks.backgroundCommitted.mockClear();
@@ -899,6 +962,121 @@ it("checks for newly recoverable audio before opening the microphone", async () 
   await act(() => mocks.voice!.start());
   expect(mocks.microphoneRequests).toBe(0);
   expect(mocks.transcriptions).toHaveBeenCalledOnce();
+});
+
+it("offers closed-question audio in its chat and recovers into the draft only after an explicit retry", async () => {
+  using _state = setup();
+  mocks.retainRecording = true;
+  mocks.closedQuestionPrefix = "question-";
+  mocks.questionAvailable = false;
+  mocks.savedQuestionOwners = ["question-closed"];
+  mocks.draft = "Main prompt";
+  await using _screen = await mountProbe();
+  await vi.waitFor(() =>
+    expect(mocks.voice!.state).toMatchObject({ phase: "error", hasRecording: true }),
+  );
+  expect(mocks.voice!.recoveringClosedQuestion).toBe(true);
+  expect(mocks.committed).not.toHaveBeenCalled();
+  expect(mocks.backgroundCommitted).not.toHaveBeenCalled();
+  await act(() => mocks.voice!.start());
+  expect(mocks.committed).toHaveBeenCalledWith("Main prompt Raw transcript", expect.anything());
+  expect(mocks.backgroundCommitted).toHaveBeenCalledWith("draft", "Main prompt Raw transcript");
+  expect(mocks.microphoneRequests).toBe(0);
+});
+
+it("keeps a pending question transcription reachable after the question closes without inserting automatically", async () => {
+  using _state = setup();
+  mocks.retainRecording = true;
+  mocks.microphoneFailure = false;
+  mocks.ownerKey = "question-closed";
+  const transcript = deferredTranscript();
+  mocks.transcript = transcript.promise;
+  await using screen = await mountProbe();
+  await act(() => mocks.voice!.start());
+  let stopping!: Promise<void>;
+  await act(async () => {
+    stopping = mocks.voice!.stop();
+  });
+  mocks.ownerKey = "draft";
+  mocks.draft = "Main prompt";
+  mocks.closedQuestionPrefix = "question-";
+  mocks.savedQuestionOwners = ["question-closed"];
+  mocks.questionAvailable = false;
+  await screen.rerender(<Probe input={probeInput()} />);
+  await act(async () => {
+    transcript.resolve("Saved answer");
+    await stopping;
+  });
+  await vi.waitFor(() =>
+    expect(mocks.voice!.state).toMatchObject({ phase: "error", hasRecording: true }),
+  );
+  expect(mocks.committed).not.toHaveBeenCalled();
+  expect(mocks.backgroundCommitted).not.toHaveBeenCalled();
+  await act(() => mocks.voice!.start());
+  expect(mocks.committed).toHaveBeenCalledWith("Main prompt Saved answer", expect.anything());
+  expect(mocks.microphoneRequests).toBe(1);
+});
+
+it("discards a closed question recording only on request and exposes the next saved recording", async () => {
+  using _state = setup();
+  mocks.retainRecording = true;
+  mocks.closedQuestionPrefix = "question-";
+  mocks.questionAvailable = false;
+  mocks.savedQuestionOwners = ["question-first", "question-second"];
+  await using _screen = await mountProbe();
+  await vi.waitFor(() => expect(mocks.voice!.state.hasRecording).toBe(true));
+  expect(mocks.deletedRecordings).not.toHaveBeenCalled();
+  await act(() => mocks.voice!.cancel());
+  await vi.waitFor(() => expect(mocks.voice!.state.hasRecording).toBe(true));
+  expect(mocks.deletedRecordings).toHaveBeenCalledWith("question-first");
+  expect(mocks.savedQuestionOwners).toEqual(["question-second"]);
+  expect(mocks.committed).not.toHaveBeenCalled();
+});
+
+it("cleans up an already-delivered question backup after reload without inserting the transcript again", async () => {
+  using _state = setup();
+  mocks.retainRecording = true;
+  mocks.closedQuestionPrefix = "question-";
+  mocks.questionAvailable = false;
+  mocks.savedQuestionOwners = ["question-delivered"];
+  // The destination's durable receipt remains even if the audio journal write and deletion failed.
+  mocks.deliveredRecording = "saved-audio";
+  await using _screen = await mountProbe();
+  await vi.waitFor(() => expect(mocks.savedQuestionOwners).toEqual([]));
+  expect(mocks.committed).not.toHaveBeenCalled();
+  expect(mocks.transcriptions).not.toHaveBeenCalled();
+});
+
+it("leaves recordings attached to open questions alone", async () => {
+  using _state = setup();
+  mocks.retainRecording = true;
+  mocks.closedQuestionPrefix = "question-";
+  mocks.savedQuestionOwners = ["question-open"];
+  mocks.questionAvailable = true;
+  await using _screen = await mountProbe();
+  expect(mocks.voice!.recoveringClosedQuestion).toBe(false);
+  expect(mocks.deletedRecordings).not.toHaveBeenCalled();
+  expect(mocks.transcriptions).not.toHaveBeenCalled();
+});
+
+it("shows explicit recovery and discard controls for a closed question recording", async () => {
+  using _state = setup();
+  mocks.retainRecording = true;
+  mocks.closedQuestionPrefix = "question-";
+  mocks.questionAvailable = false;
+  mocks.savedQuestionOwners = ["question-closed"];
+  mocks.draft = "Main prompt";
+  await using screen = await mountProbe(true);
+  await expect.element(screen.getByRole("button", { name: "Recover to draft" })).toBeVisible();
+  await expect
+    .element(screen.getByRole("button", { name: "Discard saved recording" }))
+    .toBeVisible();
+  expect(mocks.committed).not.toHaveBeenCalled();
+  await screen.getByRole("button", { name: "Recover to draft" }).click();
+  await vi.waitFor(() =>
+    expect(mocks.committed).toHaveBeenCalledWith("Main prompt Raw transcript", expect.anything()),
+  );
+  expect(mocks.microphoneRequests).toBe(0);
 });
 
 it("retries a failed transcription after leaving and returning to the chat", async () => {

@@ -170,3 +170,26 @@ it("keeps normal retained prompt delivery bound to its original chat", () => {
     "Original prompt with dictation",
   );
 });
+
+it("records delivery durably and keeps a repeated recovery from inserting its text twice", async () => {
+  const retained = makeRetainedComposerDraft(threadRef);
+  retained.commit("Recovered dictation", "recording-receipt");
+  retained.commit("Recovered dictation Second recording", "second-receipt");
+  useComposerDraftStore.setState({ draftsByThreadKey: {} });
+  await useComposerDraftStore.persist.rehydrate();
+  const restored = makeRetainedComposerDraft(threadRef);
+  expect(restored.hasDelivered("recording-receipt")).toBe(true);
+  expect(restored.commit("Recovered dictation Recovered dictation", "recording-receipt")).toBe(
+    "Recovered dictation Second recording",
+  );
+  expect(restored.read().text).toBe("Recovered dictation Second recording");
+  restored.forgetDelivered("recording-receipt");
+  expect(restored.hasDelivered("recording-receipt")).toBe(false);
+  expect(restored.hasDelivered("second-receipt")).toBe(true);
+  useComposerDraftStore.getState().clearComposerContent(threadRef);
+  useComposerDraftStore.setState({ draftsByThreadKey: {} });
+  await useComposerDraftStore.persist.rehydrate();
+  expect(restored.hasDelivered("second-receipt")).toBe(true);
+  restored.forgetDelivered("second-receipt");
+  expect(restored.hasDelivered("second-receipt")).toBe(false);
+});

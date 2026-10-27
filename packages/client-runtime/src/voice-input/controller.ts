@@ -404,6 +404,18 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
     }
   }
 
+  retryIntoCurrentDraft(): Promise<void> {
+    if (this.state.phase !== "error" || !this.retryRecording) return Promise.resolve();
+    const draft = this.dependencies.readDraft();
+    if (!draft) return this.start();
+    this.retryRecording = {
+      uri: this.retryRecording.uri,
+      transcription: this.retryRecording.transcription,
+      draft,
+    };
+    return this.start();
+  }
+
   stop(): Promise<void> {
     if (this.state.phase !== "recording") return Promise.resolve();
     return this.finishRecording(false, null);
