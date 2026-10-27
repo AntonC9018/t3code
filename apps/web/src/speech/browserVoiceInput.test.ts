@@ -331,3 +331,49 @@ it("resends saved audio when an earlier provider returned an empty transcript", 
     platform.deleteRecording(uri);
   }
 });
+
+it("delivers and caches provider text when its recovery journal cannot be written", async () => {
+  setupCapture();
+  using _audio = vi
+    .spyOn(recordingStorage, "audio")
+    .mockResolvedValue(new Blob([new Float32Array([0.25])]));
+  using _save = vi
+    .spyOn(recordingStorage, "saveTranscript")
+    .mockRejectedValue(new Error("Quota exceeded"));
+  using remove = vi.spyOn(recordingStorage, "remove").mockResolvedValue();
+  const onStorageWarning = vi.fn();
+  const platform = createBrowserVoiceInputPlatform({
+    prepared: {} as PreparedConnection,
+    getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+    getMicrophoneId: () => "",
+    onLevel() {},
+    onDurationLimit() {},
+    onText() {},
+    onError() {},
+    onStorageWarning,
+  });
+  const draft = { ownerKey: "chat", text: "", selection: { start: 0, end: 0 }, revision: 0 };
+  const { uri, transcription } = await platform.restoreRecording({
+    id: "journal-failure",
+    ownerKey: "chat",
+    locale: "en",
+    options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+    draft,
+  });
+  try {
+    const options = { signal: new AbortController().signal };
+    await expect(transcription.transcribe(uri, options)).resolves.toBe("Recovered speech");
+    await expect(transcription.transcribe(uri, options)).resolves.toBe("Recovered speech");
+    await expect(platform.saveTranscript("Cleaned transcript", draft)).resolves.toBe(
+      "Cleaned transcript",
+    );
+    await expect(transcription.transcribe(uri, options)).resolves.toBe("Cleaned transcript");
+    expect(platform.transcriptIsFinal).toBe(true);
+    expect(mocks.transcriptions).toHaveBeenCalledOnce();
+    expect(onStorageWarning).toHaveBeenCalledOnce();
+    expect(remove).not.toHaveBeenCalled();
+    expect((await fetch(uri)).ok).toBe(true);
+  } finally {
+    platform.deleteRecording(uri);
+  }
+});

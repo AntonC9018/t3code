@@ -40,6 +40,7 @@ export function createBrowserVoiceInputPlatform(input: {
   readonly onDurationLimit: () => void;
   readonly onText: (text: SpeechStreamText) => void;
   readonly onError: (message: string) => void;
+  readonly onStorageWarning?: (message: string) => void;
 }): {
   readonly saveTranscript: (text: string, draft: VoiceDraftSnapshot) => Promise<string>;
   readonly postProcessingOptions: SpeechPostProcessingOptions | undefined;
@@ -68,6 +69,7 @@ export function createBrowserVoiceInputPlatform(input: {
   let sequence = 0;
   let saving = Promise.resolve();
   let storageError: unknown;
+  let transcriptStorageWarningShown = false;
   let streamError: Error | undefined;
   let unlockRecording: (() => Promise<void>) | null = null;
   const claimRecording = async () => {
@@ -121,14 +123,25 @@ export function createBrowserVoiceInputPlatform(input: {
   ) => {
     if (!text.trim()) return text;
     if (savedRecording) {
-      await saving;
-      await recordingStorage.saveTranscript(savedRecording.id, text, transcriptIsFinal, draft);
-      savedRecording = {
+      const recording = {
         ...savedRecording,
         transcript: text,
         transcriptIsFinal,
         ...(draft ? { draft } : {}),
       };
+      savedRecording = recording;
+      try {
+        await saving;
+        await recordingStorage.saveTranscript(recording.id, text, transcriptIsFinal, draft);
+        transcriptStorageWarningShown = false;
+      } catch {
+        if (!transcriptStorageWarningShown) {
+          transcriptStorageWarningShown = true;
+          input.onStorageWarning?.(
+            "Could not save the transcript backup. Your dictation is kept in this tab.",
+          );
+        }
+      }
     }
     return text;
   };
@@ -166,6 +179,7 @@ export function createBrowserVoiceInputPlatform(input: {
       bufferedForStream = [];
       sequence = 0;
       storageError = undefined;
+      transcriptStorageWarningShown = false;
       if (input.retainedDraft) {
         await saving;
         await claimRecording();

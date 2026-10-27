@@ -200,6 +200,13 @@ function createSpeechSession(
       session.preview = text;
       session.attachment?.notify();
     },
+    onStorageWarning: (message) => {
+      toastManager.add({
+        type: "warning",
+        title: "Transcript backup unavailable",
+        description: message,
+      });
+    },
     onError: (message) => {
       if (session.context.retainedDraft) {
         toastManager.add({
