@@ -11,6 +11,19 @@ import * as ServerConfig from "../config.ts";
 
 const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 
+export const clearStoredPlannerStatistics = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const statTables = yield* sql`SELECT 1 FROM sqlite_schema WHERE name = 'sqlite_stat1'`;
+  if (statTables.length > 0) {
+    const statistics = yield* sql`SELECT 1 FROM sqlite_stat1 LIMIT 1`;
+    // Reopening an already-clean database must not contend for its writer.
+    if (statistics.length > 0) {
+      yield* sql`DELETE FROM sqlite_stat1;`;
+      yield* sql`ANALYZE sqlite_schema;`;
+    }
+  }
+});
+
 const layerSetup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -43,11 +56,7 @@ const layerSetup = Layer.effectDiscard(
     // the few queries that still pick a worse index name theirs with INDEXED BY.
     // Older builds collected stats, so clear them. A connection loads stats
     // when it opens, so this one must reload them after the delete.
-    const statTables = yield* sql`SELECT 1 FROM sqlite_schema WHERE name = 'sqlite_stat1'`;
-    if (statTables.length > 0) {
-      yield* sql`DELETE FROM sqlite_stat1;`;
-      yield* sql`ANALYZE sqlite_schema;`;
-    }
+    yield* clearStoredPlannerStatistics;
   }),
 );
 

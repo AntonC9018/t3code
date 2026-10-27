@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -10,6 +11,27 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "./Sqlite.ts";
+
+it.effect("does not acquire the writer when planner statistics are already empty", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-empty-stats-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ANALYZE sqlite_schema`;
+    yield* sql`PRAGMA busy_timeout = 0`;
+    const writer = new NodeSqlite.DatabaseSync(dbPath);
+    writer.exec("BEGIN IMMEDIATE");
+    try {
+      yield* SqlitePersistence.clearStoredPlannerStatistics;
+    } finally {
+      writer.exec("ROLLBACK");
+      writer.close();
+    }
+  }).pipe(
+    Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
 
 it.effect("drops planner statistics a database already has", () => {
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-stats-"));
