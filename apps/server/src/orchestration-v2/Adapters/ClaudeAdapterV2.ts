@@ -20,30 +20,25 @@ import {
 
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
-import {
-  type CanUseTool,
-  forkSession as forkClaudeSession,
-  type EffortLevel,
-  type ForkSessionOptions,
-  type ForkSessionResult,
-  getSessionMessages,
-  getSubagentMessages,
-  query,
-  resolveSettings as resolveClaudeSettings,
-  type Options as ClaudeQueryOptions,
-  type PermissionMode,
-  type PermissionResult,
-  type PermissionUpdate,
-  type Query as ClaudeQuery,
-  type Settings as ClaudeSdkSettings,
-  type SpawnOptions as ClaudeSpawnOptions,
-  type SpawnedProcess as ClaudeSpawnedProcess,
-  type SDKAssistantMessage,
-  type SDKAPIRetryMessage,
-  type SDKMessage,
-  type SDKRateLimitInfo,
-  type SDKResultMessage,
-  type SDKUserMessage,
+import type {
+  CanUseTool,
+  EffortLevel,
+  ForkSessionOptions,
+  ForkSessionResult,
+  Options as ClaudeQueryOptions,
+  PermissionMode,
+  PermissionResult,
+  PermissionUpdate,
+  Query as ClaudeQuery,
+  Settings as ClaudeSdkSettings,
+  SpawnOptions as ClaudeSpawnOptions,
+  SpawnedProcess as ClaudeSpawnedProcess,
+  SDKAssistantMessage,
+  SDKAPIRetryMessage,
+  SDKMessage,
+  SDKRateLimitInfo,
+  SDKResultMessage,
+  SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AskUserQuestionInput,
@@ -958,6 +953,9 @@ export const layerQueryRunner: Layer.Layer<
             ? undefined
             : (spawnOptions: ClaudeSpawnOptions) =>
                 spawnClaudeProcessGroup(spawnOptions, stopScope));
+        const { query } = yield* Effect.tryPromise(
+          () => import("@anthropic-ai/claude-agent-sdk"),
+        ).pipe(Effect.mapError((cause) => queryRunnerError(cause, "query")));
         const queryRuntime = yield* Effect.uninterruptibleMask((restore) =>
           Effect.try({
             try: () =>
@@ -1176,7 +1174,12 @@ export const layerQueryRunner: Layer.Layer<
           ForkSessionResult & { readonly headMessageId?: string },
           unknown
         > = usesHostConfig
-          ? Effect.tryPromise(() => forkClaudeSession(input.sessionId, input.options))
+          ? Effect.tryPromise(async () =>
+              (await import("@anthropic-ai/claude-agent-sdk")).forkSession(
+                input.sessionId,
+                input.options,
+              ),
+            )
           : forkClaudeSessionInWorker(input).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),
@@ -1196,8 +1199,8 @@ export const layerQueryRunner: Layer.Layer<
         // fork's first run appends messages.
         const headMessageId = usesHostConfig
           ? yield* Effect.tryPromise({
-              try: () =>
-                getSessionMessages(
+              try: async () =>
+                (await import("@anthropic-ai/claude-agent-sdk")).getSessionMessages(
                   result.sessionId,
                   input.options.dir === undefined ? {} : { dir: input.options.dir },
                 ),
@@ -1228,11 +1231,15 @@ export const layerQueryRunner: Layer.Layer<
             },
           });
           const messages = yield* Effect.tryPromise({
-            try: () =>
-              getSubagentMessages(input.sessionId, input.agentId, {
-                ...(input.dir === null ? {} : { dir: input.dir }),
-                limit: 1,
-              }),
+            try: async () =>
+              (await import("@anthropic-ai/claude-agent-sdk")).getSubagentMessages(
+                input.sessionId,
+                input.agentId,
+                {
+                  ...(input.dir === null ? {} : { dir: input.dir }),
+                  limit: 1,
+                },
+              ),
             catch: (cause) => queryRunnerError(cause, "getSubagentMessages"),
           });
           const toolUseId = messages[0]?.parent_tool_use_id ?? null;
@@ -3953,8 +3960,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       const home = customHome
         ? yield* readBypassSettings(path.join(homePath, "settings.json"))
         : {};
-      const resolved = yield* Effect.tryPromise(() =>
-        resolveClaudeSettings({
+      const resolved = yield* Effect.tryPromise(async () =>
+        (await import("@anthropic-ai/claude-agent-sdk")).resolveSettings({
           ...(cwd === null ? {} : { cwd }),
           settingSources: customHome ? ["project", "local"] : ["user", "project", "local"],
           serverManagedSettings: remote,
@@ -3978,8 +3985,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         adapterOptions.environment.CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL,
       );
       if (Option.isSome(fromEnvironment)) return fromEnvironment.value;
-      const resolved = yield* Effect.tryPromise(() =>
-        resolveClaudeSettings({
+      const resolved = yield* Effect.tryPromise(async () =>
+        (await import("@anthropic-ai/claude-agent-sdk")).resolveSettings({
           ...(cwd === null ? {} : { cwd }),
           settingSources: customHome ? ["project", "local"] : ["user", "project", "local"],
         }),

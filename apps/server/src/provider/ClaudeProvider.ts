@@ -16,13 +16,12 @@ import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import {
-  query as claudeQuery,
-  type Options as ClaudeQueryOptions,
-  type SlashCommand as ClaudeSlashCommand,
-  type SDKControlGetUsageResponse,
-  type SDKUserMessage,
-  type SettingSource,
+import type {
+  Options as ClaudeQueryOptions,
+  SlashCommand as ClaudeSlashCommand,
+  SDKControlGetUsageResponse,
+  SDKUserMessage,
+  SettingSource,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import {
@@ -361,7 +360,8 @@ const probeClaudeCapabilities = (
     );
     const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
     return yield* Effect.tryPromise(async () => {
-      const q = claudeQuery({
+      const { query } = await import("@anthropic-ai/claude-agent-sdk");
+      const q = query({
         // Never yield — we only need initialization data, not a conversation.
         // This prevents any prompt from reaching the Anthropic API.
         // oxlint-disable-next-line require-yield
