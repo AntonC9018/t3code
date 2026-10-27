@@ -209,6 +209,41 @@ const desktopWindowBoundsEquivalence = Schema.toEquivalence(
   DesktopAppSettings.DesktopWindowBoundsSchema,
 );
 
+it.effect("shares window creation between renderer prewarming and backend readiness", () =>
+  Effect.gen(function* () {
+    const fakeWindow = makeFakeBrowserWindow();
+    const createCount = yield* Ref.make(0);
+    const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+    const creating = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const readyStarted = yield* Deferred.make<void>();
+    const layer = layerTest({
+      window: fakeWindow.window,
+      createCount,
+      mainWindow,
+      onWindowCreate: Deferred.succeed(creating, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+      ),
+    });
+    yield* Effect.gen(function* () {
+      const desktopWindow = yield* DesktopWindow.DesktopWindow;
+      const prewarm = yield* Effect.forkChild(desktopWindow.createMain);
+      yield* Deferred.await(creating);
+      const ready = yield* Effect.forkChild(
+        Deferred.succeed(readyStarted, undefined).pipe(
+          Effect.andThen(desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"))),
+        ),
+      );
+      yield* Deferred.await(readyStarted);
+      yield* TestClock.adjust("0 millis");
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(prewarm);
+      yield* Fiber.join(ready);
+      assert.equal(yield* Ref.get(createCount), 1);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
 function layerTest(input: {
   readonly window: Electron.BrowserWindow;
   readonly createCount: Ref.Ref<number>;

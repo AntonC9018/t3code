@@ -5,6 +5,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 
 import * as Electron from "electron";
 
@@ -302,6 +303,7 @@ export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const backendReadyRef = yield* Ref.make(false);
+  const mainWindowCreation = yield* Semaphore.make(1);
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
@@ -852,13 +854,15 @@ export const make = Effect.gen(function* () {
   });
 
   const createMain = Effect.gen(function* () {
+    const existingWindow = yield* currentMainWindow;
+    if (Option.isSome(existingWindow)) return existingWindow;
     const window = yield* createWindow();
     if (Option.isSome(window)) {
       yield* electronWindow.setMain(window.value);
       yield* logWindowInfo("main window created");
     }
     return window;
-  }).pipe(Effect.withSpan("desktop.window.createMain"));
+  }).pipe(mainWindowCreation.withPermits(1), Effect.withSpan("desktop.window.createMain"));
 
   const ensureMain = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return Option.none<Electron.BrowserWindow>();
