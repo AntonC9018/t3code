@@ -195,6 +195,23 @@ describe("DesktopLocalEnvironmentAuth", () => {
       return { auth, requestCount };
     });
 
+  it.effect("resumes local authentication promptly when a starting backend becomes available", () =>
+    Effect.gen(function* () {
+      const { auth, requestCount } = yield* makeExchange(
+        1,
+        () => new Response(null, { status: 503 }),
+      );
+      const delivered = yield* Ref.make(false);
+      yield* auth.getBearerToken.pipe(
+        Effect.tap(() => Ref.set(delivered, true)),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust(Duration.millis(100));
+      assert.isTrue(yield* Ref.get(delivered));
+      assert.strictEqual(yield* Ref.get(requestCount), 2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("does not retry a rejected bootstrap credential", () =>
     Effect.gen(function* () {
       const { auth, requestCount } = yield* makeExchange(1, () =>
