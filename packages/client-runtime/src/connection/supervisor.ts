@@ -38,6 +38,19 @@ import {
   type ReportedEndpoint,
 } from "./routes.ts";
 
+// A loopback route never leaves this device, so it stays usable when the
+// platform reports no network at all.
+const isLoopbackRoute = (route: ConnectionRoute): boolean =>
+  connectionRouteKind(route) === "loopback";
+
+function routesForNetwork(
+  entry: ConnectionCatalogEntry,
+  network: NetworkStatus,
+): ReadonlyArray<ConnectionRoute> {
+  const routes = connectionRoutes(entry);
+  return network === "offline" ? routes.filter(isLoopbackRoute) : routes;
+}
+
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
 // A cold server with a large database can take longer than 15 seconds to
@@ -266,7 +279,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const state = yield* SubscriptionRef.make<SupervisorConnectionState>(
     !initialIntent.desired
       ? availableState(initialIntent, 0)
-      : initialIntent.network === "offline"
+      : initialIntent.network === "offline" &&
+          routesForNetwork(entry, initialIntent.network).length === 0
         ? offlineState(initialIntent, 0, 0, null)
         : connectingState(initialIntent, 0, 1, null),
   );
@@ -278,18 +292,25 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const currentRoutes = Ref.get(currentEntry).pipe(Effect.map(connectionRoutes));
   const preferredRouteId = yield* Ref.make(Option.none<string>());
   const routeCooldowns = yield* Ref.make<ReadonlyMap<string, bigint>>(new Map());
+  // The in-flight attempt records the routes it may use and the route it last
+  // opened, so a network that reports offline mid-attempt does not cancel a
+  // loopback connection, the one connection an offline device can still make.
+  const attemptRoutes = yield* Ref.make<ReadonlyArray<ConnectionRoute>>([]);
+  const attemptPreparedTarget = yield* Ref.make<Option.Option<ConnectionTarget>>(Option.none());
 
-  const attemptEntry = Effect.gen(function* () {
-    const latest = yield* Ref.get(currentEntry);
-    const routes = connectionRoutes(latest);
+  const attemptEntry = Effect.fnUntraced(function* (entryCandidate: ConnectionCatalogEntry) {
+    const routes = connectionRoutes(entryCandidate);
     const preferred = yield* Ref.getAndSet(preferredRouteId, Option.none());
-    if (Option.isNone(preferred)) return latest;
+    if (Option.isNone(preferred)) return entryCandidate;
     const route = routes.find(
       (candidate) => connectionRouteId(candidate.target) === preferred.value,
     );
     return route === undefined
-      ? latest
-      : entryWithRoutes(latest, [route, ...routes.filter((candidate) => candidate !== route)]);
+      ? entryCandidate
+      : entryWithRoutes(entryCandidate, [
+          route,
+          ...routes.filter((candidate) => candidate !== route),
+        ]);
   });
 
   const learnRoutesFrom = Effect.fnUntraced(function* (
@@ -328,9 +349,21 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     if (current <= 0) return;
     const now = yield* Clock.monotonicTimeNanos;
     const cooldowns = yield* Ref.get(routeCooldowns);
+    // Only routes the next attempt could actually use: while offline that is
+    // loopback alone, so a reachable LAN address cannot bounce the local
+    // session into a route the supervisor refuses to open.
+    const attemptable = new Set(
+      routesForNetwork(latest, (yield* Ref.get(intent)).network).map((route) =>
+        connectionRouteId(route.target),
+      ),
+    );
     const better = connectionRoutes(latest)
       .slice(0, current)
-      .filter((route) => (cooldowns.get(connectionRouteId(route.target)) ?? 0n) <= now);
+      .filter(
+        (route) =>
+          attemptable.has(connectionRouteId(route.target)) &&
+          (cooldowns.get(connectionRouteId(route.target)) ?? 0n) <= now,
+      );
     const passed = yield* Effect.forEach(
       better,
       (route: ConnectionRoute) => driver.preflight(latest, route),
@@ -386,6 +419,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   ) {
     if ("prepared" in progress) {
       yield* SubscriptionRef.set(prepared, Option.some(progress.prepared));
+      yield* Ref.set(attemptPreparedTarget, Option.some(progress.prepared.target));
     }
     yield* setState(
       connectingState(yield* Ref.get(intent), generation, attempt, lastFailure, progress.stage),
@@ -393,12 +427,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   });
 
   const establishConnection = Effect.fnUntraced(function* (
+    entryCandidate: ConnectionCatalogEntry,
     attempt: number,
     generation: number,
     lastFailure: ConnectionAttemptError | null,
     synchronizedRoutes: Ref.Ref<number>,
   ) {
-    return yield* driver.connect(yield* attemptEntry, (progress) =>
+    return yield* driver.connect(yield* attemptEntry(entryCandidate), (progress) =>
       (progress.stage === "synchronizing"
         ? Ref.update(synchronizedRoutes, (count) => count + 1)
         : Effect.void
@@ -479,6 +514,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   };
 
   const establishTracedConnection = Effect.fnUntraced(function* (
+    entryCandidate: ConnectionCatalogEntry,
     attempt: number,
     generation: number,
     lastFailure: ConnectionAttemptError | null,
@@ -487,13 +523,19 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   ) {
     if (usesRelay) {
       return yield* traceRelayEstablishment(
-        establishConnection(attempt, generation, lastFailure, synchronizedRoutes),
+        establishConnection(entryCandidate, attempt, generation, lastFailure, synchronizedRoutes),
         attempt,
         generation,
         pendingRetry,
       );
     }
-    return yield* establishConnection(attempt, generation, lastFailure, synchronizedRoutes).pipe(
+    return yield* establishConnection(
+      entryCandidate,
+      attempt,
+      generation,
+      lastFailure,
+      synchronizedRoutes,
+    ).pipe(
       Effect.map((lease) => ({
         attemptSpan: Option.none<Tracer.Span>(),
         lease,
@@ -505,6 +547,19 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
+  // An offline change cancels an attempt only when no loopback route is in
+  // play. A device with no network can still reach itself.
+  const attemptWorksOffline = Effect.gen(function* () {
+    const routes = yield* Ref.get(attemptRoutes);
+    if (routes.length > 0 && routes.every(isLoopbackRoute)) return true;
+    const reported = yield* Ref.get(attemptPreparedTarget);
+    if (Option.isNone(reported)) return false;
+    const route = routes.find(
+      (candidate) => connectionRouteId(candidate.target) === connectionRouteId(reported.value),
+    );
+    return route !== undefined && isLoopbackRoute(route);
+  });
+
   const waitForEstablishmentInterrupt = Effect.fnUntraced(function* () {
     for (;;) {
       const next = yield* Queue.take(signals);
@@ -513,7 +568,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         case "RetryRequested":
           return false;
         case "NetworkChanged":
-          if (next.network === "offline") {
+          if (next.network === "offline" && !(yield* attemptWorksOffline)) {
             return false;
           }
           break;
@@ -665,6 +720,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   });
 
   const runAttempt = Effect.fnUntraced(function* (
+    entryCandidate: ConnectionCatalogEntry,
     attempt: number,
     generation: number,
     lastFailure: ConnectionAttemptError | null,
@@ -673,10 +729,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   ) {
     const switchingTo = yield* Ref.get(preferredRouteId);
     yield* SubscriptionRef.set(prepared, Option.none());
+    yield* Ref.set(attemptRoutes, connectionRoutes(entryCandidate));
+    yield* Ref.set(attemptPreparedTarget, Option.none());
     const synchronizedRoutes = yield* Ref.make(0);
     const establishment = yield* Effect.raceAllFirst([
       exitUnlessInterrupted(
         establishTracedConnection(
+          entryCandidate,
           attempt,
           generation,
           lastFailure,
@@ -699,7 +758,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       // each route that reaches synchronizing adds its own snapshot budget, so
       // a route that fails late does not eat the next route's time.
       Effect.gen(function* () {
-        const routeCount = connectionRoutes(yield* Ref.get(currentEntry)).length;
+        const routeCount = connectionRoutes(entryCandidate).length;
         const startedAt = yield* Clock.monotonicTimeNanos;
         const setup = Duration.toNanosUnsafe(Duration.times(establishmentTimeout, routeCount));
         while (true) {
@@ -759,7 +818,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const active = establishment.exit.value;
     if (Option.isSome(switchingTo)) {
       const landed = connectionRouteId(active.lease.prepared.target);
-      if (landed !== switchingTo.value) {
+      // A route dropped from this attempt (for example by offline filtering)
+      // never got a chance, so it must not be cooled down as if it failed.
+      const attempted = connectionRoutes(entryCandidate).some(
+        (route) => connectionRouteId(route.target) === switchingTo.value,
+      );
+      if (landed !== switchingTo.value && attempted) {
         const until =
           (yield* Clock.monotonicTimeNanos) + BigInt(BETTER_ROUTE_COOLDOWN_MS) * 1_000_000n;
         yield* Ref.update(routeCooldowns, (current) =>
@@ -768,7 +832,17 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
     }
     const currentIntent = yield* Ref.get(intent);
-    if (!currentIntent.desired || (currentIntent.network === "offline" && !ignoreOffline)) {
+    // A network that goes offline while a loopback route comes up must not
+    // throw the working local session away. Remote leases still wait.
+    const activeRoute = connectionRoutes(entryCandidate).find(
+      (route) =>
+        connectionRouteId(route.target) === connectionRouteId(active.lease.prepared.target),
+    );
+    const localLease = activeRoute !== undefined && isLoopbackRoute(activeRoute);
+    if (
+      !currentIntent.desired ||
+      (currentIntent.network === "offline" && !ignoreOffline && !localLease)
+    ) {
       return {
         _tag: "Interrupted",
         established: false,
@@ -897,7 +971,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         yield* waitForSignal;
         continue;
       }
-      if (currentIntent.network === "offline" && !replacing) {
+      // Offline keeps remote routes waiting for the network, but a loopback
+      // route never leaves this device, so it stays attemptable.
+      const latestEntry = yield* Ref.get(currentEntry);
+      const offlineRoutes = routesForNetwork(latestEntry, currentIntent.network);
+      if (currentIntent.network === "offline" && offlineRoutes.length === 0 && !replacing) {
         yield* clearLease;
         yield* setState(offlineState(currentIntent, generation, failureCount + 1, latestFailure));
         const applicationActivated = yield* waitForSignal;
@@ -906,11 +984,25 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         }
         continue;
       }
+      // A resume may still try the full route list when nothing local is
+      // available, since the offline report can be wrong. Otherwise an
+      // offline attempt is limited to loopback routes.
+      const attemptableEntry =
+        currentIntent.network === "offline" && offlineRoutes.length > 0
+          ? entryWithRoutes(latestEntry, offlineRoutes)
+          : latestEntry;
 
       const attempt = failureCount + 1;
       const nextGeneration = generation + 1;
       const outcome: AttemptOutcome = yield* Effect.scoped(
-        runAttempt(attempt, nextGeneration, latestFailure, pendingRetry, replacing),
+        runAttempt(
+          attemptableEntry,
+          attempt,
+          nextGeneration,
+          latestFailure,
+          pendingRetry,
+          replacing,
+        ),
       );
       replacing = false;
       const failedProbe = yield* Ref.getAndSet(probeUnanswered, false);

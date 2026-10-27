@@ -98,6 +98,55 @@ const LAN_THEN_RELAY_ENTRY: ConnectionCatalogEntry = {
   enabled: true,
 };
 
+const LOOPBACK_TARGET = new PrimaryConnectionTarget({
+  environmentId: TARGET.environmentId,
+  label: TARGET.label,
+  httpBaseUrl: "http://127.0.0.1:3773/",
+  wsBaseUrl: "ws://127.0.0.1:3773/",
+});
+const LOOPBACK_ENTRY: ConnectionCatalogEntry = {
+  target: LOOPBACK_TARGET,
+  profile: Option.none(),
+  enabled: true,
+};
+
+// A private address is not loopback: with no interface it cannot be reached.
+const LAN_PRIMARY_TARGET = new PrimaryConnectionTarget({
+  environmentId: TARGET.environmentId,
+  label: TARGET.label,
+  httpBaseUrl: "http://192.168.1.10:3773/",
+  wsBaseUrl: "ws://192.168.1.10:3773/",
+});
+const LAN_PRIMARY_ENTRY: ConnectionCatalogEntry = {
+  target: LAN_PRIMARY_TARGET,
+  profile: Option.none(),
+  enabled: true,
+};
+
+const LOOPBACK_BEARER_TARGET = new BearerConnectionTarget({
+  environmentId: TARGET.environmentId,
+  label: TARGET.label,
+  connectionId: "bearer:loopback",
+});
+const LOOPBACK_BEARER_ROUTE: ConnectionRoute = {
+  target: LOOPBACK_BEARER_TARGET,
+  profile: Option.some(
+    new BearerConnectionProfile({
+      connectionId: LOOPBACK_BEARER_TARGET.connectionId,
+      environmentId: TARGET.environmentId,
+      label: TARGET.label,
+      httpBaseUrl: "http://localhost:3773/",
+      wsBaseUrl: "ws://localhost:3773/",
+    }),
+  ),
+};
+const REMOTE_WITH_LOOPBACK_ENTRY: ConnectionCatalogEntry = {
+  target: TARGET,
+  profile: Option.none(),
+  alternateRoutes: [LOOPBACK_BEARER_ROUTE],
+  enabled: true,
+};
+
 function preparedFor(target: ConnectionTarget): PreparedConnection {
   return { ...PREPARED_CONNECTION, target };
 }
@@ -1230,6 +1279,143 @@ describe("EnvironmentSupervisor routes", () => {
       expect(yield* Ref.get(learned)).toEqual([
         `learned:${TARGET.environmentId}:http://192.168.1.10:3773`,
       ]);
+    }),
+  );
+});
+
+describe("EnvironmentSupervisor offline routes", () => {
+  it.effect("connects a loopback environment while the network reports offline", () =>
+    Effect.gen(function* () {
+      const probed = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        networkStatus: "offline",
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        probe: () => Deferred.succeed(probed, undefined),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const connected = yield* eventuallyState(
+        supervisor.state,
+        (state) => state.phase === "connected",
+      );
+      expect(connected).toMatchObject({
+        desired: true,
+        network: "offline",
+        phase: "connected",
+        attempt: 1,
+        generation: 1,
+      });
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "PrimaryConnectionTarget",
+      );
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+
+      // A stale offline report must not tear down the working local session.
+      yield* harness.wake("network-changed");
+      yield* Deferred.await(probed);
+      expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connected");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+    }),
+  );
+
+  it.effect("reconnects a loopback session while the network stays offline", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        networkStatus: "offline",
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* eventuallyState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      yield* harness.closeLatestSession();
+      yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+
+      yield* TestClock.adjust("3 seconds");
+      const reconnected = yield* eventuallyState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(reconnected.network).toBe("offline");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("uses only the loopback route of a mixed environment while offline", () =>
+    Effect.gen(function* () {
+      const attempted = yield* Ref.make<ReadonlyArray<string>>([]);
+      const harness = yield* makeHarness({
+        networkStatus: "offline",
+        prepare: (_attempt, target) =>
+          Ref.update(attempted, (all) => [...all, connectionRouteId(target)]).pipe(
+            Effect.as(preparedFor(target)),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(REMOTE_WITH_LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* eventuallyState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(attempted)).toEqual([LOOPBACK_BEARER_TARGET.connectionId]);
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "BearerConnectionTarget",
+      );
+    }),
+  );
+
+  it.effect("keeps a private-address primary waiting while offline", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        networkStatus: "offline",
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_PRIMARY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(0);
+
+      yield* harness.setNetworkStatus("online");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+    }),
+  );
+
+  it.effect("keeps a loopback attempt alive when the network goes offline", () =>
+    Effect.gen(function* () {
+      const prepareStarted = yield* Deferred.make<void>();
+      const allowConnection = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        prepare: (_attempt, target) =>
+          Deferred.succeed(prepareStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(allowConnection)),
+            Effect.as(preparedFor(target)),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(prepareStarted);
+      yield* harness.setNetworkStatus("offline");
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(allowConnection, undefined);
+
+      const connected = yield* eventuallyState(
+        supervisor.state,
+        (state) => state.phase === "connected",
+      );
+      expect(connected).toMatchObject({ network: "offline", generation: 1 });
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
     }),
   );
 });
