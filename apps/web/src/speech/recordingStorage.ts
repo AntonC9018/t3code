@@ -1,4 +1,4 @@
-import type { SpeechTranscriptionOptions } from "@t3tools/contracts";
+import type { SpeechPostProcessingOptions, SpeechTranscriptionOptions } from "@t3tools/contracts";
 import type { VoiceDraftSnapshot } from "@t3tools/client-runtime/voice-input";
 
 export type SavedVoiceRecording = {
@@ -9,7 +9,38 @@ export type SavedVoiceRecording = {
   readonly locale: string;
   readonly transcript?: string;
   readonly transcriptIsFinal?: boolean;
+  readonly postProcessingOptions?: SpeechPostProcessingOptions;
 };
+
+// Web Locks are origin-wide and are released by the browser when a tab exits.
+export function acquireVoiceRecordingLock(ownerKey: string): Promise<(() => Promise<void>) | null> {
+  return new Promise((resolve, reject) => {
+    if (!navigator.locks) {
+      reject(new Error("This browser cannot safely retain dictation across tabs."));
+      return;
+    }
+    let unlock!: () => void;
+    const released = new Promise<void>((accept) => {
+      unlock = accept;
+    });
+    const request = navigator.locks.request(
+      `t3code:voice:${ownerKey}`,
+      { ifAvailable: true },
+      (lock) => {
+        if (!lock) {
+          resolve(null);
+          return;
+        }
+        resolve(async () => {
+          unlock();
+          await request;
+        });
+        return released;
+      },
+    );
+    void request.catch(reject);
+  });
+}
 
 const DATABASE = "t3code:voice-recordings";
 const RECORDINGS = "recordings";
@@ -71,15 +102,30 @@ export const recordingStorage = {
   },
   append(id: string, sequence: number, pcm: Float32Array<ArrayBuffer>): Promise<void> {
     return transact("readwrite", (tx) => {
-      tx.objectStore(CHUNKS).add({ id, sequence, pcm });
+      const request = tx.objectStore(RECORDINGS).getKey(id);
+      request.addEventListener("success", () => {
+        if (request.result === undefined) tx.abort();
+        else tx.objectStore(CHUNKS).add({ id, sequence, pcm });
+      });
     });
   },
-  saveTranscript(id: string, transcript: string, transcriptIsFinal = false): Promise<void> {
+  saveTranscript(
+    id: string,
+    transcript: string,
+    transcriptIsFinal = false,
+    draft?: VoiceDraftSnapshot,
+  ): Promise<void> {
     return transact("readwrite", (tx) => {
       const store = tx.objectStore(RECORDINGS);
       const request = store.get(id);
       request.addEventListener("success", () => {
-        if (request.result) store.put({ ...request.result, transcript, transcriptIsFinal });
+        if (request.result)
+          store.put({
+            ...request.result,
+            transcript,
+            transcriptIsFinal,
+            ...(draft ? { draft } : {}),
+          });
       });
     });
   },

@@ -87,7 +87,7 @@ export type VoiceInputControllerDependencies<WithPostProcessing extends boolean 
         | undefined
     : never;
   readonly onPostProcessingError?: (error: unknown) => void;
-  readonly onTranscriptReady?: (text: string) => Promise<void>;
+  readonly onTranscriptReady?: (text: string, draft: VoiceDraftSnapshot) => Promise<void>;
   readonly readDraft: () => VoiceDraftSnapshot | null;
   readonly commitDraft: (
     text: string,
@@ -264,6 +264,7 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
     uri: string;
     draft: VoiceDraftSnapshot;
     transcription: PreparedVoiceTranscription;
+    commit?: { text: string; selection: { readonly start: number; readonly end: number } };
   } | null = null;
 
   constructor(dependencies: VoiceInputControllerDependencies<WithPostProcessing>) {
@@ -315,6 +316,23 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
       this.transcriptionAbortController = abortController;
 
       if (this.retryRecording) {
+        const pendingCommit = this.retryRecording.commit;
+        if (
+          pendingCommit &&
+          initiatingDraft.text === pendingCommit.text &&
+          initiatingDraft.ownerKey === this.retryRecording.draft.ownerKey
+        ) {
+          try {
+            this.dependencies.commitDraft(pendingCommit.text, pendingCommit.selection);
+            this.retryRecording = null;
+            this.setState(IDLE_STATE);
+          } catch {
+            this.setError("Could not save the transcribed draft.", "retry");
+          } finally {
+            await this.releaseResources();
+          }
+          return;
+        }
         this.recordingUri = this.retryRecording.uri;
         this.capturedDraft =
           initiatingDraft.text === this.retryRecording.draft.text
@@ -569,7 +587,7 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
         if (!this.isCurrent(operationToken)) return;
       }
 
-      await this.dependencies.onTranscriptReady?.(transcript);
+      await this.dependencies.onTranscriptReady?.(transcript, capturedDraft);
       if (!this.isCurrent(operationToken)) return;
       const result = resolveTranscriptCommit(
         capturedDraft,
@@ -589,13 +607,14 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
         return;
       }
 
+      if (this.retryRecording) this.retryRecording.commit = result;
       this.dependencies.commitDraft(result.text, result.selection);
       this.retryRecording = null;
       this.setState(IDLE_STATE);
     } catch {
       if (this.isCurrent(operationToken)) {
         const uri = this.dependencies.recorder.uri ?? this.recordingUri;
-        if (uri && this.capturedDraft && this.transcription) {
+        if (!this.retryRecording && uri && this.capturedDraft && this.transcription) {
           this.retryRecording = {
             uri,
             draft: this.capturedDraft,

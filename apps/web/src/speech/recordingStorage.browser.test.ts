@@ -2,6 +2,8 @@ import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
 import { recordingStorage, type SavedVoiceRecording } from "./recordingStorage";
+import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
+import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 
 const recording = (id: string, ownerKey: string): SavedVoiceRecording => ({
   id,
@@ -58,4 +60,60 @@ it("reports a failed chunk write while preserving previously saved audio", async
   } finally {
     await recordingStorage.remove(saved.id);
   }
+});
+
+it("recovers the insertion target chosen by a retry after the draft was edited", async () => {
+  const saved = recording("storage-test-retry", "chat-retry");
+  const draft = { ...saved.draft, text: "Changed", selection: { start: 7, end: 7 }, revision: 3 };
+  try {
+    await recordingStorage.create(saved);
+    await recordingStorage.saveTranscript(saved.id, "Recovered", true, draft);
+    expect(await recordingStorage.find(saved.ownerKey)).toEqual({
+      ...saved,
+      draft,
+      transcript: "Recovered",
+      transcriptIsFinal: true,
+    });
+  } finally {
+    await recordingStorage.remove(saved.id);
+  }
+});
+
+it("prevents another tab's session from recovering or discarding an owned recording", async () => {
+  const saved = recording("storage-test-owned", "chat-owned");
+  const makePlatform = () =>
+    createBrowserVoiceInputPlatform({
+      prepared: {} as PreparedConnection,
+      retainedDraft: { ownerKey: saved.ownerKey, read: () => saved.draft },
+      getTranscriptionOptions: () => saved.options,
+      getMicrophoneId: () => "",
+      onLevel() {},
+      onDurationLimit() {},
+      onText() {},
+      onError() {},
+    });
+  const first = makePlatform();
+  const second = makePlatform();
+  try {
+    await recordingStorage.create(saved);
+    await recordingStorage.append(saved.id, 0, new Float32Array([0.25]));
+    expect(await first.findRecording()).toEqual(saved);
+    expect(await second.findRecording()).toBeNull();
+    await expect(second.restoreRecording(saved)).rejects.toThrow("another tab");
+    await second.discardSavedRecording();
+    expect(await recordingStorage.find(saved.ownerKey)).toEqual(saved);
+    await first.discardSavedRecording();
+    expect(await second.findRecording()).toBeNull();
+  } finally {
+    await first.discardSavedRecording();
+    await second.discardSavedRecording();
+    await recordingStorage.remove(saved.id);
+  }
+});
+
+it("rejects orphaned chunks after a recording is removed", async () => {
+  await expect(
+    recordingStorage.append("missing-recording", 0, new Float32Array([0.25])),
+  ).rejects.toBeDefined();
+  expect((await recordingStorage.audio("missing-recording")).size).toBe(0);
 });

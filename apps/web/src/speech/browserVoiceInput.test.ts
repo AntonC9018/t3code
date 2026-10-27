@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   supportsTranslation: true,
   languages: ["en", "fr", "ja"] as string[] | undefined,
   supportsLanguageDetection: true,
+  transcriptionText: "Recovered speech",
+  transcriptions: vi.fn(),
   stream: (() => {
     type Stream = {
       feed: (pcm: Float32Array) => void;
@@ -35,10 +37,15 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
   prepareEnvironmentSpeechModel: () => Effect.succeed({ supported: true, state: "ready" }),
   getEnvironmentSpeechStreamUrl: () => Effect.succeed("ws://speech.test"),
   openSpeechStream: () => mocks.stream.promise,
+  transcribeEnvironmentPcm: () => {
+    mocks.transcriptions();
+    return Effect.succeed({ text: mocks.transcriptionText });
+  },
 }));
 vi.mock("../lib/runtime", () => ({ runtime: { runPromise: Effect.runPromise } }));
 
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
+import { recordingStorage } from "./recordingStorage";
 
 let worklet: {
   port: {
@@ -53,6 +60,7 @@ afterEach(() => {
   mocks.supportsTranslation = true;
   mocks.languages = ["en", "fr", "ja"];
   mocks.supportsLanguageDetection = true;
+  mocks.transcriptions.mockClear();
   vi.unstubAllGlobals();
 });
 
@@ -62,6 +70,9 @@ function setupCapture() {
   };
   vi.stubGlobal("navigator", {
     mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
+    locks: {
+      request: async (_name: string, _options: unknown, run: (lock: object) => unknown) => run({}),
+    },
   });
   vi.stubGlobal(
     "AudioContext",
@@ -246,4 +257,77 @@ it("keeps all audio for retry after a live stream has consumed it", async () => 
     transcription.streaming!.finish({ signal: new AbortController().signal }),
   ).rejects.toThrow();
   platform.deleteRecording(platform.recorder.uri!);
+});
+
+it("removes an empty saved session when microphone permission is denied", async () => {
+  setupCapture();
+  using create = vi.spyOn(recordingStorage, "create").mockResolvedValue();
+  using remove = vi.spyOn(recordingStorage, "remove").mockResolvedValue();
+  vi.stubGlobal("navigator", {
+    locks: navigator.locks,
+    mediaDevices: {
+      getUserMedia: async () => {
+        throw new DOMException("Permission denied", "NotAllowedError");
+      },
+    },
+  });
+  const platform = createBrowserVoiceInputPlatform({
+    prepared: {} as PreparedConnection,
+    retainedDraft: {
+      ownerKey: "denied-chat",
+      read: () => ({
+        ownerKey: "denied-chat",
+        text: "",
+        selection: { start: 0, end: 0 },
+        revision: 0,
+      }),
+    },
+    getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+    getMicrophoneId: () => "",
+    onLevel() {},
+    onDurationLimit() {},
+    onText() {},
+    onError() {},
+  });
+  await platform.transcriber.prepare({ signal: new AbortController().signal });
+  await expect(platform.recorder.prepareToRecordAsync()).rejects.toMatchObject({
+    name: "NotAllowedError",
+  });
+  expect(remove).toHaveBeenCalledWith(create.mock.calls[0]![0].id);
+});
+
+it("resends saved audio when an earlier provider returned an empty transcript", async () => {
+  setupCapture();
+  using _audio = vi
+    .spyOn(recordingStorage, "audio")
+    .mockResolvedValue(new Blob([new Float32Array([0.25])]));
+  using save = vi.spyOn(recordingStorage, "saveTranscript").mockResolvedValue();
+  using _remove = vi.spyOn(recordingStorage, "remove").mockResolvedValue();
+  const platform = createBrowserVoiceInputPlatform({
+    prepared: {} as PreparedConnection,
+    getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+    getMicrophoneId: () => "",
+    onLevel() {},
+    onDurationLimit() {},
+    onText() {},
+    onError() {},
+  });
+  const { uri, transcription } = await platform.restoreRecording({
+    id: "empty-result",
+    ownerKey: "chat",
+    locale: "en",
+    options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+    draft: { ownerKey: "chat", text: "", selection: { start: 0, end: 0 }, revision: 0 },
+    transcript: "",
+    transcriptIsFinal: true,
+  });
+  try {
+    await expect(
+      transcription.transcribe(uri, { signal: new AbortController().signal }),
+    ).resolves.toBe("Recovered speech");
+    expect(mocks.transcriptions).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith("empty-result", "Recovered speech", false, expect.anything());
+  } finally {
+    platform.deleteRecording(uri);
+  }
 });

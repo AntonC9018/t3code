@@ -233,8 +233,25 @@ const PersistedTerminalContextDraft = Schema.Struct({
 });
 type PersistedTerminalContextDraft = typeof PersistedTerminalContextDraft.Type;
 
+const QuestionAnswerDraft = Schema.Struct({
+  customAnswer: Schema.optionalKey(Schema.String),
+  selectedOptionValues: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+type QuestionAnswerDraft = DeepMutable<typeof QuestionAnswerDraft.Type>;
+const isQuestionAnswerDraft = Schema.is(QuestionAnswerDraft);
+
+function hydrateQuestionAnswerDraft(draft: typeof QuestionAnswerDraft.Type): QuestionAnswerDraft {
+  return {
+    ...(draft.customAnswer !== undefined ? { customAnswer: draft.customAnswer } : {}),
+    ...(draft.selectedOptionValues
+      ? { selectedOptionValues: [...draft.selectedOptionValues] }
+      : {}),
+  };
+}
+
 const PersistedComposerThreadDraftState = Schema.Struct({
   prompt: Schema.String,
+  questionAnswer: Schema.optionalKey(QuestionAnswerDraft),
   attachments: Schema.Array(PersistedComposerImageAttachment),
   files: Schema.optionalKey(Schema.Array(PersistedComposerDraftFileAttachment)),
   terminalContexts: Schema.optionalKey(Schema.Array(PersistedTerminalContextDraft)),
@@ -360,6 +377,8 @@ const contextInsertionHandlers = new Map<string, ComposerContextInsertionHandler
 
 export interface ComposerThreadDraftState {
   prompt: string;
+  // Question sidecars keep answers separate from the ordinary chat prompt, including empty edits.
+  questionAnswer?: QuestionAnswerDraft;
   images: ComposerImageAttachment[];
   files: ComposerFileAttachment[];
   nonPersistedImageIds: string[];
@@ -499,6 +518,7 @@ interface ComposerDraftStoreState {
   clearDraftThread: (threadRef: ComposerThreadTarget) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
   setPrompt: (threadRef: ComposerThreadTarget, prompt: string) => void;
+  setQuestionAnswer: (target: DraftId, answer: QuestionAnswerDraft) => void;
   setTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
   setModelSelection: (
     threadRef: ComposerThreadTarget,
@@ -867,6 +887,7 @@ function normalizeTerminalContextsForThread(
 function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
   return (
     draft.prompt.length === 0 &&
+    draft.questionAnswer === undefined &&
     draft.images.length === 0 &&
     draft.files.length === 0 &&
     draft.persistedAttachments.length === 0 &&
@@ -1761,6 +1782,9 @@ function normalizePersistedDraftsByThreadId(
       continue;
     }
     const draftCandidate = draftValue as PersistedComposerThreadDraftState;
+    const questionAnswer = isQuestionAnswerDraft(draftCandidate.questionAnswer)
+      ? hydrateQuestionAnswerDraft(draftCandidate.questionAnswer)
+      : undefined;
     const promptCandidate = typeof draftCandidate.prompt === "string" ? draftCandidate.prompt : "";
     const attachments = Array.isArray(draftCandidate.attachments)
       ? draftCandidate.attachments.flatMap((entry) => {
@@ -1893,6 +1917,7 @@ function normalizePersistedDraftsByThreadId(
       Object.keys(modelSelectionByProvider).length > 0 || activeProvider !== null;
     if (
       promptCandidate.length === 0 &&
+      questionAnswer === undefined &&
       attachments.length === 0 &&
       files.length === 0 &&
       terminalContexts.length === 0 &&
@@ -1919,6 +1944,7 @@ function normalizePersistedDraftsByThreadId(
             })();
     nextDraftsByThreadKey[normalizedThreadKey] = {
       prompt,
+      ...(questionAnswer ? { questionAnswer } : {}),
       attachments,
       ...(files.length > 0 ? { files } : {}),
       ...(terminalContexts.length > 0 ? { terminalContexts } : {}),
@@ -2021,6 +2047,7 @@ export function partializeComposerDraftStoreState(
       Object.keys(draft.modelSelectionByProvider).length > 0 || draft.activeProvider !== null;
     if (
       draft.prompt.length === 0 &&
+      draft.questionAnswer === undefined &&
       draft.persistedAttachments.length === 0 &&
       draft.files.length === 0 &&
       draft.terminalContexts.length === 0 &&
@@ -2035,6 +2062,7 @@ export function partializeComposerDraftStoreState(
     }
     const persistedDraft: DeepMutable<PersistedComposerThreadDraftState> = {
       prompt: draft.prompt,
+      ...(draft.questionAnswer ? { questionAnswer: draft.questionAnswer } : {}),
       attachments: draft.persistedAttachments,
       ...(draft.files.length > 0
         ? {
@@ -2343,6 +2371,9 @@ function toHydratedThreadDraft(
       ...(persistedDraft.threadContexts ?? []).map(threadContextReference),
       ...files.map(fileContextReference),
     ]),
+    ...(persistedDraft.questionAnswer
+      ? { questionAnswer: hydrateQuestionAnswerDraft(persistedDraft.questionAnswer) }
+      : {}),
     images: hydrateImagesFromPersisted(persistedDraft.attachments),
     files,
     nonPersistedImageIds: [],
@@ -2886,6 +2917,17 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
+        },
+        setQuestionAnswer: (target, questionAnswer) => {
+          set((state) => ({
+            draftsByThreadKey: {
+              ...state.draftsByThreadKey,
+              [target]: {
+                ...(state.draftsByThreadKey[target] ?? createEmptyThreadDraft()),
+                questionAnswer,
+              },
+            },
+          }));
         },
         setTerminalContexts: (threadRef, contexts) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
@@ -3948,8 +3990,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (!current) {
               return state;
             }
+            const { questionAnswer: _questionAnswer, ...retained } = current;
             const nextDraft: ComposerThreadDraftState = {
-              ...current,
+              ...retained,
               prompt: "",
               images: [],
               files: [],
@@ -4154,7 +4197,22 @@ export function persistComposerDraftPrompt(target: ComposerThreadTarget, prompt:
     throw new Error("This draft is no longer available.");
   useComposerDraftStore.getState().setPrompt(target, prompt);
   // Voice audio can be removed only after its replacement text has reached storage.
+  flushComposerDraftPersistence();
+}
+
+export function flushComposerDraftPersistence(): void {
   composerDebouncedStorage.flush();
+}
+
+/** Retained recordings must keep only their destination, never a ChatComposer render. */
+export function makeRetainedComposerDraft(target: ComposerThreadTarget) {
+  return {
+    read: () => {
+      const text = useComposerDraftStore.getState().getComposerDraft(target)?.prompt ?? "";
+      return { text, selection: { start: text.length, end: text.length } };
+    },
+    commit: (text: string) => persistComposerDraftPrompt(target, text),
+  };
 }
 
 export function subscribeComposerDraftModelReconciliation(input: {

@@ -15,10 +15,18 @@ import {
   type PreparedVoiceTranscription,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import type { SpeechTranscriptionOptions, SpeechStreamText } from "@t3tools/contracts";
+import type {
+  SpeechPostProcessingOptions,
+  SpeechTranscriptionOptions,
+  SpeechStreamText,
+} from "@t3tools/contracts";
 
 import { runtime } from "../lib/runtime";
-import { recordingStorage, type SavedVoiceRecording } from "./recordingStorage";
+import {
+  acquireVoiceRecordingLock,
+  recordingStorage,
+  type SavedVoiceRecording,
+} from "./recordingStorage";
 import workletUrl from "./pcmWorklet.ts?worker&url";
 
 export function createBrowserVoiceInputPlatform(input: {
@@ -26,13 +34,17 @@ export function createBrowserVoiceInputPlatform(input: {
   readonly getPrepared?: () => PreparedConnection | null;
   readonly retainedDraft?: { readonly ownerKey: string; readonly read: () => VoiceDraftSnapshot };
   readonly getTranscriptionOptions: () => SpeechTranscriptionOptions;
+  readonly getPostProcessingOptions?: () => SpeechPostProcessingOptions | undefined;
   readonly getMicrophoneId: () => string;
   readonly onLevel: (level: number) => void;
   readonly onDurationLimit: () => void;
   readonly onText: (text: SpeechStreamText) => void;
   readonly onError: (message: string) => void;
 }): {
-  readonly saveTranscript: (text: string) => Promise<string>;
+  readonly saveTranscript: (text: string, draft: VoiceDraftSnapshot) => Promise<string>;
+  readonly postProcessingOptions: SpeechPostProcessingOptions | undefined;
+  readonly findRecording: () => Promise<SavedVoiceRecording | null>;
+  readonly discardSavedRecording: () => Promise<void>;
   readonly transcriptIsFinal: boolean;
   readonly restoreRecording: (
     recording: SavedVoiceRecording,
@@ -57,6 +69,32 @@ export function createBrowserVoiceInputPlatform(input: {
   let saving = Promise.resolve();
   let storageError: unknown;
   let streamError: Error | undefined;
+  let unlockRecording: (() => Promise<void>) | null = null;
+  const claimRecording = async () => {
+    if (!input.retainedDraft || unlockRecording) return;
+    unlockRecording = await acquireVoiceRecordingLock(input.retainedDraft.ownerKey);
+    if (!unlockRecording) throw new Error("This chat has an unfinished recording in another tab.");
+  };
+  const releaseRecordingLock = async () => {
+    const release = unlockRecording;
+    unlockRecording = null;
+    await release?.();
+  };
+  const discardSavedRecording = async () => {
+    const recording = savedRecording;
+    savedRecording = null;
+    chunks = [];
+    bufferedForStream = [];
+    const removal = saving.then(async () => {
+      try {
+        if (recording) await recordingStorage.remove(recording.id);
+      } finally {
+        await releaseRecordingLock();
+      }
+    });
+    saving = removal.catch(() => undefined);
+    await removal;
+  };
   const preparedConnection = () => {
     const connection = input.getPrepared ? input.getPrepared() : input.prepared;
     if (!connection) throw new Error("The transcription environment is disconnected.");
@@ -76,11 +114,21 @@ export function createBrowserVoiceInputPlatform(input: {
         storageError = error;
       });
   };
-  const saveTranscript = async (text: string, transcriptIsFinal = false) => {
+  const saveTranscript = async (
+    text: string,
+    transcriptIsFinal = false,
+    draft = savedRecording?.draft,
+  ) => {
+    if (!text.trim()) return text;
     if (savedRecording) {
       await saving;
-      await recordingStorage.saveTranscript(savedRecording.id, text, transcriptIsFinal);
-      savedRecording = { ...savedRecording, transcript: text, transcriptIsFinal };
+      await recordingStorage.saveTranscript(savedRecording.id, text, transcriptIsFinal, draft);
+      savedRecording = {
+        ...savedRecording,
+        transcript: text,
+        transcriptIsFinal,
+        ...(draft ? { draft } : {}),
+      };
     }
     return text;
   };
@@ -119,27 +167,35 @@ export function createBrowserVoiceInputPlatform(input: {
       sequence = 0;
       storageError = undefined;
       if (input.retainedDraft) {
-        savedRecording = {
+        await saving;
+        await claimRecording();
+        const postProcessingOptions = input.getPostProcessingOptions?.();
+        const recording: SavedVoiceRecording = {
           id: randomUUID(),
           ownerKey: input.retainedDraft.ownerKey,
           draft: input.retainedDraft.read(),
           options: recordingOptions,
           locale,
+          ...(postProcessingOptions ? { postProcessingOptions } : {}),
         };
-        await recordingStorage.create(savedRecording);
+        try {
+          await recordingStorage.create(recording);
+        } catch (error) {
+          await releaseRecordingLock();
+          throw error;
+        }
+        savedRecording = recording;
         // Ask the browser to protect unfinished dictation from storage eviction.
         void navigator.storage?.persist?.().catch(() => undefined);
       }
-      const microphoneId = input.getMicrophoneId();
-      const captured = await navigator.mediaDevices.getUserMedia({
-        audio: microphoneId ? { deviceId: { exact: microphoneId } } : true,
-      });
-      if (captureSignal.aborted) {
-        captured.getTracks().forEach((track) => track.stop());
-        captureSignal.throwIfAborted();
-      }
-      stream = captured;
       try {
+        captureSignal.throwIfAborted();
+        const microphoneId = input.getMicrophoneId();
+        const captured = await navigator.mediaDevices.getUserMedia({
+          audio: microphoneId ? { deviceId: { exact: microphoneId } } : true,
+        });
+        stream = captured;
+        captureSignal.throwIfAborted();
         const context = new AudioContext();
         audioContext = context;
         await context.audioWorklet.addModule(workletUrl);
@@ -188,6 +244,9 @@ export function createBrowserVoiceInputPlatform(input: {
         captureSignal.throwIfAborted();
       } catch (error) {
         cleanupCapture();
+        if (savedRecording) {
+          await discardSavedRecording();
+        }
         throw error;
       }
     },
@@ -230,7 +289,7 @@ export function createBrowserVoiceInputPlatform(input: {
     { signal: transcriptionSignal }: VoiceTranscriptionOptions,
   ) => {
     try {
-      if (savedRecording?.transcript !== undefined) return savedRecording.transcript;
+      if (savedRecording?.transcript?.trim()) return savedRecording.transcript;
       const response = await fetch(uri, { signal: transcriptionSignal });
       const pcm = new Uint8Array(await response.arrayBuffer());
       const result = await runtime.runPromise(
@@ -252,11 +311,33 @@ export function createBrowserVoiceInputPlatform(input: {
   };
 
   return {
-    saveTranscript: (text) => saveTranscript(text, true),
+    get postProcessingOptions() {
+      return savedRecording?.postProcessingOptions;
+    },
+    findRecording: async () => {
+      if (!input.retainedDraft) return null;
+      // A second tab may inspect the chat, but cannot recover an owned recording.
+      try {
+        await claimRecording();
+      } catch {
+        return null;
+      }
+      try {
+        savedRecording = await recordingStorage.find(input.retainedDraft.ownerKey);
+        if (!savedRecording) await releaseRecordingLock();
+        return savedRecording;
+      } catch (error) {
+        await releaseRecordingLock();
+        throw error;
+      }
+    },
+    discardSavedRecording,
+    saveTranscript: (text, draft) => saveTranscript(text, true, draft),
     get transcriptIsFinal() {
       return savedRecording?.transcriptIsFinal === true;
     },
     restoreRecording: async (recording) => {
+      await claimRecording();
       savedRecording = recording;
       recordingOptions = recording.options;
       locale = recording.locale;
@@ -267,11 +348,7 @@ export function createBrowserVoiceInputPlatform(input: {
     cancelRecording: () => {
       cleanupCapture();
       if (savedRecording && !recordingUri && signal?.aborted) {
-        const id = savedRecording.id;
-        savedRecording = null;
-        chunks = [];
-        bufferedForStream = [];
-        void saving.then(() => recordingStorage.remove(id)).catch(() => undefined);
+        void discardSavedRecording().catch(() => undefined);
       }
     },
     deleteRecording: (uri) => {
@@ -281,9 +358,7 @@ export function createBrowserVoiceInputPlatform(input: {
         chunks = [];
         bufferedForStream = [];
         if (savedRecording) {
-          const id = savedRecording.id;
-          savedRecording = null;
-          void saving.then(() => recordingStorage.remove(id)).catch(() => undefined);
+          void discardSavedRecording().catch(() => undefined);
         }
       }
     },

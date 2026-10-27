@@ -22,6 +22,7 @@ import {
   trackOpenQuestionAttachmentDraft,
   useQuestionAttachmentPreparation,
 } from "../../questionAttachments";
+import { makeRetainedQuestionAnswerDraft } from "../../questionAnswerDrafts";
 import type {
   KeybindingCommand,
   AssistantCitation,
@@ -107,7 +108,7 @@ import {
   composerFileNeedsReattach,
   composerDraftHasUserContent,
   composerTargetKey,
-  persistComposerDraftPrompt,
+  makeRetainedComposerDraft,
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../../composerDraftStore";
@@ -1928,21 +1929,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerApprovalState ||
     activePendingIsResponding ||
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
+  const speechDraftOwnerKey =
+    questionAttachmentTarget ?? JSON.stringify([composerDraftTarget, undefined]);
+  const speechDraftOwnerKeyRef = useRef<string | null>(speechDraftOwnerKey);
+  // A completion can race the speech hook's passive detach after navigation or resolution.
+  useLayoutEffect(() => {
+    speechDraftOwnerKeyRef.current = speechDraftOwnerKey;
+    return () => {
+      speechDraftOwnerKeyRef.current = null;
+    };
+  }, [speechDraftOwnerKey]);
+  const retainedDraft =
+    questionAttachmentTarget && activePendingProgress?.activeQuestion
+      ? makeRetainedQuestionAnswerDraft(
+          questionAttachmentTarget,
+          activePendingProgress.activeQuestion,
+        )
+      : makeRetainedComposerDraft(composerDraftTarget);
   const speechInput = useEnvironmentSpeechInput({
     environmentId,
     projectName: props.projectName,
     projectId: props.projectId,
-    ownerKey: JSON.stringify([composerDraftTarget, activePendingProgress?.activeQuestion?.id]),
-    draftText: prompt,
+    ownerKey: speechDraftOwnerKey,
+    draftText: activePendingProgress?.customAnswer ?? prompt,
     disabled: dictationDisabled,
-    retainedDraft: {
-      read: () => {
-        const text = getComposerDraft(composerDraftTarget)?.prompt ?? "";
-        return { text, selection: { start: text.length, end: text.length } };
-      },
-      commit: (text) => persistComposerDraftPrompt(composerDraftTarget, text),
-    },
+    retainedDraft,
     readDraft: () => {
+      if (speechDraftOwnerKeyRef.current !== speechDraftOwnerKey) return retainedDraft.read();
       const snapshot = readComposerSnapshotStable();
       return {
         text: snapshot.value,
@@ -1953,13 +1966,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       };
     },
     commitDraft: (text, selection) => {
+      if (speechDraftOwnerKeyRef.current !== speechDraftOwnerKey) return;
       const snapshot = readComposerSnapshotStable();
       const applied = applyPromptReplacementStable(0, snapshot.value.length, text, {
         expectedText: snapshot.value,
         focusEditorAfterReplace: false,
       });
       if (!applied) {
-        setComposerDraftPrompt(composerDraftTarget, text);
+        if (!activePendingUserInput) setComposerDraftPrompt(composerDraftTarget, text);
         return;
       }
       const cursor = collapseExpandedComposerCursor(text, selection.start);

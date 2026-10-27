@@ -1,7 +1,5 @@
-// @vitest-environment jsdom
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { act, render } from "../../test/render";
+import { expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { VoiceInputController } from "@t3tools/client-runtime/voice-input";
@@ -21,7 +19,10 @@ vi.mock("./useEnvironmentSpeechInput", () => ({
       state: { phase: mocks.busy ? "recording" : "idle", error: null, errorAction: null },
       submitAfterDictation: (submit: (text: string) => void) => {
         if (mocks.busy) mocks.queued ??= submit;
-        else submit(input.readDraft().text);
+        else {
+          const draft = input.readDraft();
+          if (draft) submit(draft.text);
+        }
       },
       blocksSubmission: mocks.busy,
       freezesEditor: mocks.busy,
@@ -47,7 +48,10 @@ vi.mock("./useEnvironmentSpeechInput", () => ({
     };
   },
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => DEFAULT_RESOLVED_KEYBINDINGS }));
+vi.mock("@effect/atom-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@effect/atom-react")>()),
+  useAtomValue: () => DEFAULT_RESOLVED_KEYBINDINGS,
+}));
 vi.mock("~/state/server", () => ({ primaryServerKeybindingsAtom: {} }));
 vi.mock("~/hooks/useSettings", () => ({ useClientSettings: () => "toggle" }));
 vi.mock("~/components/chat/VoiceInputSetup", () => ({ VoiceInputSetup: () => null }));
@@ -56,47 +60,25 @@ vi.mock("~/components/chat/ComposerSpeechButton", () => ({
   ComposerSpeechRecordingPill: () => null,
 }));
 
-let root: Root;
-let container: HTMLDivElement;
-let frames: FrameRequestCallback[];
-const comments: string[] = [];
 const environmentId = EnvironmentId.make("test-environment");
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
+  mocks.input = null;
   mocks.busy = false;
   mocks.queued = null;
-  comments.length = 0;
-  frames = [];
-  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-    frames.push(callback);
-    return frames.length;
-  });
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
-async function mount() {
-  await act(() =>
-    root.render(
-      <DiffCommentAnnotation
-        kind="draft"
-        rangeLabel="12"
-        text=""
-        environmentId={environmentId}
-        ownerKey="thread:file:12"
-        onCancel={() => {}}
-        onComment={(text) => comments.push(text)}
-        focusOnMount={false}
-      />,
-    ),
+}
+function mount(comments: string[]) {
+  return render(
+    <DiffCommentAnnotation
+      kind="draft"
+      rangeLabel="12"
+      text=""
+      environmentId={environmentId}
+      ownerKey="thread:file:12"
+      onCancel={() => {}}
+      onComment={(text) => comments.push(text)}
+      focusOnMount={false}
+    />,
   );
-  return container.querySelector("textarea")!;
 }
 it.each([
   { end: 4, text: "one new two" },
@@ -104,7 +86,11 @@ it.each([
 ])(
   "dictates into a comment selection ending at $end and submits the completed draft",
   async ({ end, text }) => {
-    const field = await mount();
+    setup();
+    const comments: string[] = [];
+    await using screen = await mount(comments);
+    const container = screen.container;
+    const field = container.querySelector("textarea")!;
     await act(() => mocks.input!.commitDraft("one two", { start: 7, end: 7 }));
     field.setSelectionRange(4, end);
     const controller = new VoiceInputController({
@@ -121,11 +107,10 @@ it.each([
       configureRecording: async () => {},
       releaseRecording: async () => {},
       deleteRecording: () => {},
-      readDraft: () => ({
-        ...mocks.input!.readDraft(),
-        ownerKey: mocks.input!.ownerKey,
-        revision: 0,
-      }),
+      readDraft: () => {
+        const draft = mocks.input!.readDraft();
+        return draft && { ...draft, ownerKey: mocks.input!.ownerKey, revision: 0 };
+      },
       commitDraft: (text, selection) => mocks.input!.commitDraft(text, selection),
       onStateChange: () => {},
     });
@@ -135,11 +120,9 @@ it.each([
     } finally {
       controller.dispose();
     }
-    await act(() => {
-      frames.splice(0).forEach((frame) => frame(0));
-    });
+
     expect(field.value).toBe(text);
-    expect(field.selectionStart).toBe(text === "one new" ? 7 : 8);
+    await vi.waitFor(() => expect(field.selectionStart).toBe(text === "one new" ? 7 : 8));
     const submit = [...container.querySelectorAll("button")].find(
       (button) => button.textContent === "Comment",
     )!;
@@ -148,8 +131,12 @@ it.each([
   },
 );
 it("defers click and keyboard submission while dictation is running", async () => {
+  setup();
   mocks.busy = true;
-  const field = await mount();
+  const comments: string[] = [];
+  await using screen = await mount(comments);
+  const container = screen.container;
+  const field = container.querySelector("textarea")!;
   await act(() => mocks.input!.commitDraft("unfinished", { start: 10, end: 10 }));
   expect(field.readOnly).toBe(true);
   const submit = [...container.querySelectorAll("button")].find(
@@ -173,8 +160,12 @@ it("defers click and keyboard submission while dictation is running", async () =
 });
 
 it("queues the keyboard submission of an empty draft and submits the completed dictation", async () => {
+  setup();
   mocks.busy = true;
-  const field = await mount();
+  const comments: string[] = [];
+  await using screen = await mount(comments);
+  const container = screen.container;
+  const field = container.querySelector("textarea")!;
   expect(field.value).toBe("");
   await act(() => {
     field.dispatchEvent(

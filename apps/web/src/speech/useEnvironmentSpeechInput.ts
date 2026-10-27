@@ -34,7 +34,6 @@ import { usePreparedConnection } from "../state/session";
 import { runtime } from "../lib/runtime";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import { recordingStorage } from "./recordingStorage";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { toastManager } from "../components/ui/toast";
 
@@ -57,43 +56,276 @@ type HookInput = {
   readonly disabled?: boolean | undefined;
   readonly retainedDraft?:
     | {
-        readonly read: () => DraftInput;
+        readonly read: () => DraftInput | null;
         readonly commit: (text: string) => void;
       }
     | undefined;
-  readonly readDraft: () => DraftInput;
+  readonly readDraft: () => DraftInput | null;
   readonly commitDraft: (
     text: string,
     selection: { readonly start: number; readonly end: number },
   ) => void;
 };
 
-type RetainedSession = {
-  input: HookInput;
+type SpeechSessionContext = {
+  ownerKey: string;
+  projectId: ProjectId | undefined;
+  projectName: string | undefined;
+  retainedDraft: HookInput["retainedDraft"];
   preferences: {
     clientSettings: ClientSettings;
     originatingEnvironment: ReturnType<typeof useEnvironment>;
   };
   postProcessingPrepared: PreparedConnection | null;
   microphoneId: string;
-  onCommit: ((text: string) => void) | null;
-  ready: Promise<void>;
-  recovering: boolean;
   prepared: PreparedConnection | null;
+};
+
+type DraftRevision = { ownerKey: string; text: string; revision: number };
+
+type SpeechSession = {
+  context: SpeechSessionContext;
+  revision: DraftRevision;
+  attachment: {
+    disabled: boolean | undefined;
+    readDraft: HookInput["readDraft"];
+    commitDraft: HookInput["commitDraft"];
+    onCommit: (text: string) => void;
+    notify: () => void;
+  } | null;
+  ready: Promise<void>;
+  recover: () => Promise<void>;
+  recovering: boolean;
   controller: VoiceInputController<true>;
   state: VoiceInputState<true>;
   level: number;
   preview: SpeechStreamText | null;
-  attached: boolean;
-  notify: (() => void) | null;
 };
-const retainedSessions = new Map<string, RetainedSession>();
+const retainedSessions = new Map<string, SpeechSession>();
 
-function releaseUnusedSession(session: RetainedSession) {
-  if (!session.attached && !session.recovering && session.state.phase === "idle") {
-    if (retainedSessions.get(session.input.ownerKey) === session)
-      retainedSessions.delete(session.input.ownerKey);
+function releaseUnusedSession(session: SpeechSession) {
+  if (!session.attachment && !session.recovering && session.state.phase === "idle") {
+    if (retainedSessions.get(session.context.ownerKey) === session)
+      retainedSessions.delete(session.context.ownerKey);
   }
+}
+
+function readSessionDraft(session: SpeechSession): VoiceDraftSnapshot | null {
+  const draft = session.attachment
+    ? session.attachment.readDraft()
+    : session.context.retainedDraft?.read();
+  if (!draft) return null;
+  const revision = session.revision;
+  if (revision.ownerKey !== session.context.ownerKey || revision.text !== draft.text) {
+    Object.assign(revision, {
+      ownerKey: session.context.ownerKey,
+      text: draft.text,
+      revision: revision.revision + 1,
+    });
+  }
+  return {
+    ownerKey: session.context.ownerKey,
+    text: draft.text,
+    selection: draft.selection,
+    revision: revision.revision,
+  };
+}
+
+// Retained controllers must close over session data only; editor callbacks live in attachment.
+function createSpeechSession(
+  context: SpeechSessionContext,
+  revision: DraftRevision,
+): SpeechSession {
+  if (!context.prepared) throw new Error("The transcription environment is disconnected.");
+  let session: SpeechSession;
+  let controller: VoiceInputController<true>;
+  let recordingPreferences: SpeechPostProcessingOptions | undefined;
+  const platform = createBrowserVoiceInputPlatform({
+    prepared: context.prepared,
+    getPrepared: () => session.context.prepared,
+    ...(context.retainedDraft
+      ? {
+          retainedDraft: {
+            ownerKey: context.ownerKey,
+            read: () => readSessionDraft(session)!,
+          },
+        }
+      : {}),
+    getTranscriptionOptions: () => {
+      const { clientSettings, originatingEnvironment } = session.context.preferences;
+      const { projectId, projectName } = session.context;
+      if (projectId && !originatingEnvironment?.serverConfig) {
+        throw new VoiceTranscriptionError(
+          "preparation-failed",
+          "Reconnect the project environment to load its dictionary.",
+        );
+      }
+      const projectWords =
+        projectId && originatingEnvironment?.serverConfig
+          ? resolveProjectSettings(originatingEnvironment.serverConfig.settings, projectId).settings
+              .speechProjectCustomWords
+          : [];
+      const speechCustomWords = mergeSpeechCustomWords(
+        clientSettings.speechCustomWords,
+        projectWords,
+      );
+      recordingPreferences = {
+        speechPostProcessingEnabled: clientSettings.speechPostProcessingEnabled,
+        speechCorrectionWord: clientSettings.speechCorrectionWord,
+        speechPostProcessingPrompt: { ...clientSettings.speechPostProcessingPrompt },
+        speechCustomWords,
+      };
+      try {
+        return decodeTranscriptionOptions({
+          ...clientSettings,
+          speechCustomWords,
+          ...(projectName && projectName.length <= 200 ? { projectName } : {}),
+        });
+      } catch (cause) {
+        throw new VoiceTranscriptionError(
+          "preparation-failed",
+          "Personal and project dictionaries together cannot exceed 100 words.",
+          { cause },
+        );
+      }
+    },
+    getMicrophoneId: () => session.context.microphoneId,
+    getPostProcessingOptions: () => recordingPreferences,
+    onLevel: (value) => {
+      session.level = value;
+      session.attachment?.notify();
+    },
+    onDurationLimit: () => void controller.stop(),
+    onText: (text) => {
+      session.preview = text;
+      session.attachment?.notify();
+    },
+    onError: (message) => {
+      if (session.context.retainedDraft) {
+        toastManager.add({
+          type: "warning",
+          title: "Voice recording stopped",
+          description: message,
+        });
+        // Finalize captured audio on device/storage failure rather than discarding it.
+        if (controller.currentState.phase === "recording") void controller.stop();
+      } else if (session.attachment) void controller.interruptRecording(message);
+    },
+  });
+  controller = new VoiceInputController<true>({
+    recorder: platform.recorder,
+    getTranscriber: () => platform.transcriber,
+    requestPermission: async () => ({ granted: true, canAskAgain: true }),
+    configureRecording: async () => undefined,
+    releaseRecording: async () => platform.cancelRecording(),
+    deleteRecording: platform.deleteRecording,
+    get postProcess(): VoiceInputControllerDependencies<true>["postProcess"] {
+      const preferences = platform.postProcessingOptions ?? recordingPreferences;
+      if (!preferences?.speechPostProcessingEnabled || platform.transcriptIsFinal) return undefined;
+      return async (transcript, options) => {
+        const connection = session.context.postProcessingPrepared;
+        if (!connection)
+          throw new Error("The project environment is unavailable for transcript cleanup.");
+        const result = await runtime.runPromise(
+          postProcessEnvironmentTranscript(
+            connection,
+            transcript,
+            { text: options.draft.text, selection: options.draft.selection },
+            preferences,
+          ),
+          options,
+        );
+        return result.text;
+      };
+    },
+    ...(context.retainedDraft
+      ? {
+          onTranscriptReady: async (text: string, draft: VoiceDraftSnapshot) => {
+            await platform.saveTranscript(text, draft);
+          },
+        }
+      : {}),
+    onPostProcessingError: () =>
+      toastManager.add({
+        type: "warning",
+        title: "Post-processing failed",
+        description: "The original transcription was added.",
+      }),
+    readDraft: () => readSessionDraft(session),
+    commitDraft: (text, selection) => {
+      const attachment = session.attachment;
+      if (session.context.retainedDraft) {
+        if (attachment && !attachment.disabled) attachment.commitDraft(text, selection);
+        session.context.retainedDraft.commit(text);
+      } else {
+        if (!attachment || attachment.disabled) return;
+        attachment.commitDraft(text, selection);
+      }
+      attachment?.onCommit(text);
+    },
+    onStateChange: (value) => {
+      session.state = value;
+      if (value.phase !== "recording" && value.phase !== "transcribing") session.preview = null;
+      session.attachment?.notify();
+      releaseUnusedSession(session);
+    },
+  });
+  session = {
+    context,
+    revision,
+    attachment: null,
+    controller,
+    state: INITIAL_STATE,
+    ready: Promise.resolve(),
+    recovering: false,
+    level: 0,
+    preview: null,
+    recover: () => {
+      if (!session.context.retainedDraft) return Promise.resolve();
+      if (session.recovering) return session.ready;
+      session.recovering = true;
+      session.ready = platform
+        .findRecording()
+        .then(async (saved) => {
+          if (!saved) return;
+          if (saved.transcriptIsFinal === true && saved.transcript !== undefined) {
+            const result = resolveTranscriptCommit(
+              saved.draft,
+              saved.draft,
+              saved.transcript,
+              saved.locale,
+            );
+            if (result.kind === "commit" && result.text === readSessionDraft(session)?.text) {
+              await platform.discardSavedRecording();
+              return;
+            }
+          }
+          // A peer's recording can become recoverable after a failed microphone start.
+          if (controller.currentState.phase === "error" && !controller.currentState.hasRecording)
+            controller.cancel();
+          const { uri, transcription } = await platform.restoreRecording(saved);
+          // Browser reloads reset the in-memory revision counter.
+          session.revision.text = saved.draft.text;
+          session.revision.revision = saved.draft.revision;
+          controller.restoreRecording(uri, saved.draft, transcription);
+        })
+        .catch((error: unknown) => {
+          toastManager.add({
+            type: "error",
+            title: "Could not restore saved dictation",
+            description: String(error),
+          });
+        })
+        .finally(() => {
+          session.recovering = false;
+          session.attachment?.notify();
+          releaseUnusedSession(session);
+        });
+      session.attachment?.notify();
+      return session.ready;
+    },
+  };
+  return session;
 }
 
 export function resetRetainedSpeechSessionsForTests() {
@@ -126,11 +358,17 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       ? cleanupConnection
       : null;
   const clientSettings = useClientSettings();
-  const preferencesRef = useRef({ clientSettings, originatingEnvironment });
-  useEffect(() => {
-    preferencesRef.current = { clientSettings, originatingEnvironment };
-  }, [clientSettings, originatingEnvironment]);
   const microphoneId = useClientSettings((settings) => settings.voiceMicrophone);
+  const sessionContext: SpeechSessionContext = {
+    ownerKey: input.ownerKey,
+    projectId: input.projectId,
+    projectName: input.projectName,
+    retainedDraft: input.retainedDraft,
+    preferences: { clientSettings, originatingEnvironment },
+    prepared,
+    postProcessingPrepared,
+    microphoneId,
+  };
   const [status, setStatus] = useState<{
     readonly prepared: NonNullable<typeof prepared>;
     readonly value: EnvironmentSpeechStatus;
@@ -161,7 +399,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const [setupDownloading, setSetupDownloading] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
   const setupCancelledRef = useRef(false);
-  const controllerRef = useRef<VoiceInputController<true> | null>(null);
+  const sessionRef = useRef<SpeechSession | null>(null);
   const startRequestRef = useRef(0);
   const pendingSubmissionRef = useRef<{
     ownerKey: string;
@@ -169,7 +407,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     text?: string;
   } | null>(null);
   const latestInputRef = useRef(input);
-  const microphoneIdRef = useRef(microphoneId);
+  const latestSessionContextRef = useRef(sessionContext);
   const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
   const previousDraftInputRef = useRef({ ownerKey: input.ownerKey, text: input.draftText });
 
@@ -180,308 +418,77 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     previousDraftInputRef.current = { ownerKey: input.ownerKey, text: input.draftText };
     const revision = draftRevisionRef.current;
     if (revision.ownerKey !== input.ownerKey || revision.text !== input.draftText) {
-      draftRevisionRef.current = {
+      Object.assign(revision, {
         ownerKey: input.ownerKey,
         text: input.draftText,
         revision: revision.revision + 1,
-      };
+      });
     }
   }, [input]);
 
   useEffect(() => {
-    microphoneIdRef.current = microphoneId;
-  }, [microphoneId]);
-
-  useEffect(() => {
-    const session = retainedKey ? retainedSessions.get(retainedKey) : null;
-    if (session) {
-      session.input = input;
-      session.prepared = prepared;
-      session.preferences = preferencesRef.current;
-      session.postProcessingPrepared = postProcessingPrepared;
-      session.microphoneId = microphoneIdRef.current;
+    latestSessionContextRef.current = sessionContext;
+    const session = sessionRef.current;
+    if (
+      !session ||
+      (session.context.retainedDraft ? session.context.ownerKey : null) !== retainedKey
+    )
+      return;
+    session.context = sessionContext;
+    if (session.attachment) {
+      session.attachment.disabled = input.disabled;
+      session.attachment.readDraft = input.readDraft;
+      session.attachment.commitDraft = input.commitDraft;
     }
   });
 
   useEffect(() => {
     if (typeof navigator === "undefined") return;
     const existing = retainedKey ? retainedSessions.get(retainedKey) : null;
-    const attach = (session: RetainedSession) => {
-      session.attached = true;
-      session.input = latestInputRef.current;
-      session.prepared = prepared;
-      session.onCommit = (text) => {
-        if (pendingSubmissionRef.current?.ownerKey === session.input.ownerKey)
+    if (!existing && !prepared) return;
+    const context = { ...latestSessionContextRef.current, prepared, postProcessingPrepared };
+    const currentInput = latestInputRef.current;
+    const session =
+      existing ??
+      createSpeechSession(
+        context,
+        retainedKey
+          ? { ownerKey: currentInput.ownerKey, text: currentInput.draftText, revision: 0 }
+          : draftRevisionRef.current,
+      );
+    session.context = context;
+    const attachment = {
+      disabled: currentInput.disabled,
+      readDraft: currentInput.readDraft,
+      commitDraft: currentInput.commitDraft,
+      onCommit: (text: string) => {
+        if (pendingSubmissionRef.current?.ownerKey === session.context.ownerKey)
           pendingSubmissionRef.current.text = text;
-      };
-      const notify = () => {
+      },
+      notify: () => {
         if (session.state.phase === "error") pendingSubmissionRef.current = null;
-        setControllerState({ prepared, ownerKey: retainedKey, value: session.state });
+        setControllerState({
+          prepared,
+          ownerKey: retainedKey,
+          value: session.recovering ? WAITING_STATE : session.state,
+        });
         setLevel(session.level);
         setPreview(session.preview);
-      };
-      session.notify = notify;
-      controllerRef.current = session.controller;
-      notify();
-      return () => {
-        session.attached = false;
-        session.notify = null;
-        session.onCommit = null;
-        pendingSubmissionRef.current = null;
-        startRequestRef.current += 1;
-        if (controllerRef.current === session.controller) controllerRef.current = null;
-        releaseUnusedSession(session);
-      };
+      },
     };
-    if (existing) return attach(existing);
-    if (!prepared) return;
-    let retained: RetainedSession | null = null;
-    const sessionInput = latestInputRef.current;
-    const sessionRevision = {
-      ownerKey: sessionInput.ownerKey,
-      text: sessionInput.draftText,
-      revision: 0,
-    };
-
-    const readDraft = (): VoiceDraftSnapshot => {
-      const current = retained ? retained.input : latestInputRef.current;
-      const draft =
-        retained && !retained.attached ? current.retainedDraft!.read() : current.readDraft();
-      const revision = retained ? sessionRevision : draftRevisionRef.current;
-      if (revision.ownerKey !== current.ownerKey || revision.text !== draft.text) {
-        if (retained)
-          Object.assign(sessionRevision, { text: draft.text, revision: revision.revision + 1 });
-        else
-          draftRevisionRef.current = {
-            ownerKey: current.ownerKey,
-            text: draft.text,
-            revision: revision.revision + 1,
-          };
-      }
-      return {
-        ownerKey: current.ownerKey,
-        text: draft.text,
-        selection: draft.selection,
-        revision: retained ? sessionRevision.revision : draftRevisionRef.current.revision,
-      };
-    };
-
-    let disposed = false;
-    let controller: VoiceInputController<true>;
-    let recordingPreferences: SpeechPostProcessingOptions | undefined;
-    const platform = createBrowserVoiceInputPlatform({
-      prepared,
-      ...(retainedKey
-        ? {
-            getPrepared: () => retained?.prepared ?? null,
-            retainedDraft: { ownerKey: retainedKey, read: readDraft },
-          }
-        : {}),
-      getTranscriptionOptions: () => {
-        const { clientSettings, originatingEnvironment } =
-          retained?.preferences ?? preferencesRef.current;
-        const { projectId, projectName } = retained ? retained.input : latestInputRef.current;
-        if (projectId && !originatingEnvironment?.serverConfig) {
-          throw new VoiceTranscriptionError(
-            "preparation-failed",
-            "Reconnect the project environment to load its dictionary.",
-          );
-        }
-        const projectWords =
-          projectId && originatingEnvironment?.serverConfig
-            ? resolveProjectSettings(originatingEnvironment.serverConfig.settings, projectId)
-                .settings.speechProjectCustomWords
-            : [];
-        const speechCustomWords = mergeSpeechCustomWords(
-          clientSettings.speechCustomWords,
-          projectWords,
-        );
-        recordingPreferences = {
-          speechPostProcessingEnabled: clientSettings.speechPostProcessingEnabled,
-          speechCorrectionWord: clientSettings.speechCorrectionWord,
-          speechPostProcessingPrompt: { ...clientSettings.speechPostProcessingPrompt },
-          speechCustomWords,
-        };
-        try {
-          return decodeTranscriptionOptions({
-            ...clientSettings,
-            speechCustomWords,
-            ...(projectName && projectName.length <= 200 ? { projectName } : {}),
-          });
-        } catch (cause) {
-          throw new VoiceTranscriptionError(
-            "preparation-failed",
-            "Personal and project dictionaries together cannot exceed 100 words.",
-            { cause },
-          );
-        }
-      },
-      getMicrophoneId: () => retained?.microphoneId ?? microphoneIdRef.current,
-      onLevel: (value) => {
-        if (retained) {
-          retained.level = value;
-          retained.notify?.();
-        } else if (!disposed) setLevel(value);
-      },
-      onDurationLimit: () => void controller.stop(),
-      onText: (text) => {
-        if (retained) {
-          retained.preview = text;
-          retained.notify?.();
-        } else if (!disposed) setPreview(text);
-      },
-      onError: (message) => {
-        if (retained) {
-          toastManager.add({
-            type: "warning",
-            title: "Voice recording stopped",
-            description: message,
-          });
-          // Finalize captured audio on device/storage failure rather than discarding it.
-          if (controller.currentState.phase === "recording") void controller.stop();
-        } else if (!disposed) void controller.interruptRecording(message);
-      },
-    });
-    controller = new VoiceInputController<true>({
-      recorder: platform.recorder,
-      getTranscriber: () => platform.transcriber,
-      requestPermission: async () => ({ granted: true, canAskAgain: true }),
-      configureRecording: async () => undefined,
-      releaseRecording: async () => platform.cancelRecording(),
-      deleteRecording: platform.deleteRecording,
-      get postProcess(): VoiceInputControllerDependencies<true>["postProcess"] {
-        const preferences = recordingPreferences;
-        if (!preferences?.speechPostProcessingEnabled || platform.transcriptIsFinal)
-          return undefined;
-        return async (transcript, options) => {
-          const connection = retained ? retained.postProcessingPrepared : postProcessingPrepared;
-          if (!connection)
-            throw new Error("The project environment is unavailable for transcript cleanup.");
-          const result = await runtime.runPromise(
-            postProcessEnvironmentTranscript(
-              connection,
-              transcript,
-              { text: options.draft.text, selection: options.draft.selection },
-              preferences,
-            ),
-            options,
-          );
-          return result.text;
-        };
-      },
-      ...(retainedKey
-        ? {
-            onTranscriptReady: async (text: string) => {
-              await platform.saveTranscript(text);
-            },
-          }
-        : {}),
-      onPostProcessingError: () =>
-        toastManager.add({
-          type: "warning",
-          title: "Post-processing failed",
-          description: "The original transcription was added.",
-        }),
-      readDraft,
-      commitDraft: (text, selection) => {
-        if (retained) {
-          const current = retained.input;
-          if (retained.attached && !current.disabled) current.commitDraft(text, selection);
-          current.retainedDraft!.commit(text);
-        } else {
-          if (latestInputRef.current.disabled) return;
-          latestInputRef.current.commitDraft(text, selection);
-        }
-        if (retained) retained.onCommit?.(text);
-        else if (pendingSubmissionRef.current?.ownerKey === sessionInput.ownerKey)
-          pendingSubmissionRef.current.text = text;
-      },
-      onStateChange: (value) => {
-        if (retained) {
-          retained.state = value;
-          if (value.phase !== "recording" && value.phase !== "transcribing")
-            retained.preview = null;
-          retained.notify?.();
-          releaseUnusedSession(retained);
-        } else if (!disposed) {
-          if (value.phase === "error") pendingSubmissionRef.current = null;
-          setControllerState({ prepared, ownerKey: retainedKey, value });
-          if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
-        }
-      },
-    });
-    if (retainedKey) {
-      retained = {
-        input: sessionInput,
-        prepared,
-        controller,
-        state: INITIAL_STATE,
-        preferences: preferencesRef.current,
-        postProcessingPrepared,
-        microphoneId: microphoneIdRef.current,
-        onCommit: null,
-        ready: Promise.resolve(),
-        recovering: true,
-        level: 0,
-        preview: null,
-        attached: true,
-        notify: null,
-      };
-      const session = retained;
-      retainedSessions.set(retainedKey, session);
-      const detach = attach(session);
-      setQueuedStart({ prepared, request: startRequestRef.current });
-      session.ready = recordingStorage
-        .find(retainedKey)
-        .then(async (saved) => {
-          if (!saved) return;
-          if (saved.transcript !== undefined) {
-            const result = resolveTranscriptCommit(
-              saved.draft,
-              saved.draft,
-              saved.transcript,
-              saved.locale,
-            );
-            if (result.kind === "commit" && result.text === readDraft().text) {
-              await recordingStorage.remove(saved.id);
-              return;
-            }
-          }
-          const { uri, transcription } = await platform.restoreRecording(saved);
-          // Browser reloads reset the in-memory revision counter.
-          sessionRevision.text = saved.draft.text;
-          sessionRevision.revision = saved.draft.revision;
-          controller.restoreRecording(uri, saved.draft, transcription);
-        })
-        .catch((error: unknown) => {
-          toastManager.add({
-            type: "error",
-            title: "Could not restore saved dictation",
-            description: String(error),
-          });
-        })
-        .finally(() => {
-          session.recovering = false;
-          releaseUnusedSession(session);
-          if (!disposed) setQueuedStart(null);
-        });
-      return () => {
-        disposed = true;
-        if (session.recovering) setQueuedStart(null);
-        detach();
-      };
-    }
-    controllerRef.current = controller;
-    setControllerState({ prepared, ownerKey: retainedKey, value: INITIAL_STATE });
-    setPreview(null);
-    setLevel(0);
+    session.attachment = attachment;
+    sessionRef.current = session;
+    if (retainedKey && !existing) retainedSessions.set(retainedKey, session);
+    attachment.notify();
+    if (retainedKey && !existing) void session.recover();
     return () => {
-      disposed = true;
+      if (session.attachment === attachment) session.attachment = null;
       pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
       setQueuedStart(null);
-      controller.dispose();
-      if (controllerRef.current === controller) controllerRef.current = null;
+      if (sessionRef.current === session) sessionRef.current = null;
+      if (retainedKey) releaseUnusedSession(session);
+      else session.controller.dispose();
     };
   }, [postProcessingPrepared, prepared, retainedKey]);
 
@@ -536,7 +543,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     pendingSubmissionRef.current = null;
     startRequestRef.current += 1;
     setQueuedStart(null);
-    if (!retainedKey) controllerRef.current?.ownerChanged();
+    if (!retainedKey) sessionRef.current?.controller.ownerChanged();
     setSetupOpen(false);
   }, [input.ownerKey, input.disabled, retainedKey]);
 
@@ -550,9 +557,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   const submitAfterDictation = (submit: (text: string) => void) => {
     if (latestInputRef.current.disabled || state.phase === "preparing") return;
-    const controller = controllerRef.current;
+    const controller = sessionRef.current?.controller;
     if (!controller || !voiceInputBlocksSubmission(state)) {
-      submit(latestInputRef.current.readDraft().text);
+      const draft = latestInputRef.current.readDraft();
+      if (draft) submit(draft.text);
       return;
     }
     if (pendingSubmissionRef.current) return;
@@ -562,16 +570,25 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   const start = async () => {
     const request = ++startRequestRef.current;
-    const expectedController = controllerRef.current;
+    const expectedController = sessionRef.current?.controller;
     const expectedOwner = latestInputRef.current.ownerKey;
     if (latestInputRef.current.disabled || !expectedController) return;
     const stillCurrent = () =>
       request === startRequestRef.current &&
-      controllerRef.current === expectedController &&
+      sessionRef.current?.controller === expectedController &&
       latestInputRef.current.ownerKey === expectedOwner &&
       !latestInputRef.current.disabled;
     const session = retainedKey ? retainedSessions.get(retainedKey) : null;
-    if (session) await session.ready;
+    if (session) {
+      await session.ready;
+      if (
+        stillCurrent() &&
+        !expectedController.currentState.hasRecording &&
+        (expectedController.currentState.phase === "idle" ||
+          expectedController.currentState.phase === "error")
+      )
+        await session.recover();
+    }
     if (!stillCurrent()) return;
     if (expectedController.currentState.hasRecording) {
       await expectedController.start();
@@ -689,13 +706,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     freezesEditor: voiceInputFreezesEditor(state),
     start,
     submitAfterDictation,
-    stop: () => controllerRef.current?.stop() ?? Promise.resolve(),
+    stop: () => sessionRef.current?.controller.stop() ?? Promise.resolve(),
     cancel: () => {
       pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
       setQueuedStart(null);
-      controllerRef.current?.cancel();
+      sessionRef.current?.controller.cancel();
     },
-    skipPostProcessing: () => controllerRef.current?.skipPostProcessing(),
+    skipPostProcessing: () => sessionRef.current?.controller.skipPostProcessing(),
   };
 }

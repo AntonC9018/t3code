@@ -188,6 +188,47 @@ describe("streaming voice input", () => {
     expect(harness.recorder.record).toHaveBeenCalledTimes(1);
   });
 
+  it("journals the retry insertion snapshot before committing into an edited draft", async () => {
+    const onTranscriptReady = vi.fn(async () => {});
+    const transcribe = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue("Recovered");
+    const harness = createHarness({
+      getTranscriber: () => ({ prepare: async () => preparedTranscription(transcribe) }),
+      onTranscriptReady,
+    });
+    await harness.controller.start();
+    await harness.controller.stop();
+    const edited = draft({ text: "Changed", selection: { start: 7, end: 7 }, revision: 2 });
+    harness.setDraft(edited);
+    await harness.controller.start();
+    expect(onTranscriptReady).toHaveBeenCalledExactlyOnceWith("Recovered", edited);
+    expect(harness.commits[0]?.text).toBe("Changed Recovered");
+  });
+
+  it("retries draft persistence without inserting twice when delivery mutated the draft before failing", async () => {
+    const transcribe = vi.fn(async () => "Recovered");
+    const commitDraft = vi.fn((text: string, selection: { start: number; end: number }) => {
+      harness.setDraft(draft({ text, selection, revision: 2 }));
+      if (commitDraft.mock.calls.length === 1) throw new Error("Storage full");
+    });
+    const harness = createHarness({
+      getTranscriber: () => ({ prepare: async () => preparedTranscription(transcribe) }),
+      commitDraft,
+    });
+    await harness.controller.start();
+    await harness.controller.stop();
+    expect(harness.controller.currentState).toMatchObject({ phase: "error", hasRecording: true });
+    await harness.controller.start();
+    expect(commitDraft.mock.calls.map(([text]) => text)).toEqual([
+      "hello Recovered",
+      "hello Recovered",
+    ]);
+    expect(transcribe).toHaveBeenCalledTimes(1);
+    expect(harness.controller.currentState.phase).toBe("idle");
+  });
+
   it("flushes capture before finalizing and commits once without a recording file", async () => {
     const events: string[] = [];
     const harness = createHarness({
