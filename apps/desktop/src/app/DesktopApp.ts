@@ -1,6 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -257,7 +258,7 @@ const bootstrap = Effect.gen(function* () {
   }
 }).pipe(Effect.withSpan("desktop.bootstrap"));
 
-const startup = Effect.gen(function* () {
+export const startup = Effect.gen(function* () {
   const appIdentity = yield* DesktopAppIdentity.DesktopAppIdentity;
   const applicationMenu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
   const electronApp = yield* ElectronApp.ElectronApp;
@@ -272,15 +273,26 @@ const startup = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const previewPasskeys = yield* PreviewPasskeys.PreviewPasskeys;
 
-  yield* shellEnvironment.installIntoProcess;
+  // The login-shell probe spawns a shell and can take seconds. Run it in the
+  // startup scope so independent initialization proceeds; the backend awaits
+  // this same cached effect before spawning.
+  const shellEnvironmentReady = yield* Effect.forkScoped(shellEnvironment.installIntoProcess);
+
   const hasCommandLinePasswordStore =
     preReadyElectronOptions.linuxPasswordStoreCommandLine !== null;
-  const linuxElectronOptions =
-    environment.platform === "linux" && !hasCommandLinePasswordStore
-      ? DesktopPreReadyPlatform.resolveEarlyLinuxElectronOptionsFromProcess(
-          yield* HostProcess.HomeDirectory,
-        )
-      : preReadyElectronOptions.linux;
+  // Electron chooses Linux's secure-storage backend from XDG desktop variables
+  // that only the login shell may export. Resolve after hydration unless an
+  // explicit password-store flag makes the environment irrelevant.
+  const linuxPasswordStoreNeedsShellEnvironment =
+    environment.platform === "linux" && !hasCommandLinePasswordStore;
+  if (linuxPasswordStoreNeedsShellEnvironment) {
+    yield* Fiber.join(shellEnvironmentReady);
+  }
+  const linuxElectronOptions = linuxPasswordStoreNeedsShellEnvironment
+    ? DesktopPreReadyPlatform.resolveEarlyLinuxElectronOptionsFromProcess(
+        yield* HostProcess.HomeDirectory,
+      )
+    : preReadyElectronOptions.linux;
   if (linuxElectronOptions !== null && !hasCommandLinePasswordStore) {
     if (
       linuxElectronOptions.passwordStore !== null ||
