@@ -34,6 +34,7 @@ export function useComposerCommandKey(input: {
   readonly phase: ChatComposerProps["phase"];
   readonly isCompacting: boolean;
   readonly followUpBehavior: ChatComposerProps["settings"]["followUpBehavior"];
+  readonly isTouchInput: boolean;
   readonly isSoftwareKeyboardOpen: boolean;
   readonly planModeUiEnabled: boolean;
   readonly isLiteralPendingAnswer: boolean;
@@ -86,6 +87,7 @@ export function useComposerCommandKey(input: {
     phase,
     isCompacting,
     followUpBehavior,
+    isTouchInput,
     isSoftwareKeyboardOpen,
     planModeUiEnabled,
     isLiteralPendingAnswer,
@@ -180,6 +182,7 @@ export function useComposerCommandKey(input: {
     const submissionIntent = composerSubmissionIntentForKey({
       event,
       keybindings,
+      isTouchInput,
       isSoftwareKeyboardOpen,
       isDraftThread: routeKind === "draft",
       isRunning: phase === "running",

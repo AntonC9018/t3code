@@ -224,6 +224,14 @@ describe("composerSubmissionIntentForKey", () => {
     },
   );
 
+  it("keeps plain Enter available for the phone editor when viewport keyboard detection is false", () => {
+    const phone = { ...input, isTouchInput: true, isSoftwareKeyboardOpen: false };
+    expect(composerSubmissionIntentForKey({ ...phone, event: enter })).toBeNull();
+    expect(composerSubmissionIntentForKey({ ...phone, event: { ...enter, ctrlKey: true } })).toBe(
+      "foreground",
+    );
+  });
+
   it.each([
     { isSoftwareKeyboardOpen: true },
     { event: { ...enter, isComposing: true } },
