@@ -1,5 +1,7 @@
-// Owned by AppSidebarLayout because the narrow drawer and Settings unmount the
-// thread sidebar without changing the route. Only a route change requests a
+// Owned by AppSidebarLayout because Settings can unmount the thread sidebar
+// without changing the route. The mobile drawer retains it while closed.
+// Callers must wait until the sidebar is visible before completing a reveal.
+// Only a route change requests a
 // reveal that may widen the project scope, so a scope chosen while one thread
 // stays open survives a remount. Scroll position does not survive one.
 //

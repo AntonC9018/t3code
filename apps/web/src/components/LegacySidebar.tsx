@@ -175,6 +175,7 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   useSidebar,
+  useSidebarVisibility,
 } from "./ui/sidebar";
 import {
   getThreadKeysToDeselectAfterDelete,
@@ -3261,6 +3262,7 @@ export default function LegacySidebar({ routeReveal }: { routeReveal: SidebarRou
   const handleNewThread = useNewThreadHandler();
   const { archiveThread, deleteThread, markThreadUnread } = useThreadActions();
   const { isMobile, setOpenMobile } = useSidebar();
+  const isSidebarVisible = useSidebarVisibility();
   const routeTarget = useThreadRouteTarget();
   const routeDraftThread = useComposerDraftStore((store) =>
     routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,
@@ -3324,6 +3326,7 @@ export default function LegacySidebar({ routeReveal }: { routeReveal: SidebarRou
   const routeRowRendered =
     routeThreadKey !== null && visibleSidebarThreadKeys.includes(routeThreadKey);
   const revealRouteRow = useStableCallback(() => {
+    if (!isSidebarVisible) return;
     const pendingKey = pendingSidebarRouteReveal(routeReveal, routeThreadKey);
     if (pendingKey === null && (!mountRevealOwed.current || routeThreadKey === null)) return;
     const activeRow = document.querySelector(
@@ -3334,7 +3337,7 @@ export default function LegacySidebar({ routeReveal }: { routeReveal: SidebarRou
     mountRevealOwed.current = false;
     activeRow.scrollIntoView({ block: "nearest" });
   });
-  useEffect(revealRouteRow, [revealRouteRow, routeThreadKey, routeRowRendered]);
+  useEffect(revealRouteRow, [revealRouteRow, routeThreadKey, routeRowRendered, isSidebarVisible]);
   const newThreadShortcutLabelOptions = {
     platform,
     context: {

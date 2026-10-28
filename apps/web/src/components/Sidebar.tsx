@@ -196,7 +196,7 @@ import {
   ComboboxTrigger,
   useComboboxFilter,
 } from "./ui/combobox";
-import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
+import { SidebarContent, SidebarGroup, useSidebar, useSidebarVisibility } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { TooltipProvider } from "./ui/tooltip";
@@ -760,6 +760,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   } = useSidebarLookups();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
+  const isSidebarVisible = useSidebarVisibility();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -1073,6 +1074,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // widening the scope.
   const mountRevealOwed = useRef(true);
   const revealRouteRow = useStableCallback(() => {
+    if (!isSidebarVisible) return;
     const pendingKey = pendingSidebarRouteReveal(routeReveal, routeRowThreadKey);
     // Search results replace the thread list; reveal once the list returns.
     if (isSearchingThreads) return;
@@ -1102,6 +1104,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     threads,
     projectScopeKey,
     isSearchingThreads,
+    isSidebarVisible,
   ]);
 
   const threadSearchMatchByKey = new Map(
