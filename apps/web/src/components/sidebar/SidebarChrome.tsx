@@ -210,6 +210,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handlePullRequestsClick}
             />
           ) : null}
+          <SidebarQuickActions />
         </>
       )}
       <SidebarUpdatePill />
@@ -223,7 +224,6 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarThreadUndoNotice />
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
-      <SidebarQuickActions />
       <SidebarUtilityMenu />
     </SidebarFooter>
   );

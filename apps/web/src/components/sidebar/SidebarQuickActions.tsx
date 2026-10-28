@@ -10,7 +10,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
-import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "../ui/sidebar";
+import { SidebarMenuButton, SidebarMenuItem, useSidebar } from "../ui/sidebar";
 
 // This fork's Coder dashboard is reachable from phones on the same tailnet.
 const CODER_URL = "https://laptop.tail380146.ts.net:8443";
@@ -80,7 +80,7 @@ export function SidebarQuickActions() {
   const [vpnOpen, setVpnOpen] = useState(false);
 
   return (
-    <SidebarMenu aria-label="Quick actions" className="flex-row">
+    <>
       <SidebarMenuItem>
         <SidebarMenuButton
           size="icon"
@@ -125,6 +125,6 @@ export function SidebarQuickActions() {
           </PopoverPopup>
         </Popover>
       </SidebarMenuItem>
-    </SidebarMenu>
+    </>
   );
 }
