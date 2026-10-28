@@ -182,6 +182,7 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import {
   completeSidebarRouteReveal,
   pendingSidebarRouteReveal,
+  runSidebarRevealWhenReady,
   type SidebarRouteReveal,
 } from "./sidebar/routeReveal";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -1074,14 +1075,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // widening the scope.
   const mountRevealOwed = useRef(true);
   const revealRouteRow = useStableCallback(() => {
-    if (!isSidebarVisible) return;
+    if (!isSidebarVisible) return false;
     const pendingKey = pendingSidebarRouteReveal(routeReveal, routeRowThreadKey);
     // Search results replace the thread list; reveal once the list returns.
-    if (isSearchingThreads) return;
+    if (isSearchingThreads) return false;
     const revealKey = pendingKey ?? (mountRevealOwed.current ? routeRowThreadKey : null);
-    if (revealKey === null) return;
+    if (revealKey === null) return true;
     const thread = threads.find((candidate) => threadShellKey(candidate) === revealKey);
-    if (thread === undefined) return;
+    if (thread === undefined) return false;
     if (
       pendingKey !== null &&
       scopedProjectKeys !== null &&
@@ -1090,16 +1091,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     ) {
       // The row renders under the widened scope; scroll on that pass.
       setProjectScopeKey(null);
-      return;
+      return false;
     }
     const activeRow = document.querySelector('[data-sidebar="content"] [aria-current="page"]');
-    if (!activeRow) return;
+    if (!activeRow || activeRow.getClientRects().length === 0) return false;
     completeSidebarRouteReveal(routeReveal);
     mountRevealOwed.current = false;
     activeRow.scrollIntoView({ block: "nearest" });
+    return true;
   });
-  useEffect(revealRouteRow, [
-    revealRouteRow,
+  const revealWhenReady = useStableCallback(() => {
+    if (isSidebarVisible) return runSidebarRevealWhenReady(revealRouteRow);
+  });
+  useEffect(revealWhenReady, [
+    revealWhenReady,
     routeRowThreadKey,
     threads,
     projectScopeKey,

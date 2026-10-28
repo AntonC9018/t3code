@@ -227,6 +227,7 @@ import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import {
   completeSidebarRouteReveal,
   pendingSidebarRouteReveal,
+  runSidebarRevealWhenReady,
   type SidebarRouteReveal,
 } from "./sidebar/routeReveal";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
@@ -3326,18 +3327,22 @@ export default function LegacySidebar({ routeReveal }: { routeReveal: SidebarRou
   const routeRowRendered =
     routeThreadKey !== null && visibleSidebarThreadKeys.includes(routeThreadKey);
   const revealRouteRow = useStableCallback(() => {
-    if (!isSidebarVisible) return;
+    if (!isSidebarVisible) return false;
     const pendingKey = pendingSidebarRouteReveal(routeReveal, routeThreadKey);
-    if (pendingKey === null && (!mountRevealOwed.current || routeThreadKey === null)) return;
+    if (pendingKey === null && (!mountRevealOwed.current || routeThreadKey === null)) return true;
     const activeRow = document.querySelector(
       '[data-sidebar="content"] [data-thread-item] [data-active="true"]',
     );
-    if (!activeRow) return;
+    if (!activeRow || activeRow.getClientRects().length === 0) return false;
     completeSidebarRouteReveal(routeReveal);
     mountRevealOwed.current = false;
     activeRow.scrollIntoView({ block: "nearest" });
+    return true;
   });
-  useEffect(revealRouteRow, [revealRouteRow, routeThreadKey, routeRowRendered, isSidebarVisible]);
+  const revealWhenReady = useStableCallback(() => {
+    if (isSidebarVisible) return runSidebarRevealWhenReady(revealRouteRow);
+  });
+  useEffect(revealWhenReady, [revealWhenReady, routeThreadKey, routeRowRendered, isSidebarVisible]);
   const newThreadShortcutLabelOptions = {
     platform,
     context: {

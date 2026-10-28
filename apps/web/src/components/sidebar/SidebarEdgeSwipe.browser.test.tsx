@@ -1,9 +1,12 @@
+import { useEffect, useRef } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
-import { Sidebar, SidebarProvider, SidebarTrigger } from "../ui/sidebar";
+import { Sidebar, SidebarProvider, SidebarTrigger, useSidebarVisibility } from "../ui/sidebar";
 import { SidebarEdgeSwipe } from "./SidebarEdgeSwipe";
+import { runSidebarRevealWhenReady } from "./routeReveal";
+import { useStableCallback } from "../../hooks/useStableCallback";
 
 const mobile = vi.hoisted(() => ({ value: true }));
 vi.mock("../../hooks/useMediaQuery", () => ({ useIsMobile: () => mobile.value }));
@@ -100,5 +103,44 @@ describe("mobile sidebar edge swipe", () => {
     await using screen = await render(<TestSidebar />);
     expect(screen.container.querySelector("[data-sidebar-edge-swipe]")).toBeNull();
     await expect.element(page.getByText("Project navigation")).toBeVisible();
+  });
+});
+
+function RevealTarget() {
+  const visible = useSidebarVisibility();
+  const target = useRef<HTMLDivElement>(null);
+  const reveal = useStableCallback(() => {
+    if (!target.current || target.current.getClientRects().length === 0) return false;
+    target.current.scrollIntoView({ block: "nearest" });
+    return true;
+  });
+  useEffect(() => {
+    if (visible) return runSidebarRevealWhenReady(reveal);
+  }, [visible, reveal]);
+  return (
+    <div style={{ height: 100, overflow: "auto" }} data-testid="reveal-scroll">
+      <div data-sidebar="content">
+        <div style={{ height: 1000 }} />
+        <div ref={target}>Active thread</div>
+      </div>
+    </div>
+  );
+}
+
+it("reveals a retained row after the sheet becomes physically visible", async () => {
+  mobile.value = true;
+  await using screen = await render(
+    <SidebarProvider>
+      <SidebarTrigger />
+      <Sidebar>
+        <RevealTarget />
+      </Sidebar>
+    </SidebarProvider>,
+  );
+  await screen.getByRole("button", { name: "Toggle Sidebar" }).click();
+  await expect.element(page.getByText("Active thread")).toBeVisible();
+  await vi.waitFor(() => {
+    const viewport = document.querySelector<HTMLElement>('[data-testid="reveal-scroll"]');
+    expect(viewport?.scrollTop).toBeGreaterThan(0);
   });
 });
