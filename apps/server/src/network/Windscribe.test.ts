@@ -41,6 +41,22 @@ describe("Windscribe", () => {
       ),
   );
 
+  it.effect("recognizes a connected VPN with the CLI location suffix", () =>
+    Effect.gen(function* () {
+      const service = yield* Windscribe.Windscribe;
+      expect(yield* service.read).toEqual({
+        state: "connected",
+        message: "Windscribe: connected.",
+      });
+    }).pipe(
+      provide(() =>
+        Effect.succeed(
+          output("Connect state: Connected: Toronto - Comfort Zone\r\nPublic IP: private"),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([output("unknown"), output("Connect state: Connected", 1)])(
     "reports unavailable for unrecognized or failed status",
     (result) =>

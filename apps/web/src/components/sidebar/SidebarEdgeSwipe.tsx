@@ -19,7 +19,14 @@ export function SidebarEdgeSwipe() {
     if (!origin || origin.pointerId !== event.pointerId) return;
     const dx = event.clientX - origin.x;
     const dy = Math.abs(event.clientY - origin.y);
-    if (dx < -12 || (dy > 12 && dy > Math.abs(dx))) gesture.current = null;
+    if (dx < -12 || (dy > 12 && dy > Math.abs(dx))) {
+      gesture.current = null;
+      return;
+    }
+    if (dx >= 24 && dx > dy * 2) {
+      gesture.current = null;
+      setOpenMobile(true);
+    }
   };
   const finish = (event: PointerEvent<HTMLDivElement>) => {
     const origin = gesture.current;
@@ -27,7 +34,7 @@ export function SidebarEdgeSwipe() {
     if (!origin || origin.pointerId !== event.pointerId) return;
     const dx = event.clientX - origin.x;
     const dy = Math.abs(event.clientY - origin.y);
-    if (dx >= 64 && dx > dy * 2) setOpenMobile(true);
+    if (dx >= 24 && dx > dy * 2) setOpenMobile(true);
   };
   const cancel = () => {
     gesture.current = null;

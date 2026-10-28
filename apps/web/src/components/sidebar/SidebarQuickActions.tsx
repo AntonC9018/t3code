@@ -2,7 +2,7 @@ import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { ChartNoAxesColumnIcon, ExternalLinkIcon, ShieldIcon } from "lucide-react";
+import { ChartNoAxesColumnIcon } from "lucide-react";
 import { useState } from "react";
 
 import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
@@ -80,37 +80,43 @@ export function SidebarQuickActions() {
   const [vpnOpen, setVpnOpen] = useState(false);
 
   return (
-    <SidebarMenu aria-label="Quick actions">
+    <SidebarMenu aria-label="Quick actions" className="flex-row">
       <SidebarMenuItem>
         <SidebarMenuButton
-          size={isMobile ? "lg" : "default"}
+          size="icon"
+          aria-label="Usage"
+          title="Usage"
           onClick={() => {
             if (isMobile) setOpenMobile(false);
             void navigate({ to: "/usage" });
           }}
         >
           <ChartNoAxesColumnIcon />
-          <span>Usage</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
       <SidebarMenuItem>
         <SidebarMenuButton
-          size={isMobile ? "lg" : "default"}
+          size="icon"
+          aria-label="Coder"
+          title="Coder"
           render={<a href={CODER_URL} target="_blank" rel="noopener noreferrer" />}
         >
-          <ExternalLinkIcon />
-          <span>Coder</span>
+          <img src="/coder.svg" alt="" aria-hidden="true" className="size-4" />
         </SidebarMenuButton>
       </SidebarMenuItem>
       <SidebarMenuItem>
         <Popover open={vpnOpen} onOpenChange={setVpnOpen}>
           <PopoverTrigger
             render={
-              <SidebarMenuButton size={isMobile ? "lg" : "default"} disabled={!environmentId} />
+              <SidebarMenuButton
+                size="icon"
+                aria-label="Windscribe VPN"
+                title="Windscribe VPN"
+                disabled={!environmentId}
+              />
             }
           >
-            <ShieldIcon />
-            <span>Windscribe VPN</span>
+            <img src="/windscribe.ico" alt="" aria-hidden="true" className="size-4" />
           </PopoverTrigger>
           <PopoverPopup side="top" align="start" width="md" touchBackdrop>
             {vpnOpen && environmentId ? (

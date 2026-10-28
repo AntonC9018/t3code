@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
-import { Sidebar, SidebarProvider } from "../ui/sidebar";
+import { Sidebar, SidebarProvider, SidebarTrigger } from "../ui/sidebar";
 import { SidebarEdgeSwipe } from "./SidebarEdgeSwipe";
 
 const mobile = vi.hoisted(() => ({ value: true }));
@@ -11,9 +11,11 @@ vi.mock("../../hooks/useMediaQuery", () => ({ useIsMobile: () => mobile.value })
 function TestSidebar() {
   return (
     <SidebarProvider>
+      <SidebarTrigger />
       <SidebarEdgeSwipe />
       <Sidebar>
         <p>Project navigation</p>
+        <input aria-label="Navigation filter" />
       </Sidebar>
     </SidebarProvider>
   );
@@ -46,15 +48,30 @@ const edge = (container: HTMLElement) => {
 };
 
 describe("mobile sidebar edge swipe", () => {
-  it("opens the actual sidebar after a rightward touch swipe", async () => {
+  it("opens during the drag without waiting for finger-up", async () => {
     mobile.value = true;
     await using screen = await render(<TestSidebar />);
     const target = edge(screen.container);
     pointer(target, "pointerdown", 8, 300);
     pointer(target, "pointermove", 90, 310);
-    pointer(target, "pointerup", 100, 312);
     await expect.element(page.getByRole("dialog", { name: "Sidebar", exact: true })).toBeVisible();
     await expect.element(page.getByText("Project navigation")).toBeVisible();
+  });
+
+  it("retains navigation when closed so reopening does not mount it again", async () => {
+    mobile.value = true;
+    await using screen = await render(<TestSidebar />);
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Navigation filter"]');
+    expect(input).not.toBeNull();
+    await screen.getByRole("button", { name: "Toggle Sidebar" }).click();
+    await page.getByRole("textbox", { name: "Navigation filter" }).fill("retained filter");
+    await userEvent.keyboard("{Escape}");
+    await expect.element(page.elementLocator(input!)).not.toBeVisible();
+    await screen.getByRole("button", { name: "Toggle Sidebar" }).click();
+    await expect
+      .element(page.getByRole("textbox", { name: "Navigation filter" }))
+      .toHaveValue("retained filter");
+    expect(document.querySelector('input[aria-label="Navigation filter"]')).toBe(input);
   });
 
   it.each(["vertical", "short", "leftward", "cancelled", "mouse", "multitouch"])(

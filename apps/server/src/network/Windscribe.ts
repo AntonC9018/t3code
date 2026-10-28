@@ -31,9 +31,10 @@ const make = Effect.gen(function* () {
       maxOutputBytes: 16_384,
     });
     if (result.code !== 0 || result.timedOut) return unavailable;
-    const state = /^Connect state:\s*(Connected|Disconnected|Connecting|Disconnecting)\s*$/im
-      .exec(result.stdout)?.[1]
-      ?.toLowerCase();
+    const state =
+      /^Connect state:\s*(Connected|Disconnected|Connecting|Disconnecting)(?:[ \t]*:[^\r\n]*)?[ \t]*\r?$/im
+        .exec(result.stdout)?.[1]
+        ?.toLowerCase();
     switch (state) {
       case "connected":
       case "disconnected":
