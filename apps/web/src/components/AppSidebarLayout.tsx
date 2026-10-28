@@ -44,6 +44,7 @@ import LegacyThreadSidebar from "./LegacySidebar";
 import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
 import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
+import { SidebarEdgeSwipe } from "./sidebar/SidebarEdgeSwipe";
 import { SidebarBrandWidthProbe, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { MainAppLocationTracker } from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
@@ -414,6 +415,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         defaultOpen
         style={sidebarProviderStyle}
       >
+        <SidebarEdgeSwipe />
         <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
         <ProjectProjectionRetention />
         <Sidebar
