@@ -283,6 +283,21 @@ export function useQueuedRunEdit(input: {
     setEditing(null);
   }, [activeThreadId, editing, routeThreadRef, serverProjection, threadDraftTarget]);
 
+  const finishSavedEdit = useStableCallback(
+    (savedEditing: EditingQueuedRun, savedDraftTarget: ComposerThreadTarget) => {
+      const isCurrentEdit = editing === savedEditing && draftTarget === savedDraftTarget;
+      // A newer edit can reuse this run's draft while the previous save is pending.
+      if (isCurrentEdit || draftTarget !== savedDraftTarget) {
+        useComposerDraftStore.getState().clearComposerContent(savedDraftTarget);
+      }
+      if (!isCurrentEdit) return;
+      promptRef.current = "";
+      composerRef.current?.resetCursorState();
+      setEditing(null);
+      focusComposerSoon();
+    },
+  );
+
   /**
    * Saves the composer content into the queued message being edited. Reports
    * failures through `setThreadError`, which callers own because the error
@@ -325,11 +340,7 @@ export function useQueuedRunEdit(input: {
     setThreadError(editing.threadId, error);
     if (error !== null) return;
     releaseDraftAttachments(newAttachments);
-    promptRef.current = "";
-    clearEditDraft(editing.runId);
-    composerRef.current?.resetCursorState();
-    setEditing(null);
-    focusComposerSoon();
+    finishSavedEdit(editing, draftTarget);
   };
 
   return {
