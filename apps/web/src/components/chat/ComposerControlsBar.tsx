@@ -76,6 +76,7 @@ export function ComposerControlsBar(props: {
   onMultipleModelSelectionsChange: ChatComposerProps["onMultipleModelSelectionsChange"];
   selectedModelSelection: ModelSelection;
   onProviderModelSelect: ChatComposerProps["onProviderModelSelect"];
+  onPersistModelSelection: ChatComposerProps["onPersistModelSelection"];
   activeThreadModelSelection: ChatComposerProps["activeThreadModelSelection"];
   selectedModelForPickerWithCustomFallback: string;
   lockedProvider: ChatComposerProps["lockedProvider"];
@@ -124,6 +125,7 @@ export function ComposerControlsBar(props: {
     onMultipleModelSelectionsChange,
     selectedModelSelection,
     onProviderModelSelect,
+    onPersistModelSelection,
     activeThreadModelSelection,
     selectedModelForPickerWithCustomFallback,
     lockedProvider,
@@ -146,6 +148,7 @@ export function ComposerControlsBar(props: {
     models: selectedProviderModels,
     modelOptions: composerModelOptions?.[selectedInstanceId],
     reportedModelSelection,
+    onPersistModelSelection,
     promptUltrathink,
     onPromptEdit,
     planModeEnabled,
@@ -161,6 +164,7 @@ export function ComposerControlsBar(props: {
     models: selectedProviderModels,
     modelOptions: composerModelOptions?.[selectedInstanceId],
     reportedModelSelection,
+    onPersistModelSelection,
     promptUltrathink,
     onPromptEdit,
     planModeEnabled,

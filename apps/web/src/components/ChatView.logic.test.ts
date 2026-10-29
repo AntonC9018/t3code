@@ -6,6 +6,7 @@ import {
   withMessageContext,
   deriveAvailableRevertTurnCounts,
   deriveWorkspaceMutationId,
+  resolveThreadMetadataUpdateForNextTurn,
 } from "./ChatView.logic";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
@@ -57,6 +58,31 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("thread model selection persistence", () => {
+  it("persists the complete selected model when it changes for the next turn", () => {
+    const current = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.5",
+    };
+    const next = {
+      instanceId: ProviderInstanceId.make("codex_subscription"),
+      model: "openai/gpt-5.5",
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: true },
+      ],
+    } as const;
+
+    expect(
+      resolveThreadMetadataUpdateForNextTurn({
+        currentModelSelection: current,
+        nextModelSelection: next,
+        currentBranch: null,
+      }),
+    ).toEqual({ modelSelection: next });
+  });
+});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return makeThreadFixture({

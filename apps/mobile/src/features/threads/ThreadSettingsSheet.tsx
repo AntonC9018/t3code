@@ -92,6 +92,7 @@ import { updateThreadDraftModelSelection } from "../../state/use-thread-composer
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { threadAllowsProviderSwitch } from "../../state/thread-provider-switching";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
+import { threadEnvironment } from "../../state/threads";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNewTaskFlow } from "./new-task-flow-provider";
@@ -1498,6 +1499,9 @@ export function ExistingThreadSettingsRouteScreen({
   // Reads the same environmentId/threadId params as the Thread route beneath it.
   const { selectedThread, selectedThreadDetailRef, selectedEnvironmentRuntime } =
     useThreadSelection();
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
   // Streamed text would otherwise re-render the whole model picker on every delta.
   const structure = useQuietThreadStructure(selectedThreadDetailRef);
   const reportedModelSelection = useThreadReportedModelSelection(selectedThreadDetailRef);
@@ -1532,8 +1536,13 @@ export function ExistingThreadSettingsRouteScreen({
         option.selection.instanceId === modelSelection.instanceId &&
         option.selection.model === modelSelection.model,
     ) ?? null;
-  const updateModelSelection = (selection: ModelSelection) =>
+  const updateModelSelection = (selection: ModelSelection) => {
     updateThreadDraftModelSelection(threadKey, selection, serverConfig?.providers ?? []);
+    void updateThreadMetadata({
+      environmentId: selectedThread.environmentId,
+      input: { threadId: selectedThread.id, modelSelection: selection },
+    });
+  };
 
   return (
     <ThreadSettingsPickerScreen

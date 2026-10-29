@@ -1606,6 +1606,23 @@ describe("composerDraftStore modelSelection", () => {
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });
 
+  it("uses a newer remote model selection when the local draft has no dirty pick", () => {
+    const store = useComposerDraftStore.getState();
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "stale-local-pick"));
+    store.setPrompt(threadRef, "keep this unsent message");
+    const h = modelReconciliationHarness(TEST_ENVIRONMENT_ID, threadId);
+    const remote = modelSelection(CLAUDE_AGENT_DRIVER, "claude-sonnet-4-6");
+
+    h.update({ modelSelection: remote });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toMatchObject({
+      prompt: "keep this unsent message",
+      activeProvider: null,
+      modelSelectionByProvider: {},
+    });
+    expect(h.model()).toEqual(remote);
+  });
+
   it("releases an inactive thread pick only after its queued model becomes durable", () => {
     const store = useComposerDraftStore.getState();
     const pick = modelSelection(CODEX_DRIVER, "gpt-5.5", { fastMode: false });

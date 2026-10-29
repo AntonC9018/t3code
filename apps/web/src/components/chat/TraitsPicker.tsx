@@ -98,10 +98,12 @@ type TraitsPersistence =
       threadRef?: ScopedThreadRef;
       draftId?: DraftId;
       onModelOptionsChange?: never;
+      onPersistModelSelection?: (selection: ModelSelection) => void;
     }
   | {
       threadRef?: undefined;
       onModelOptionsChange: (nextOptions: ProviderOptions | undefined) => void;
+      onPersistModelSelection?: (selection: ModelSelection) => void;
     };
 
 function DefaultBadge() {
@@ -346,6 +348,13 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     instanceId && model ? { instanceId, model, options: modelOptions ?? [] } : null;
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
   const updateModelOptions = (nextOptions: ProviderOptions | undefined) => {
+    if (instanceId && model) {
+      persistence.onPersistModelSelection?.({
+        instanceId,
+        model,
+        ...(nextOptions?.length ? { options: nextOptions } : {}),
+      });
+    }
     if ("onModelOptionsChange" in persistence) {
       persistence.onModelOptionsChange(nextOptions);
       return;

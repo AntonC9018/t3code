@@ -57,6 +57,7 @@ type TraitsRenderInput = {
   models: ReadonlyArray<ServerProviderModel>;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
   reportedModelSelection?: ModelSelection | null | undefined;
+  onPersistModelSelection?: (selection: ModelSelection) => void;
   promptUltrathink: PromptUltrathink;
   onPromptEdit: (edit: (prompt: string) => string) => void;
   planModeEnabled: boolean;
@@ -273,6 +274,9 @@ function renderTraitsControl(
       model={model}
       modelOptions={resolvedModelOptions}
       reportedModelSelection={reportedModelSelection}
+      {...(input.onPersistModelSelection
+        ? { onPersistModelSelection: input.onPersistModelSelection }
+        : {})}
       promptUltrathink={promptUltrathink}
       onPromptEdit={onPromptEdit}
       planModeEnabled={planModeEnabled}

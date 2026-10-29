@@ -51,6 +51,7 @@ interface ComposerSelectionInput {
     SetStateAction<Record<string, boolean>>
   >;
   readonly scheduleComposerFocus: () => void;
+  readonly persistModelSelection: (selection: ModelSelection) => void;
 }
 
 /**
@@ -78,6 +79,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     setPendingServerThreadEnvModeEntry,
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus,
+    persistModelSelection,
   } = input;
   const navigate = useNavigate();
   const setStickyComposerModelSelection = useComposerDraftStore(
@@ -211,6 +213,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       { explicit: true, replaceOptions: true },
     );
     setStickyComposerModelSelection(nextModelSelection);
+    persistModelSelection(nextModelSelection);
     if (options?.focusComposer !== false) scheduleComposerFocus();
   };
   const onProviderModelSelectStable = useStableCallback(onProviderModelSelect);

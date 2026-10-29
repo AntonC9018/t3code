@@ -241,6 +241,7 @@ interface ComposerSendInput {
     threadId: ThreadId;
     createdAt: string;
     branch?: string;
+    modelSelection?: ModelSelection;
     runtimeMode: RuntimeMode;
     interactionMode: ProviderInteractionMode;
   }) => Promise<AtomCommandResult<void, unknown>>;
@@ -1195,6 +1196,7 @@ export function useComposerSend(input: ComposerSendInput) {
       const settingsResult = await persistThreadSettingsForNextTurn({
         threadId: threadIdForSend,
         createdAt: messageCreatedAt,
+        modelSelection: ctxSelectedModelSelection,
         ...(localCheckoutBranchMismatch
           ? { branch: localCheckoutBranchMismatch.currentBranch }
           : {}),

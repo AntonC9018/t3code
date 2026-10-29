@@ -4347,7 +4347,7 @@ export function subscribeComposerDraftModelReconciliation(input: {
       const pick = draft.modelSelectionByProvider[draft.activeProvider];
       if (!ref || !pick || !threadKeys.has(key)) continue;
       const thread = get(input.threadShellAtom(ref));
-      if (!thread || !draftModelPickMatchesThread(pick, thread.modelSelection)) continue;
+      if (!thread) continue;
       // Status and selection must come from the same emission; derived atoms can update apart.
       const shell = AsyncResult.getOrElse(get(input.shellStateAtom(ref.environmentId)), () => null);
       if (shell?.status !== "live") continue;
@@ -4356,7 +4356,8 @@ export function subscribeComposerDraftModelReconciliation(input: {
       );
       if (
         authoritativeThread &&
-        draftModelPickMatchesThread(pick, authoritativeThread.modelSelection)
+        (draftModelPickMatchesThread(pick, authoritativeThread.modelSelection) ||
+          draft.modelSelectionExplicit !== true)
       ) {
         matches.push([key, draft]);
       }
