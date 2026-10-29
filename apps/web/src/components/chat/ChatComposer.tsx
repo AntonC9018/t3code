@@ -501,6 +501,7 @@ export interface ChatComposerProps {
     model: string,
     options?: { focusComposer?: boolean },
   ) => void;
+  onPersistModelSelection: (selection: ModelSelection) => void;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
   toggleInteractionMode: () => void;
@@ -2460,6 +2461,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onMultipleModelSelectionsChange={setMultipleModelSelections}
       selectedModelSelection={selectedModelSelection}
       onProviderModelSelect={onProviderModelSelect}
+      onPersistModelSelection={props.onPersistModelSelection}
       activeThreadModelSelection={activeThreadModelSelection}
       selectedModelForPickerWithCustomFallback={selectedModelForPickerWithCustomFallback}
       lockedProvider={lockedProvider}
@@ -2972,6 +2974,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               model: selectedModel,
               persistSticky: true,
             });
+          props.onPersistModelSelection({
+            instanceId: selectedInstanceId,
+            model: selectedModel,
+            options: change.modelOptions,
+          });
         }
         if (change.prompt !== promptRef.current) {
           applyPromptReplacementStable(0, promptRef.current.length, change.prompt, {
@@ -3555,15 +3562,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
 
-            {speechInput.preview ? (
-              <div
-                aria-label="Live transcription"
-                className="mx-3 mb-3 max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm leading-relaxed sm:mx-4"
-              >
-                <span>{speechInput.preview.committed}</span>
-                <span className="text-muted-foreground">{speechInput.preview.tentative}</span>
-              </div>
-            ) : null}
             {!shouldShowComposerFooter(
               isComposerCollapsedMobile,
               isComposerApprovalState,

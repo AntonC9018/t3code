@@ -38,7 +38,7 @@ export function createBrowserVoiceInputPlatform(input: {
   readonly getMicrophoneId: () => string;
   readonly onLevel: (level: number) => void;
   readonly onDurationLimit: () => void;
-  readonly onText: (text: SpeechStreamText) => void;
+  readonly onText: (text: SpeechStreamText, locale?: string) => void;
   readonly onError: (message: string) => void;
   readonly onStorageWarning?: (message: string) => void;
   readonly onRecordingRemoved?: (recordingId: string) => void;
@@ -420,7 +420,7 @@ export function createBrowserVoiceInputPlatform(input: {
             url,
             options: recordingOptions,
             signal: options.signal,
-            onText: input.onText,
+            onText: (text) => input.onText(text, locale),
             onError: (error) => {
               streamError = error;
             },

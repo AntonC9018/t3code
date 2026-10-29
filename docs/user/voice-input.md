@@ -32,11 +32,13 @@ English text when the model supports translation.
 
 ## Dictate into a draft
 
-Start voice input with the microphone control, then finish to insert the transcript.
+Start voice input with the microphone control, then finish to complete the transcript.
 Cancel to discard the recording and preserve your draft. Recording continues until
 you finish or cancel it. On web and desktop, text is inserted at the cursor or replaces
-the selection captured when recording starts. Editing is disabled while voice input
-is running. Send becomes available once recording starts. Press Send to finish recording and send the completed draft, including
+the selection captured when recording starts. You can keep editing while recording.
+Streaming models update dictated text in the composer as you speak; the tentative ending
+may change as the model hears more. Other models insert their transcript after recording
+stops. Send becomes available once recording starts. Press Send to finish recording and send the completed draft, including
 any existing text, after transcription and optional post-processing. You can also
 press Send while those steps are finishing. In other supported editors, the
 submit or save action works the same way. Cancelling dictation cancels the queued
@@ -66,10 +68,9 @@ and release to finish. In Voice settings, choose **Hold** to record only while t
 keys are down, or **Toggle** to start and finish with separate presses. Change the
 shortcut in [Keybindings settings](./keybindings.md).
 
-Models marked **Streaming** show a live preview while you speak. The tentative
-ending may change as the model hears more. Finish recording to insert the text;
-cancel to discard the preview without changing your draft. Other models transcribe
-after recording stops.
+Models marked **Streaming** update the dictated text in the composer while you speak.
+The tentative ending may change as the model hears more. Finish recording to complete
+the text; cancel to discard the recording and preserve your draft.
 
 ## Improve recognition
 

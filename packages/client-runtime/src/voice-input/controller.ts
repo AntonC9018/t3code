@@ -44,7 +44,11 @@ export function voiceInputBlocksSubmission<State extends Pick<VoiceInputState<tr
 export function voiceInputFreezesEditor<State extends Pick<VoiceInputState<true>, "phase">>(
   state: State,
 ): boolean {
-  return voiceInputBlocksSubmission(state);
+  return (
+    state.phase === "preparing" ||
+    state.phase === "transcribing" ||
+    state.phase === "post-processing"
+  );
 }
 
 export type VoiceDraftSnapshot = {
@@ -88,6 +92,12 @@ export type VoiceInputControllerDependencies<WithPostProcessing extends boolean 
     : never;
   readonly onPostProcessingError?: (error: unknown) => void;
   readonly onTranscriptReady?: (text: string, draft: VoiceDraftSnapshot) => Promise<void>;
+  readonly onStreamingTranscript?: (
+    text: string,
+    draft: VoiceDraftSnapshot,
+    locale: string,
+  ) => VoiceDraftSnapshot | null;
+  readonly onStreamingCancel?: () => void;
   readonly readDraft: () => VoiceDraftSnapshot | null;
   readonly commitDraft: (
     text: string,
@@ -104,6 +114,119 @@ type TranscriptCommitResult =
     }
   | { readonly kind: "stale" }
   | { readonly kind: "empty" };
+
+export type VoiceLiveTranscript = {
+  readonly base: VoiceDraftSnapshot;
+  readonly expectedText: string;
+  readonly start: number;
+  readonly end: number;
+};
+
+function resolveLiveTranscriptRange(
+  currentText: string,
+  live: VoiceLiveTranscript,
+): { readonly start: number; readonly end: number } | null {
+  let start = live.start;
+  let end = live.end;
+  const oldText = live.expectedText;
+  if (currentText === oldText) return { start, end };
+
+  let prefix = 0;
+  while (
+    prefix < oldText.length &&
+    prefix < currentText.length &&
+    oldText[prefix] === currentText[prefix]
+  )
+    prefix += 1;
+  let suffixLength = 0;
+  while (
+    suffixLength < oldText.length - prefix &&
+    suffixLength < currentText.length - prefix &&
+    oldText[oldText.length - 1 - suffixLength] ===
+      currentText[currentText.length - 1 - suffixLength]
+  )
+    suffixLength += 1;
+  const oldChangeEnd = oldText.length - suffixLength;
+  const newChangeEnd = currentText.length - suffixLength;
+  if (oldChangeEnd <= live.start) {
+    const delta = newChangeEnd - oldChangeEnd;
+    start += delta;
+    end += delta;
+  } else if (prefix < live.end && oldChangeEnd > live.start) {
+    return null;
+  }
+  return { start, end };
+}
+
+export function resolveLiveTranscriptCancel(
+  current: VoiceDraftSnapshot,
+  live: VoiceLiveTranscript,
+): VoiceDraftSnapshot | null {
+  if (current.ownerKey !== live.base.ownerKey) return null;
+  const range = resolveLiveTranscriptRange(current.text, live);
+  if (!range) return null;
+  const restored = live.base.text.slice(live.base.selection.start, live.base.selection.end);
+  const text = current.text.slice(0, range.start) + restored + current.text.slice(range.end);
+  const delta = restored.length - (range.end - range.start);
+  const mapSelection = (position: number) =>
+    position <= range.start
+      ? position
+      : position >= range.end
+        ? position + delta
+        : range.start + restored.length;
+  return {
+    ...current,
+    text,
+    selection: {
+      start: mapSelection(current.selection.start),
+      end: mapSelection(current.selection.end),
+    },
+    revision: current.revision + 1,
+  };
+}
+
+export function resolveLiveTranscriptUpdate(
+  current: VoiceDraftSnapshot,
+  live: VoiceLiveTranscript | null,
+  transcript: string,
+  locale: string,
+): { readonly draft: VoiceDraftSnapshot; readonly live: VoiceLiveTranscript } | null {
+  const base = live?.base ?? current;
+  if (base.ownerKey !== current.ownerKey) return null;
+  const resolved = resolveTranscriptCommit(base, base, transcript, locale);
+  if (resolved.kind !== "commit") return null;
+
+  const insertionStart = base.selection.start;
+  const suffixLength = base.text.length - base.selection.end;
+  const insertionEnd = resolved.text.length - suffixLength;
+  const insertion = resolved.text.slice(insertionStart, insertionEnd);
+  let start = insertionStart;
+  let end = live ? live.end : base.selection.end;
+  if (live) {
+    const range = resolveLiveTranscriptRange(current.text, live);
+    if (!range) return null;
+    start = range.start;
+    end = range.end;
+  }
+
+  const text = `${current.text.slice(0, start)}${insertion}${current.text.slice(end)}`;
+  const cursor = start + insertion.length;
+  const delta = insertion.length - (end - start);
+  const mapSelection = (position: number) =>
+    position <= start ? position : position >= end ? position + delta : cursor;
+  const selectionStart = live ? mapSelection(current.selection.start) : cursor;
+  const selectionEnd = live ? mapSelection(current.selection.end) : cursor;
+  const draft = {
+    ...current,
+    text,
+    selection: { start: selectionStart, end: selectionEnd },
+    revision: current.revision + 1,
+  };
+  return {
+    draft,
+    live: { base, expectedText: text, start, end: cursor },
+  };
+}
 
 // Auto-detected transcription has no resolved locale; these scripts join without spaces.
 const UNSPACED_SCRIPT =
@@ -275,6 +398,19 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
     return this.state as VoiceInputState<WithPostProcessing>;
   }
 
+  updateStreamingTranscript(text: string, locale: string): VoiceDraftSnapshot | null {
+    if (
+      (this.state.phase !== "recording" &&
+        this.state.phase !== "transcribing" &&
+        this.state.phase !== "post-processing") ||
+      !this.capturedDraft
+    )
+      return null;
+    const nextDraft = this.dependencies.onStreamingTranscript?.(text, this.capturedDraft, locale);
+    if (nextDraft) this.capturedDraft = nextDraft;
+    return nextDraft ?? null;
+  }
+
   restoreRecording(
     uri: string,
     draft: VoiceDraftSnapshot,
@@ -422,6 +558,7 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
   }
 
   cancel(): void {
+    this.dependencies.onStreamingCancel?.();
     switch (this.state.phase) {
       case "idle":
         return;
@@ -548,7 +685,7 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
       const recordingUri = this.recordingUri;
       const transcription = this.transcription;
       const signal = this.transcriptionAbortController.signal;
-      const capturedDraft = this.capturedDraft;
+      let capturedDraft = this.capturedDraft;
       if (recordingUri) {
         this.retryRecording = {
           uri: recordingUri,
@@ -570,6 +707,14 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
         return;
       }
       if (!this.isCurrent(operationToken)) return;
+      capturedDraft = this.capturedDraft ?? capturedDraft;
+      const processingDraft = capturedDraft;
+
+      // The final result can differ from partial updates. Apply it before cleanup so the live
+      // span is replaced rather than appended twice. This also handles retries that use batch
+      // transcription after a streaming failure.
+      let streamingDraft = this.updateStreamingTranscript(transcript, transcription.locale);
+      if (streamingDraft) capturedDraft = streamingDraft;
 
       if (this.dependencies.postProcess && transcript.trim().length > 0) {
         this.setState({ phase: "post-processing", error: null, errorAction: null });
@@ -581,7 +726,7 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
           transcript = await Promise.race([
             this.dependencies.postProcess(transcript, {
               signal: postProcessingAbortController.signal,
-              draft: capturedDraft,
+              draft: processingDraft,
             }),
             new Promise<string>((resolve) =>
               postProcessingAbortController.signal.addEventListener(
@@ -599,8 +744,18 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
         if (!this.isCurrent(operationToken)) return;
       }
 
+      if (this.dependencies.postProcess && streamingDraft) {
+        streamingDraft = this.updateStreamingTranscript(transcript, transcription.locale);
+        if (streamingDraft) capturedDraft = streamingDraft;
+      }
+
       await this.dependencies.onTranscriptReady?.(transcript, capturedDraft);
       if (!this.isCurrent(operationToken)) return;
+      if (streamingDraft) {
+        this.retryRecording = null;
+        this.setState(IDLE_STATE);
+        return;
+      }
       const result = resolveTranscriptCommit(
         capturedDraft,
         this.dependencies.readDraft(),

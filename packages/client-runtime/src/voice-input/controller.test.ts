@@ -3,11 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   resetVoiceInputGlobalsForTests,
+  resolveLiveTranscriptCancel,
   resolveTranscriptCommit,
+  resolveLiveTranscriptUpdate,
   VoiceInputController,
   voiceInputBlocksSubmission,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
+  type VoiceLiveTranscript,
   type VoiceRecorder,
 } from "./controller.ts";
 import {
@@ -88,6 +91,78 @@ function createHarness(
 
 describe("streaming voice input", () => {
   beforeEach(resetVoiceInputGlobalsForTests);
+
+  it("replaces a live transcript in place while preserving surrounding draft edits", () => {
+    const initial = draft({ text: "hello world", selection: { start: 6, end: 11 } });
+    const first = resolveLiveTranscriptUpdate(initial, null, "speaking", "en-US");
+    expect(first?.draft.text).toBe("hello speaking");
+    const edited = {
+      ...first!.draft,
+      text: "hello speaking!",
+      revision: first!.draft.revision + 1,
+    };
+    const second = resolveLiveTranscriptUpdate(edited, first!.live, "spoken words", "en-US");
+    expect(second?.draft.text).toBe("hello spoken words!");
+  });
+
+  it("removes the live transcript on cancel while preserving edits around it", () => {
+    const initial = draft({ text: "before selected after", selection: { start: 7, end: 15 } });
+    const first = resolveLiveTranscriptUpdate(initial, null, "dictation", "en-US")!;
+    const edited = {
+      ...first.draft,
+      text: "before dictation after!",
+      selection: { start: 23, end: 23 },
+      revision: first.draft.revision + 1,
+    };
+
+    expect(resolveLiveTranscriptCancel(edited, first.live)).toMatchObject({
+      text: "before selected after!",
+      selection: { start: 22, end: 22 },
+    });
+  });
+
+  it("keeps the existing draft and selection around a live insertion", () => {
+    const initial = draft({
+      text: "before selected after",
+      selection: { start: 7, end: 15 },
+    });
+    const result = resolveLiveTranscriptUpdate(initial, null, "dictation", "en-US");
+    expect(result?.draft).toMatchObject({
+      text: "before dictation after",
+      selection: { start: 16, end: 16 },
+    });
+  });
+
+  it("replaces live text with the provider's final transcript instead of appending it", async () => {
+    let currentDraft = draft({ text: "hello world", selection: { start: 6, end: 11 } });
+    let live: VoiceLiveTranscript | null = null;
+    const harness = createHarness(
+      {
+        getTranscriber: () => ({
+          prepare: async () => preparedStreamingTranscription(async () => "final words"),
+        }),
+        readDraft: () => currentDraft,
+        onStreamingTranscript: (text, _captured, locale) => {
+          const update = resolveLiveTranscriptUpdate(currentDraft, live, text, locale);
+          if (!update) return null;
+          currentDraft = update.draft;
+          live = update.live;
+          return currentDraft;
+        },
+        commitDraft: (text) => {
+          currentDraft = { ...currentDraft, text };
+        },
+      },
+      currentDraft,
+    );
+
+    await harness.controller.start();
+    harness.controller.updateStreamingTranscript("partial words", "en-US");
+    await harness.controller.stop();
+
+    expect(currentDraft.text).toBe("hello final words");
+    expect(harness.commits).toEqual([]);
+  });
 
   it("retains failed batch audio and retries it without recording again", async () => {
     const transcribe = vi

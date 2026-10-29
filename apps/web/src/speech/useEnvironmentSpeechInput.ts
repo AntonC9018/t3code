@@ -9,7 +9,10 @@ import {
   voiceInputBlocksSubmission,
   voiceInputFreezesEditor,
   resolveTranscriptCommit,
+  resolveLiveTranscriptCancel,
+  resolveLiveTranscriptUpdate,
   type VoiceDraftSnapshot,
+  type VoiceLiveTranscript,
   type VoiceInputControllerDependencies,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
@@ -115,6 +118,7 @@ type SpeechSession = {
   state: VoiceInputState<true>;
   level: number;
   preview: SpeechStreamText | null;
+  liveTranscript: VoiceLiveTranscript | null;
 };
 const retainedSessions = new Map<string, SpeechSession>();
 
@@ -219,9 +223,10 @@ function createSpeechSession(
       session.attachment?.notify();
     },
     onDurationLimit: () => void controller.stop(),
-    onText: (text) => {
+    onText: (text, locale = "auto") => {
       session.preview = text;
       session.attachment?.notify();
+      session.controller.updateStreamingTranscript(`${text.committed}${text.tentative}`, locale);
     },
     onStorageWarning: (message) => {
       toastManager.add({
@@ -282,6 +287,35 @@ function createSpeechSession(
         description: "The original transcription was added.",
       }),
     readDraft: () => readSessionDraft(session),
+    onStreamingTranscript: (text, captured, locale) => {
+      if (session.context.retainedDraft) return captured;
+      const current = readSessionDraft(session);
+      if (!current) return null;
+      const update = resolveLiveTranscriptUpdate(current, session.liveTranscript, text, locale);
+      if (!update) return captured;
+      session.liveTranscript = update.live;
+      Object.assign(session.revision, {
+        ownerKey: update.draft.ownerKey,
+        text: update.draft.text,
+        revision: update.draft.revision,
+      });
+      session.attachment?.commitDraft(update.draft.text, update.draft.selection);
+      return update.draft;
+    },
+    onStreamingCancel: () => {
+      const current = readSessionDraft(session);
+      const live = session.liveTranscript;
+      session.liveTranscript = null;
+      if (!current || !live) return;
+      const draft = resolveLiveTranscriptCancel(current, live);
+      if (!draft) return;
+      Object.assign(session.revision, {
+        ownerKey: draft.ownerKey,
+        text: draft.text,
+        revision: draft.revision,
+      });
+      session.attachment?.commitDraft(draft.text, draft.selection);
+    },
     commitDraft: (text, selection) => {
       if (session.context.closedQuestionRecovery && !session.recoveryAccepted)
         throw new Error("Choose Recover to draft to insert this saved question recording.");
@@ -308,6 +342,7 @@ function createSpeechSession(
     },
     onStateChange: (value) => {
       session.state = value;
+      if (value.phase === "idle") session.liveTranscript = null;
       if (value.phase !== "recording" && value.phase !== "transcribing") session.preview = null;
       session.attachment?.notify();
       releaseUnusedSession(session);
@@ -326,6 +361,7 @@ function createSpeechSession(
     recovering: false,
     level: 0,
     preview: null,
+    liveTranscript: null,
     recover: () => {
       if (!session.context.retainedDraft) return Promise.resolve();
       if (session.recovering) return session.ready;

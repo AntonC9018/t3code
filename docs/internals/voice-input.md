@@ -44,10 +44,10 @@ the [Apple binding](../../apps/mobile/src/native/voiceTranscription.ios.ts) chec
 cancellation between native calls and discards late results.
 
 Web and desktop cancellation aborts the client request, prevents late transcript
-insertion, and clears any queued submission. Editors remain read-only while voice
-input is busy, but draft revision checks still protect against external changes.
-Submission controls are disabled during preparation. Once recording starts, a
-submission request finishes recording and waits for transcription and optional
-cleanup before submitting the completed draft. The request can also be queued
-while transcription or cleanup is already running; see the
+insertion, and clears any queued submission. Editors remain writable during recording;
+streaming updates replace the dictated span, preserving unrelated edits. Draft revision
+checks still protect against external changes. Submission controls are disabled during
+preparation. Once recording starts, a submission request finishes recording and waits
+for transcription and optional cleanup before submitting the completed draft. The
+request can also be queued while transcription or cleanup is already running; see the
 [client integration](../../apps/web/src/speech/useEnvironmentSpeechInput.ts).
