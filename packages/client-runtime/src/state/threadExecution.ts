@@ -265,7 +265,11 @@ export function deriveThreadStructureRuntime(
     providerInstanceId: projection.thread.providerInstanceId,
     providerName: providerSession?.driver ?? null,
     ...threadErrorSummary(
-      latestRootProviderFailure(latestRunProjection, projection.turnItems),
+      latestRootProviderFailure(
+        latestRunProjection,
+        projection.turnItems,
+        projection.thread.providerInstanceId,
+      ),
       providerSession?.lastError ?? null,
     ),
   };

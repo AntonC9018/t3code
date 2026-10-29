@@ -2,6 +2,7 @@ import type {
   OrchestrationV2ProviderFailure,
   OrchestrationV2Run,
   OrchestrationV2TurnItem,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -14,8 +15,11 @@ type FailureScanTurnItem =
 export function latestRootProviderFailure(
   run: OrchestrationV2Run | null,
   turnItems: ReadonlyArray<FailureScanTurnItem>,
+  providerInstanceId?: ProviderInstanceId,
 ): OrchestrationV2ProviderFailure | null {
   if (run?.status !== "failed") return null;
+  if (providerInstanceId !== undefined && run.providerInstanceId !== providerInstanceId)
+    return null;
   let latest: ErrorTurnItem | null = null;
   for (const item of turnItems) {
     if (

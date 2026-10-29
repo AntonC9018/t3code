@@ -81,6 +81,17 @@ describe("thread execution presentation", () => {
       lastError: "Plan limit reached",
       lastErrorClass: "usage_limit",
     });
+    const otherInstanceId = ProviderInstanceId.make("another-subscription");
+    expect(
+      deriveThreadRuntime({
+        ...projection,
+        thread: {
+          ...projection.thread,
+          providerInstanceId: otherInstanceId,
+          modelSelection: { ...projection.thread.modelSelection, instanceId: otherInstanceId },
+        },
+      }),
+    ).toMatchObject({ lastError: null, lastErrorClass: null, usageLimitResetAt: null });
     expect(
       deriveThreadRuntime({
         ...projection,

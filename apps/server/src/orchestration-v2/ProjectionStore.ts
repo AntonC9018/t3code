@@ -1494,7 +1494,11 @@ export function threadShellFromProjection(
       activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
     status: latestRun?.status ?? "idle",
     ...threadErrorSummary(
-      latestRootProviderFailure(latestRun, projection.turnItems),
+      latestRootProviderFailure(
+        latestRun,
+        projection.turnItems,
+        projection.thread.providerInstanceId,
+      ),
       providerSession?.lastError ?? null,
     ),
     pendingRuntimeRequest,
