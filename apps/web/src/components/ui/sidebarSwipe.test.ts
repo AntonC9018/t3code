@@ -13,6 +13,9 @@ describe("sidebar swipe activation", () => {
 
   it("opens only for a decisive horizontal drag toward the sidebar", () => {
     expect(isSidebarSwipeOpenIntent(80, 20, 140, 25, "left")).toBe(true);
+    expect(isSidebarSwipeOpenIntent(80, 20, 90, 21, "left", 8)).toBe(true);
+    expect(isSidebarSwipeOpenIntent(80, 20, 90, 21, "left")).toBe(false);
+    expect(isSidebarSwipeOpenIntent(80, 20, 85, 35, "left", 8)).toBe(false);
     expect(isSidebarSwipeOpenIntent(80, 20, 120, 25, "left")).toBe(false);
     expect(isSidebarSwipeOpenIntent(80, 20, 140, 80, "left")).toBe(false);
     expect(isSidebarSwipeOpenIntent(300, 20, 240, 25, "right")).toBe(true);

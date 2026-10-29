@@ -17,13 +17,14 @@ export function isSidebarSwipeOpenIntent(
   currentX: number,
   currentY: number,
   side: "left" | "right",
+  minimumDistance = SIDEBAR_SWIPE_DISTANCE,
 ): boolean {
   const deltaX = currentX - startX;
   const deltaY = Math.abs(currentY - startY);
   const towardSidebar = side === "left" ? deltaX > 0 : deltaX < 0;
   return (
     towardSidebar &&
-    Math.abs(deltaX) >= SIDEBAR_SWIPE_DISTANCE &&
+    Math.abs(deltaX) >= minimumDistance &&
     Math.abs(deltaX) >= deltaY * SIDEBAR_SWIPE_AXIS_RATIO
   );
 }

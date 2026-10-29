@@ -282,42 +282,56 @@ function Sidebar({
   const { isMobile, state, openMobile, setOpenMobile, setMobileSheetElement } = useSidebar();
   const offcanvasCollapsed = !isMobile && collapsible === "offcanvas" && state === "collapsed";
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers touch listeners while the mobile drawer is closed
   React.useEffect(() => {
     if (!isMobile || openMobile || collapsible !== "offcanvas") return;
 
-    let start: { pointerId: number; x: number; y: number } | null = null;
-    const onPointerDown = (event: PointerEvent) => {
+    let start: { id: number; x: number; y: number } | null = null;
+    const onTouchStart = (event: TouchEvent) => {
+      const touch = event.touches[0];
       if (
-        event.pointerType !== "touch" ||
-        !event.isPrimary ||
-        !isSidebarSwipeStart(event.clientX, window.innerWidth, side) ||
+        event.touches.length !== 1 ||
+        !touch ||
+        !isSidebarSwipeStart(touch.clientX, window.innerWidth, side) ||
         !canStartSidebarSwipe(event.target)
       ) {
         start = null;
         return;
       }
-      start = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+      start = { id: touch.identifier, x: touch.clientX, y: touch.clientY };
     };
-    const onPointerMove = (event: PointerEvent) => {
-      if (!start || event.pointerId !== start.pointerId) return;
-      if (isSidebarSwipeOpenIntent(start.x, start.y, event.clientX, event.clientY, side)) {
+    const onTouchMove = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (!start || event.touches.length !== 1 || !touch || touch.identifier !== start.id) {
         start = null;
-        setOpenMobile(true);
+        return;
+      }
+      const dx = touch.clientX - start.x;
+      const dy = touch.clientY - start.y;
+      if (isSidebarSwipeOpenIntent(start.x, start.y, touch.clientX, touch.clientY, side, 8)) {
+        // Claim horizontal intent before the browser takes the pan and cancels pointer delivery.
+        if (event.cancelable) event.preventDefault();
+        if (isSidebarSwipeOpenIntent(start.x, start.y, touch.clientX, touch.clientY, side)) {
+          start = null;
+          setOpenMobile(true);
+        }
+      } else if (Math.abs(dy) >= 8 || (side === "left" ? dx <= -8 : dx >= 8)) {
+        start = null;
       }
     };
-    const onPointerEnd = (event: PointerEvent) => {
-      if (start?.pointerId === event.pointerId) start = null;
+    const onTouchEnd = () => {
+      start = null;
     };
 
-    document.addEventListener("pointerdown", onPointerDown, true);
-    document.addEventListener("pointermove", onPointerMove, true);
-    document.addEventListener("pointerup", onPointerEnd, true);
-    document.addEventListener("pointercancel", onPointerEnd, true);
+    document.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
+    document.addEventListener("touchmove", onTouchMove, { capture: true, passive: false });
+    document.addEventListener("touchend", onTouchEnd, true);
+    document.addEventListener("touchcancel", onTouchEnd, true);
     return () => {
-      document.removeEventListener("pointerdown", onPointerDown, true);
-      document.removeEventListener("pointermove", onPointerMove, true);
-      document.removeEventListener("pointerup", onPointerEnd, true);
-      document.removeEventListener("pointercancel", onPointerEnd, true);
+      document.removeEventListener("touchstart", onTouchStart, true);
+      document.removeEventListener("touchmove", onTouchMove, true);
+      document.removeEventListener("touchend", onTouchEnd, true);
+      document.removeEventListener("touchcancel", onTouchEnd, true);
     };
   }, [collapsible, isMobile, openMobile, setOpenMobile, side]);
 
