@@ -279,6 +279,161 @@ function makeRestartAdapter(
   };
 }
 
+it.live("defers a model restart until the active run finishes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const name = "selection-restart-deferred-active";
+      const cwd = yield* checkpointWorkspace(name);
+      const threadId = ThreadId.make(`thread:${name}`);
+      const state = yield* Ref.make<RestartAdapterState>({
+        activeTurn: null,
+        opened: [],
+        started: [],
+        closedSessionCount: 0,
+        failedReplacementOpen: true,
+      });
+      const layerRegistry = ProviderAdapterRegistry.layerSingle(
+        makeRestartAdapter(state, exclusiveCapabilities),
+      );
+      const result = yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const running = yield* eventSink
+          .stream({ threadId, afterSequence: yield* eventSink.latestSequence({ threadId }) })
+          .pipe(
+            Stream.map((stored) => stored.event),
+            Stream.filter(
+              (event) =>
+                event.type === "provider-turn.updated" && event.payload.status === "running",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}:create`),
+          threadId,
+          projectId: ProjectId.make(`project:${name}`),
+          title: name,
+          modelSelection: initialSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}:first`),
+          threadId,
+          messageId: MessageId.make(`${name}:first`),
+          text: "first",
+          attachments: [],
+          modelSelection: initialSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* worker.drain();
+        yield* Fiber.join(running);
+        const firstProjection = yield* orchestrator.getThreadProjection(threadId);
+        const originalSessionId = firstProjection.providerThreads[0]?.providerSessionId;
+        const activeRun = firstProjection.runs.find((run) => run.status === "running");
+        assert.isDefined(originalSessionId);
+        assert.isDefined(activeRun);
+
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make(`${name}:select`),
+          threadId,
+          modelSelection: replacementSelection,
+        });
+        yield* worker.drain();
+        const afterSelection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(afterSelection.runs.find((run) => run.id === activeRun.id)?.status, "running");
+        assert.equal(afterSelection.providerThreads[0]?.providerSessionId, originalSessionId);
+        assert.equal(
+          afterSelection.providerSessions.find((session) => session.id === originalSessionId)
+            ?.status,
+          "ready",
+        );
+
+        const interrupted = yield* eventSink
+          .stream({ threadId, afterSequence: yield* eventSink.latestSequence({ threadId }) })
+          .pipe(
+            Stream.map((stored) => stored.event),
+            Stream.filter(
+              (event) => event.type === "run.updated" && event.payload.status === "interrupted",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make(`${name}:interrupt`),
+          threadId,
+          runId: activeRun.id,
+        });
+        yield* worker.drain();
+        yield* Fiber.join(interrupted);
+        yield* worker.drain();
+
+        const completed = yield* eventSink
+          .stream({ threadId, afterSequence: yield* eventSink.latestSequence({ threadId }) })
+          .pipe(
+            Stream.map((stored) => stored.event),
+            Stream.filter(
+              (event) => event.type === "run.updated" && event.payload.status === "completed",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}:second`),
+          threadId,
+          messageId: MessageId.make(`${name}:second`),
+          text: "second",
+          attachments: [],
+          modelSelection: replacementSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* worker.drain();
+        yield* Fiber.join(completed);
+        yield* worker.drain();
+
+        return {
+          projection: yield* orchestrator.getThreadProjection(threadId),
+          state: yield* Ref.get(state),
+          originalSessionId,
+        };
+      }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
+
+      const latestRun = result.projection.runs.find((run) => run.ordinal === 2);
+      const latestProviderThread = result.projection.providerThreads.find(
+        (providerThread) => providerThread.id === latestRun?.providerThreadId,
+      );
+      assert.equal(latestRun?.status, "completed");
+      assert.equal(latestRun?.modelSelection.model, replacementSelection.model);
+      assert.notEqual(latestProviderThread?.providerSessionId, result.originalSessionId);
+      assert.equal(
+        result.projection.providerSessions.find(
+          (session) => session.id === latestProviderThread?.providerSessionId,
+        )?.model,
+        replacementSelection.model,
+      );
+      assert.isAbove(result.state.closedSessionCount, 0);
+    }),
+  ),
+);
+
 it.live("retries a failed selection restart session open before completing", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -247,6 +247,7 @@ it.effect.each(storageCases)(
         providerContext.providerThreads.map((thread) => thread.id),
         [providerThreadId],
       );
+      assert.deepEqual(providerContext.activeProviderSessionIds, [providerSessionId]);
       const responseContext = yield* store.getRuntimeResponseContext(threadId, requestId);
       assert.equal(responseContext.request?.id, requestId);
       const target = { providerThreadId, providerTurnId, attemptId, messageId };

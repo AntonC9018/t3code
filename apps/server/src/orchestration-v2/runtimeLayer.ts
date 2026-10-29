@@ -168,6 +168,7 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
       IdAllocator.layer,
       ProjectionStore.layer,
       layerProviderSessionManagerProvided,
+      ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
       layerProviderAuthServiceProvided,
       layerRunExecutionServiceProvided,
       layerRuntimePolicyProvided,

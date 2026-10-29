@@ -47,7 +47,11 @@ const adapter = {
   instanceId,
   driver: ProviderDriverKind.make("codex"),
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
-  planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+  planSelectionTransition: ({ target }) =>
+    Effect.succeed({
+      type:
+        target.model === "gpt-6" ? ("restart_session" as const) : ("apply_on_next_turn" as const),
+    }),
   openSession: () => Effect.die("No provider process needed for metadata controls"),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 const layerDatabase = SqlitePersistence.layerMemory;
@@ -540,6 +544,111 @@ it.effect(
       });
       assert.isNotNull((yield* projections.getThread(threadId)).deletedAt);
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("does not detach the session backing an active run when saving the next model", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:model-selection-during-run");
+    const providerThreadId = ProviderThreadId.make("provider-thread:model-selection-during-run");
+    const sessionId = ProviderSessionId.make("session:model-selection-during-run");
+    const runId = RunId.make("run:model-selection-during-run");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-model-selection-during-run"),
+      threadId,
+      projectId: ProjectId.make("project:model-selection-during-run"),
+      title: "Active run",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: "/repo",
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* projections.apply({
+      id: EventId.make("attach-model-selection-during-run"),
+      type: "provider-session.attached",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: sessionId,
+        driver: adapter.driver,
+        providerInstanceId: instanceId,
+        status: "ready",
+        cwd: "/repo",
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("provider-thread-model-selection-during-run"),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: providerThreadId,
+        driver: adapter.driver,
+        providerInstanceId: instanceId,
+        providerSessionId: sessionId,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: { driver: adapter.driver, nativeId: "active-run", strength: "strong" },
+        nativeConversationHeadRef: null,
+        status: "active",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 1,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("run-model-selection-during-run"),
+      type: "run.created",
+      threadId,
+      runId,
+      occurredAt: now,
+      providerInstanceId: instanceId,
+      payload: {
+        id: runId,
+        threadId,
+        ordinal: 1,
+        providerInstanceId: instanceId,
+        modelSelection,
+        providerThreadId,
+        userMessageId: MessageId.make("message:model-selection-during-run"),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "running",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      },
+    });
+
+    yield* orchestrator.dispatch({
+      type: "thread.model-selection.set",
+      commandId: CommandId.make("set-model-during-run"),
+      threadId,
+      modelSelection: { ...modelSelection, model: "gpt-6" },
+    });
+
+    const providerContext = yield* projections.getThreadProviderContext(threadId);
+    assert.deepEqual(
+      providerContext.providerSessions.map((session) => session.id),
+      [sessionId],
+    );
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("implements a proposed plan that the command projection leaves out", () =>

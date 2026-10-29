@@ -1,6 +1,7 @@
 import { providerUsageLimitResetAt } from "@t3tools/shared/usageLimits";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
@@ -50,6 +51,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import {
   ContextHandoffBackgroundWorkError,
   knownProviderFailureMessage,
@@ -141,6 +143,7 @@ export const layer: Layer.Layer<
   | ProviderAuthService.ProviderAuthService
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
+  | ProviderAdapterRegistry.ProviderAdapterRegistryV2
   | RunExecutionService.RunExecutionServiceV2
   | RuntimePolicy.RuntimePolicyV2
 > = Layer.effect(
@@ -157,6 +160,7 @@ export const layer: Layer.Layer<
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
@@ -651,7 +655,87 @@ export const layer: Layer.Layer<
       const inheritedBackgroundTurnItems = yield* projectionStore
         .getRuntimeRecoveryProjection(projection.thread.id)
         .pipe(Effect.map(selectInheritedBackgroundItems));
-      const providerSessionId = providerThread.providerSessionId;
+      let providerSessionId = providerThread.providerSessionId;
+      const previousRun = latestExecutedRun(
+        projection.runs.filter(
+          (candidate) =>
+            candidate.id !== run.id &&
+            candidate.providerThreadId === providerThread.id &&
+            candidate.startedAt !== null,
+        ),
+      );
+      const existingSessionProjection = projection.providerSessions.find(
+        (candidate) => candidate.id === providerSessionId,
+      );
+      if (
+        previousRun !== null &&
+        previousRun.providerInstanceId === run.providerInstanceId &&
+        !modelSelectionsEqual(previousRun.modelSelection, run.modelSelection) &&
+        existingSessionProjection !== undefined &&
+        existingSessionProjection.status !== "stopped" &&
+        existingSessionProjection.status !== "error" &&
+        !projection.runs.some(
+          (candidate) =>
+            candidate.id !== run.id &&
+            candidate.providerThreadId === providerThread.id &&
+            (candidate.status === "preparing" ||
+              candidate.status === "starting" ||
+              candidate.status === "running" ||
+              candidate.status === "waiting"),
+        )
+      ) {
+        const adapter = yield* providerAdapters
+          .get(run.providerInstanceId)
+          .pipe(Effect.mapError((cause) => new ProviderTurnStartError({ runId, cause })));
+        const selectionTransition = yield* adapter
+          .planSelectionTransition({
+            current: previousRun.modelSelection,
+            target: run.modelSelection,
+            sessionCapabilities: existingSessionProjection.capabilities,
+          })
+          .pipe(Effect.mapError((cause) => new ProviderTurnStartError({ runId, cause })));
+        if (selectionTransition.type === "restart_session") {
+          const detachedAt = yield* DateTime.now;
+          const detachWrite = yield* eventSink
+            .writeIfRunCurrent({
+              threadId: projection.thread.id,
+              runId,
+              activeAttemptId: attempt.id,
+              expectedStatus: "starting",
+              events: [
+                {
+                  id: yield* idAllocator.allocate.event({
+                    threadId: projection.thread.id,
+                    providerSessionId,
+                  }),
+                  type: "provider-session.detached",
+                  threadId: projection.thread.id,
+                  driver: existingSessionProjection.driver,
+                  providerInstanceId: existingSessionProjection.providerInstanceId,
+                  occurredAt: detachedAt,
+                  payload: {
+                    providerSessionId,
+                    detachedAt,
+                    reason: "Restarting the provider session to apply the selected model.",
+                  },
+                },
+              ],
+            })
+            .pipe(Effect.mapError((cause) => new ProviderTurnStartError({ runId, cause })));
+          if (!detachWrite.committed) return;
+          yield* providerSessions
+            .detach({
+              providerSessionId,
+              threadId: projection.thread.id,
+              detail: "Restarting the provider session to apply the selected model.",
+            })
+            .pipe(Effect.mapError((cause) => new ProviderTurnStartError({ runId, cause })));
+          providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: run.providerInstanceId,
+            threadId: projection.thread.id,
+          });
+        }
+      }
       const runControls = makeRunControls({
         threadId: projection.thread.id,
         runId: run.id,
@@ -667,7 +751,7 @@ export const layer: Layer.Layer<
         modelSelection: run.modelSelection,
       });
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
-      const existingSessionProjection = projection.providerSessions.find(
+      const sessionProjectionForStart = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
       const failedRuns = new Map(
@@ -779,9 +863,9 @@ export const layer: Layer.Layer<
           providerSessionId,
           modelSelection: run.modelSelection,
           runtimePolicy: resolvedRuntimePolicy,
-          ...(existingSessionProjection === undefined
+          ...(sessionProjectionForStart === undefined
             ? {}
-            : { resumeFromSession: existingSessionProjection }),
+            : { resumeFromSession: sessionProjectionForStart }),
           ...(providerThread.nativeThreadRef?.nativeId == null
             ? {}
             : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),

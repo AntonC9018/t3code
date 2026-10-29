@@ -73,6 +73,7 @@ import {
   NodeId,
   ProjectId,
   ProviderInstanceId,
+  ProviderSessionId,
 } from "@t3tools/contracts";
 import {
   createOrchestrationV2TurnItemVisibility,
@@ -318,7 +319,9 @@ export type ProjectionPendingUserInputs = Pick<
 export type ProjectionThreadProviderContext = Pick<
   OrchestrationV2ThreadProjection,
   "thread" | "providerSessions" | "providerThreads"
->;
+> & {
+  readonly activeProviderSessionIds: ReadonlyArray<ProviderSessionId>;
+};
 export interface ProjectionRuntimeResponseContext {
   readonly request: OrchestrationV2ThreadProjection["runtimeRequests"][number] | undefined;
   readonly node: OrchestrationV2ThreadProjection["nodes"][number] | undefined;
@@ -4855,6 +4858,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           WHERE binding.thread_id = ${threadId}
           ORDER BY session.updated_at ASC, session.provider_session_id ASC
         `;
+            const activeSessionRows = yield* sql<{ readonly provider_session_id: string }>`
+          SELECT DISTINCT provider_thread.provider_session_id
+          FROM orchestration_v2_projection_runs AS run
+          JOIN orchestration_v2_projection_provider_threads AS provider_thread
+            ON provider_thread.provider_thread_id = run.provider_thread_id
+          WHERE run.thread_id = ${threadId}
+            AND run.status IN ('preparing', 'starting', 'running', 'waiting')
+            AND provider_thread.provider_session_id IS NOT NULL
+          ORDER BY provider_thread.provider_session_id ASC
+        `;
             const threadRows =
               targetInstanceId === undefined
                 ? []
@@ -4876,6 +4889,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 threadId,
               )(sessionRows),
               providerThreads: yield* decodeRows(decodeProviderThreadPayload, threadId)(threadRows),
+              activeProviderSessionIds: activeSessionRows.map((row) =>
+                ProviderSessionId.make(row.provider_session_id),
+              ),
             };
           }),
         )

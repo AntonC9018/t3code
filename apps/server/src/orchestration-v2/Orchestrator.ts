@@ -3853,7 +3853,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
                 )
                 .map((session) => session.id)
-            : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
+            : command.type === "thread.model-selection.set"
+              ? (providerSwitchPlan?.releaseProviderSessionIds ?? []).filter(
+                  (sessionId) => !providerContext?.activeProviderSessionIds.includes(sessionId),
+                )
+              : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
     );
     if (detachSessionIds.size > 0) {
       const liveSessions = (providerContext?.providerSessions ?? []).filter(

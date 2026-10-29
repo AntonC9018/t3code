@@ -137,6 +137,7 @@ it.effect.each([
                         },
                       ] as never)
                     : [],
+                activeProviderSessionIds: [],
               }),
           }),
           Layer.mock(CheckpointServiceV2)({
