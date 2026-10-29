@@ -53,13 +53,16 @@ function DialogClose(props: DialogPrimitive.Close.Props) {
 function DialogBackdrop({
   className,
   variant = "default",
+  animated = true,
   ...props
-}: DialogPrimitive.Backdrop.Props & { variant?: "default" | "media" }) {
+}: DialogPrimitive.Backdrop.Props & { variant?: "default" | "media"; animated?: boolean }) {
   return (
     <DialogPrimitive.Backdrop
       forceRender
       className={cn(
         variant === "media" ? DIALOG_MEDIA_BACKDROP_CLASS : DIALOG_BACKDROP_CLASS,
+        !animated &&
+          "transition-none data-ending-style:opacity-100 data-starting-style:opacity-100",
         className,
       )}
       data-slot="dialog-backdrop"
