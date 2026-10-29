@@ -184,26 +184,23 @@ const nextSpeechBatchBoundary = (pcm: Uint8Array, offset: number) => {
 };
 
 /** Split long recordings into contiguous short requests; each request stays within backend limits. */
-export const transcribeEnvironmentPcm = (
-  prepared: PreparedConnection,
-  pcm: Uint8Array,
-  options: SpeechTranscriptionOptions,
-) =>
-  Effect.gen(function* () {
-    const transcripts: string[] = [];
-    let offset = 0;
-    while (offset < pcm.byteLength) {
-      const end = nextSpeechBatchBoundary(pcm, offset);
-      const result = yield* transcribeEnvironmentPcmRequest(
-        prepared,
-        pcm.subarray(offset, end),
-        options,
-      );
-      if (result.text.trim()) transcripts.push(result.text.trim());
-      offset = end;
-    }
-    return { text: transcripts.join(" ") };
-  });
+export const transcribeEnvironmentPcm = Effect.fn(
+  "clientRuntime.voiceInput.transcribeEnvironmentPcm",
+)(function* (prepared: PreparedConnection, pcm: Uint8Array, options: SpeechTranscriptionOptions) {
+  const transcripts: string[] = [];
+  let offset = 0;
+  while (offset < pcm.byteLength) {
+    const end = nextSpeechBatchBoundary(pcm, offset);
+    const result = yield* transcribeEnvironmentPcmRequest(
+      prepared,
+      pcm.subarray(offset, end),
+      options,
+    );
+    if (result.text.trim()) transcripts.push(result.text.trim());
+    offset = end;
+  }
+  return { text: transcripts.join(" ") };
+});
 
 export const postProcessEnvironmentTranscript = (
   prepared: PreparedConnection,

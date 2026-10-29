@@ -164,6 +164,82 @@ describe("streaming voice input", () => {
     expect(harness.commits).toEqual([]);
   });
 
+  it("replaces raw live text with the postprocessed final transcript", async () => {
+    let currentDraft = draft({ text: "hello world", selection: { start: 6, end: 11 } });
+    let live: VoiceLiveTranscript | null = null;
+    const harness = createHarness(
+      {
+        getTranscriber: () => ({
+          prepare: async () => preparedStreamingTranscription(async () => "raw final words"),
+        }),
+        postProcess: async () => "clean final words",
+        readDraft: () => currentDraft,
+        onStreamingTranscript: (text, _captured, locale) => {
+          const update = resolveLiveTranscriptUpdate(currentDraft, live, text, locale);
+          if (!update) return null;
+          currentDraft = update.draft;
+          live = update.live;
+          return currentDraft;
+        },
+        commitDraft: (text) => {
+          currentDraft = { ...currentDraft, text };
+        },
+      },
+      currentDraft,
+    );
+
+    await harness.controller.start();
+    harness.controller.updateStreamingTranscript("raw partial words", "en-US");
+    await harness.controller.stop();
+
+    expect(currentDraft.text).toBe("hello clean final words");
+    expect(harness.commits).toEqual([]);
+  });
+
+  it("cancel during postprocessing restores the original draft and ignores late cleanup", async () => {
+    let currentDraft = draft({ text: "hello world", selection: { start: 6, end: 11 } });
+    let live: VoiceLiveTranscript | null = null;
+    const cleanup = deferred<string>();
+    const postProcessingStarted = deferred<void>();
+    const harness = createHarness(
+      {
+        getTranscriber: () => ({
+          prepare: async () => preparedStreamingTranscription(async () => "raw final words"),
+        }),
+        postProcess: () => {
+          postProcessingStarted.resolve();
+          return cleanup.promise;
+        },
+        readDraft: () => currentDraft,
+        onStreamingTranscript: (text, _captured, locale) => {
+          const update = resolveLiveTranscriptUpdate(currentDraft, live, text, locale);
+          if (!update) return null;
+          currentDraft = update.draft;
+          live = update.live;
+          return currentDraft;
+        },
+        onStreamingCancel: () => {
+          if (live) currentDraft = resolveLiveTranscriptCancel(currentDraft, live) ?? currentDraft;
+          live = null;
+        },
+      },
+      currentDraft,
+    );
+
+    await harness.controller.start();
+    harness.controller.updateStreamingTranscript("raw partial words", "en-US");
+    const stopping = harness.controller.stop();
+    await postProcessingStarted.promise;
+    expect(currentDraft.text).toBe("hello raw final words");
+
+    harness.controller.cancel();
+    cleanup.resolve("clean final words");
+    await stopping;
+
+    expect(currentDraft.text).toBe("hello world");
+    expect(harness.commits).toEqual([]);
+  });
+
   it("retains failed batch audio and retries it without recording again", async () => {
     const transcribe = vi
       .fn()
