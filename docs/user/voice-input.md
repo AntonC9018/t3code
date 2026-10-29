@@ -1,10 +1,10 @@
 # Voice input
 
 On web and desktop, voice input transcribes speech on a connected T3 Code
-environment. Finish dictation to insert text into your draft for review, or press
-Send during dictation to send once the transcript is ready. Dictation is also
-available in supported comment, pull request review, diff annotation, and desktop
-browser annotation editors.
+environment. Streaming models preview dictation in your draft as you speak;
+finish recording to complete the transcript, or press Send during dictation to
+send once it is ready. Dictation is also available in supported comment, pull
+request review, diff annotation, and desktop browser annotation editors.
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,
 then confirm to transcribe. This uses Apple's on-device speech model instead of
@@ -36,9 +36,11 @@ Start voice input with the microphone control, then finish to complete the trans
 Cancel to discard the recording and preserve your draft. Recording continues until
 you finish or cancel it. On web and desktop, text is inserted at the cursor or replaces
 the selection captured when recording starts. You can keep editing while recording.
-Streaming models update dictated text in the composer as you speak; the tentative ending
-may change as the model hears more. Other models insert their transcript after recording
-stops. Send becomes available once recording starts. Press Send to finish recording and send the completed draft, including
+Streaming models show a tentative transcript as you speak; it may change as the model
+hears more. Handy refreshes its preview about every couple of seconds. When recording
+finishes, the full recording supplies the completed transcript. Other models insert
+their transcript after recording stops. Send becomes available once recording starts.
+Press Send to finish recording and send the completed draft, including
 any existing text, after transcription and optional post-processing. You can also
 press Send while those steps are finishing. In other supported editors, the
 submit or save action works the same way. Cancelling dictation cancels the queued
@@ -67,10 +69,6 @@ shortcut mode lets you tap to keep recording until the next press, or hold the k
 and release to finish. In Voice settings, choose **Hold** to record only while the
 keys are down, or **Toggle** to start and finish with separate presses. Change the
 shortcut in [Keybindings settings](./keybindings.md).
-
-Models marked **Streaming** update the dictated text in the composer while you speak.
-The tentative ending may change as the model hears more. Finish recording to complete
-the text; cancel to discard the recording and preserve your draft.
 
 ## Improve recognition
 

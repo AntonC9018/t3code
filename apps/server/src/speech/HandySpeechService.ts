@@ -2,11 +2,15 @@ import {
   SpeechAcceleration,
   SpeechModelUnloadTimeout,
   SpeechGpuDevice,
+  SPEECH_STREAM_MAX_CHUNK_BYTES,
   type EnvironmentSpeechModel,
   type EnvironmentSpeechStatus,
+  type SpeechStreamText,
+  type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as Duration from "effect/Duration";
+import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import {
   FetchHttpClient,
@@ -16,6 +20,7 @@ import {
   HttpClientResponse,
 } from "effect/http";
 import * as SpeechService from "./SpeechService.ts";
+import { decodeSpeechPcm, MAX_SPEECH_BYTES } from "./SpeechService.ts";
 import {
   applySpeechAliases,
   applySpeechCustomWords,
@@ -50,6 +55,8 @@ const HandyStatus = Schema.Struct({
 });
 const Transcript = Schema.Struct({ text: Schema.String });
 const isSpeechInvalidAudioError = Schema.is(SpeechService.SpeechInvalidAudioError);
+const STREAM_PREVIEW_INTERVAL_BYTES = 2 * 16_000 * Float32Array.BYTES_PER_ELEMENT;
+const STREAM_PREVIEW_MAX_BYTES = 16 * 16_000 * Float32Array.BYTES_PER_ELEMENT;
 
 export const make = Effect.fn("HandySpeechService.make")(function* (url: string, token: string) {
   const origin = yield* Effect.try({
@@ -114,7 +121,7 @@ export const make = Effect.fn("HandySpeechService.make")(function* (url: string,
       modelId: remote.model_id || "handy",
       model: remote.model?.name ?? "Handy",
       size: (remote.model?.size_mb ?? 0) * 1024 * 1024,
-      supportsStreaming: false,
+      supportsStreaming: true,
       supportsTranslation: remote.model?.supports_translation ?? false,
       supportsLanguageDetection: remote.model?.supports_language_detection ?? true,
       languages: remote.model?.supported_languages ?? [],
@@ -141,7 +148,7 @@ export const make = Effect.fn("HandySpeechService.make")(function* (url: string,
         accuracy: model.accuracy_score,
         speed: model.speed_score,
         recommended: model.is_recommended,
-        supportsStreaming: false,
+        supportsStreaming: true,
         supportsTranslation: model.supports_translation,
         supportsLanguageDetection: model.supports_language_detection,
         supportsRecognitionHints: false,
@@ -163,19 +170,57 @@ export const make = Effect.fn("HandySpeechService.make")(function* (url: string,
       "model selection",
       download ? "15 minutes" : "3 minutes",
     ).pipe(Effect.andThen(models));
-  const managedInHandy = (operation: string) =>
-    Effect.fail(
-      new SpeechService.SpeechOperationError({
-        operation,
-        cause: "This setting is managed by Handy.",
-      }),
-    );
   const control = (payload: { action: string; model_id?: string; value?: string }) =>
     request(
       HttpClientRequest.post(`${origin}/control`).pipe(HttpClientRequest.bodyJsonUnsafe(payload)),
       Schema.Unknown,
       "control",
     );
+  const transcribePcm = Effect.fn("HandySpeechService.transcribePcm")(function* (
+    pcmBytes: Uint8Array,
+    options: SpeechTranscriptionOptions,
+  ) {
+    const pcm = yield* Effect.try({
+      try: () => decodeSpeechPcm(pcmBytes),
+      catch: (cause) =>
+        isSpeechInvalidAudioError(cause)
+          ? cause
+          : new SpeechService.SpeechOperationError({ operation: "Handy audio", cause }),
+    });
+    if (pcm.length === 0) return "";
+    const result = yield* request(
+      HttpClientRequest.post(`${origin}/transcribe`).pipe(
+        HttpClientRequest.bodyUint8Array(new Uint8Array(pcm.buffer), "application/octet-stream"),
+        HttpClientRequest.setHeader("X-Speech-Language", options.speechLanguage),
+        HttpClientRequest.setHeader("X-Speech-Translate", String(options.speechTranslateToEnglish)),
+      ),
+      Transcript,
+      "transcription",
+    ).pipe(
+      Effect.catchTags({
+        SpeechOperationError: Effect.fnUntraced(function* (error) {
+          if (error.cause === "Handy is busy.") {
+            return yield* new SpeechService.SpeechBusyError({ operation: "transcription" });
+          }
+          return yield* error;
+        }),
+      }),
+    );
+    const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
+    const corrected = applySpeechAliases(
+      applySpeechCustomWords(result.text, transcriptionCustomWords(options)),
+      dictionary,
+    );
+    return (
+      options.speechRemoveFillerWords
+        ? removeSpeechFillerWords(
+            corrected,
+            options.speechLanguage,
+            options.speechPostProcessingEnabled ? options.speechCorrectionWord : undefined,
+          )
+        : corrected
+    ).trim();
+  });
   return SpeechService.SpeechService.of({
     status,
     models,
@@ -190,55 +235,130 @@ export const make = Effect.fn("HandySpeechService.make")(function* (url: string,
           : Effect.void,
       ),
     ),
-    transcribe: Effect.fn("HandySpeechService.transcribe")(function* (pcmBytes, options) {
-      const pcm = yield* Effect.try({
-        try: () => SpeechService.decodeSpeechPcm(pcmBytes),
-        catch: (cause) =>
-          isSpeechInvalidAudioError(cause)
-            ? cause
-            : new SpeechService.SpeechOperationError({ operation: "Handy audio", cause }),
-      });
-      if (pcm.length === 0) return "";
-      const result = yield* request(
-        HttpClientRequest.post(`${origin}/transcribe`).pipe(
-          HttpClientRequest.bodyUint8Array(new Uint8Array(pcm.buffer), "application/octet-stream"),
-          HttpClientRequest.setHeader("X-Speech-Language", options.speechLanguage),
-          HttpClientRequest.setHeader(
-            "X-Speech-Translate",
-            String(options.speechTranslateToEnglish),
+    transcribe: Effect.fn("HandySpeechService.transcribe")((pcmBytes, options) =>
+      transcribePcm(pcmBytes, options),
+    ),
+    startStream: Effect.fn("HandySpeechService.startStream")(function* (
+      options: SpeechTranscriptionOptions,
+    ) {
+      const serial = yield* Semaphore.make(1);
+      const batchChunks: Uint8Array[] = [];
+      const previewChunks: Uint8Array[] = [];
+      const finalizedTranscripts: string[] = [];
+      let batchBytes = 0;
+      let previewBytes = 0;
+      let lastPreviewBytes = 0;
+      let finalizedPreviewText = "";
+      let revision = 0;
+      let closed = false;
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          closed = true;
+          batchChunks.length = 0;
+          previewChunks.length = 0;
+          finalizedTranscripts.length = 0;
+          batchBytes = 0;
+          previewBytes = 0;
+        }),
+      );
+      const snapshot = (chunks: ReadonlyArray<Uint8Array>, byteLength: number) => {
+        const audio = new Uint8Array(byteLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+          audio.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return audio;
+      };
+      const cumulativePreview = (segmentText: string) =>
+        [...finalizedTranscripts, finalizedPreviewText, segmentText]
+          .filter((text) => text.length > 0)
+          .join(" ");
+      const ensureOpen = () =>
+        closed
+          ? Effect.fail(
+              new SpeechService.SpeechOperationError({
+                operation: "Handy streaming transcription",
+                cause: "Speech stream is closed.",
+              }),
+            )
+          : Effect.void;
+      return {
+        feed: (pcmBytes: Uint8Array) =>
+          serial.withPermits(1)(
+            Effect.gen(function* () {
+              yield* ensureOpen();
+              if (pcmBytes.byteLength > SPEECH_STREAM_MAX_CHUNK_BYTES) {
+                return yield* new SpeechService.SpeechInvalidAudioError({
+                  byteLength: pcmBytes.byteLength,
+                  message: "Speech stream chunk size limit exceeded.",
+                });
+              }
+              const pcm = yield* Effect.try({
+                try: () => decodeSpeechPcm(pcmBytes, true),
+                catch: (cause) =>
+                  isSpeechInvalidAudioError(cause)
+                    ? cause
+                    : new SpeechService.SpeechOperationError({ operation: "Handy audio", cause }),
+              });
+              if (batchBytes + pcm.byteLength > MAX_SPEECH_BYTES) {
+                const completed = yield* transcribePcm(snapshot(batchChunks, batchBytes), options);
+                if (completed.length > 0) finalizedTranscripts.push(completed);
+                batchChunks.length = 0;
+                batchBytes = 0;
+                previewChunks.length = 0;
+                previewBytes = 0;
+                lastPreviewBytes = 0;
+                finalizedPreviewText = "";
+              }
+              const chunk = new Uint8Array(pcm.buffer);
+              batchChunks.push(chunk);
+              batchBytes += pcm.byteLength;
+              previewChunks.push(chunk);
+              previewBytes += pcm.byteLength;
+              let text: SpeechStreamText | null = null;
+              if (
+                previewBytes - lastPreviewBytes >= STREAM_PREVIEW_INTERVAL_BYTES ||
+                previewBytes >= STREAM_PREVIEW_MAX_BYTES
+              ) {
+                const segmentText = yield* transcribePcm(
+                  snapshot(previewChunks, previewBytes),
+                  options,
+                );
+                lastPreviewBytes = previewBytes;
+                const tentative = cumulativePreview(segmentText);
+                if (tentative.length > 0) text = { committed: "", tentative };
+                if (previewBytes >= STREAM_PREVIEW_MAX_BYTES) {
+                  if (segmentText.length > 0) {
+                    finalizedPreviewText = [finalizedPreviewText, segmentText]
+                      .filter((part) => part.length > 0)
+                      .join(" ");
+                  }
+                  previewChunks.length = 0;
+                  previewBytes = 0;
+                  lastPreviewBytes = 0;
+                }
+              }
+              return { revision: ++revision, text };
+            }),
           ),
-        ),
-        Transcript,
-        "transcription",
-      ).pipe(
-        Effect.catchTag(
-          "SpeechOperationError",
-          Effect.fnUntraced(function* (error) {
-            if (error.cause === "Handy is busy.") {
-              return yield* new SpeechService.SpeechBusyError({ operation: "transcription" });
+        finish: serial.withPermits(1)(
+          Effect.gen(function* () {
+            yield* ensureOpen();
+            closed = true;
+            if (batchBytes > 0) {
+              const completed = yield* transcribePcm(snapshot(batchChunks, batchBytes), options);
+              if (completed.length > 0) finalizedTranscripts.push(completed);
             }
-            return yield* error;
+            batchChunks.length = 0;
+            previewChunks.length = 0;
+            batchBytes = 0;
+            previewBytes = 0;
+            return finalizedTranscripts.join(" ");
           }),
         ),
-      );
-      const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
-      const corrected = applySpeechAliases(
-        applySpeechCustomWords(result.text, transcriptionCustomWords(options)),
-        dictionary,
-      );
-      return (
-        options.speechRemoveFillerWords
-          ? removeSpeechFillerWords(
-              corrected,
-              options.speechLanguage,
-              options.speechPostProcessingEnabled ? options.speechCorrectionWord : undefined,
-            )
-          : corrected
-      ).trim();
+      } satisfies SpeechService.SpeechStream;
     }),
-    startStream: Effect.fn("HandySpeechService.startStream")(() =>
-      managedInHandy("Handy streaming"),
-    ),
     cancelDownload: Effect.fn("HandySpeechService.cancelDownload")((modelId) =>
       control({ action: "cancel_download", model_id: modelId }).pipe(Effect.andThen(models)),
     ),
