@@ -1,5 +1,5 @@
-export const SIDEBAR_SWIPE_START_WIDTH_RATIO = 0.5;
-export const SIDEBAR_SWIPE_DISTANCE = 56;
+const SIDEBAR_SWIPE_START_WIDTH_RATIO = 0.5;
+const SIDEBAR_SWIPE_DISTANCE = 56;
 const SIDEBAR_SWIPE_AXIS_RATIO = 1.25;
 
 export function isSidebarSwipeStart(
