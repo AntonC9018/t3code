@@ -32,8 +32,10 @@ import * as SqlError from "effect/sql/SqlError";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
+import { providerUsageLimitResetAt } from "@t3tools/shared/usageLimits";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -325,6 +327,7 @@ export const layer: Layer.Layer<
   | GitVcsDriver.GitVcsDriver
   | IdAllocator.IdAllocatorV2
   | ProjectionStore.ProjectionStoreV2
+  | ProviderRegistry.ProviderRegistry
   | ThreadCommandExecutor.ThreadCommandExecutor
 > = Layer.effect(
   ProviderEventIngestorV2,
@@ -333,6 +336,7 @@ export const layer: Layer.Layer<
     const git = yield* GitVcsDriver.GitVcsDriver;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const analytics = yield* ProviderTurnAnalytics;
     const agentScope = yield* AgentScope;
@@ -708,6 +712,25 @@ export const layer: Layer.Layer<
               const failure = (yield* agentScope.oomKilled(input.threadId))
                 ? { ...input.event.failure, message: "Killed: out of memory.", code: "oom_kill" }
                 : input.event.failure;
+              let failureWithReset = failure;
+              if (failure.class === "usage_limit" && failure.resetAt === undefined) {
+                const providers = yield* providerRegistry.getProviders;
+                const selectedProvider = providers.find(
+                  (provider) => provider.instanceId === input.providerInstanceId,
+                );
+                const nowMs = DateTime.toEpochMillis(occurredAt);
+                let resetAt = providerUsageLimitResetAt(selectedProvider, nowMs);
+                if (resetAt === null && selectedProvider !== undefined) {
+                  const refreshedProviders = yield* providerRegistry
+                    .refreshInstance(input.providerInstanceId)
+                    .pipe(Effect.catchCause(() => Effect.succeed(providers)));
+                  const refreshedProvider = refreshedProviders.find(
+                    (provider) => provider.instanceId === input.providerInstanceId,
+                  );
+                  resetAt = providerUsageLimitResetAt(refreshedProvider, nowMs);
+                }
+                if (resetAt !== null) failureWithReset = { ...failure, resetAt };
+              }
               return [
                 ...dismissed,
                 yield* makeDomainEvent(input, {
@@ -720,7 +743,7 @@ export const layer: Layer.Layer<
                     providerThreadId: input.event.providerThreadId,
                     providerTurnId: input.event.providerTurnId,
                     itemOrdinal: input.event.failureItemOrdinal,
-                    failure,
+                    failure: failureWithReset,
                     ...(input.event.retry === undefined ? {} : { retry: input.event.retry }),
                     ...(input.event.retryStartedAt === undefined
                       ? {}

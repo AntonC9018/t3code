@@ -22,6 +22,7 @@ import {
   RunAttemptId,
   RunId,
   RuntimeRequestId,
+  type ServerProvider,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -46,6 +47,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   makeProviderEventRoutingState,
@@ -68,7 +70,12 @@ const layerGit = GitVcsDriver.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
-const makeLayerTest = <E>(ingestorEventSink: Layer.Layer<EventSink.EventSinkV2, E>) =>
+const makeLayerTest = <E>(
+  ingestorEventSink: Layer.Layer<EventSink.EventSinkV2, E>,
+  providerRegistryLayer: Layer.Layer<ProviderRegistry.ProviderRegistry> = Layer.mock(
+    ProviderRegistry.ProviderRegistry,
+  )({ getProviders: Effect.succeed([]) }),
+) =>
   Layer.mergeAll(
     layerTestDatabase,
     layerTestStores,
@@ -84,9 +91,11 @@ const makeLayerTest = <E>(ingestorEventSink: Layer.Layer<EventSink.EventSinkV2, 
           IdAllocator.layer,
           ThreadCommandExecutor.layer,
           layerGit,
+          providerRegistryLayer,
         ),
       ),
     ),
+    providerRegistryLayer,
   );
 const layerTest = makeLayerTest(layerTestEventSink);
 
@@ -216,6 +225,147 @@ function threadCreatedEvent(
 }
 
 const layer = it.layer(layerTest);
+
+const usageLimitFallbackProvider = (
+  instanceId: ProviderInstanceId,
+  windows: NonNullable<ServerProvider["usageLimits"]>["windows"],
+): ServerProvider => ({
+  instanceId,
+  driver: CODEX_DRIVER,
+  enabled: true,
+  installed: true,
+  version: null,
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-10-01T00:00:00.000Z",
+  models: [],
+  slashCommands: [],
+  skills: [],
+  usageLimits: { checkedAt: "2026-10-01T00:00:00.000Z", windows },
+});
+
+const usageLimitFallbackProviders = Layer.mock(ProviderRegistry.ProviderRegistry)({
+  getProviders: Effect.succeed([
+    usageLimitFallbackProvider(modelSelection.instanceId, [
+      {
+        id: "primary",
+        kind: "session",
+        label: "Session",
+        usedPercent: 100,
+      },
+      {
+        id: "secondary",
+        kind: "weekly",
+        label: "Weekly",
+        usedPercent: 100,
+      },
+    ]),
+    usageLimitFallbackProvider(ProviderInstanceId.make("codex-other"), [
+      {
+        id: "primary",
+        kind: "monthly",
+        label: "Monthly",
+        usedPercent: 100,
+        resetsAt: "2040-01-01T00:00:00.000Z",
+      },
+    ]),
+  ]),
+  refreshInstance: () =>
+    Effect.succeed([
+      usageLimitFallbackProvider(modelSelection.instanceId, [
+        {
+          id: "primary",
+          kind: "session",
+          label: "Session",
+          usedPercent: 100,
+          resetsAt: "2030-01-01T00:00:00.000Z",
+        },
+        {
+          id: "secondary",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 100,
+          resetsAt: "2030-02-01T00:00:00.000Z",
+        },
+      ]),
+      usageLimitFallbackProvider(ProviderInstanceId.make("codex-other"), [
+        {
+          id: "primary",
+          kind: "monthly",
+          label: "Monthly",
+          usedPercent: 100,
+          resetsAt: "2040-01-01T00:00:00.000Z",
+        },
+      ]),
+    ]),
+});
+const layerUsageLimitFallback = it.layer(
+  makeLayerTest(layerTestEventSink, usageLimitFallbackProviders),
+);
+
+layerUsageLimitFallback("ProviderEventIngestor usage-limit reset fallback", (it) => {
+  it.effect("uses selected-instance windows only and preserves an explicit reset", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      yield* eventSink.write({ events: [threadEvent] });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const providerThreadId = idAllocator.derive.providerThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: "usage-limit-fallback",
+      });
+      const normalizeFailure = (nativeTurnId: string, resetAt?: string) =>
+        ingestor.normalize({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event: {
+            type: "turn.terminal",
+            driver: CODEX_DRIVER,
+            providerThreadId,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: CODEX_DRIVER,
+              nativeTurnId,
+            }),
+            runOrdinal: 1,
+            failureItemOrdinal: 101,
+            status: "failed",
+            failure: makeProviderFailure({
+              class: "usage_limit",
+              message: "The provider usage limit was reached.",
+              ...(resetAt === undefined ? {} : { resetAt }),
+            }),
+            threadDisposition: "reusable",
+          },
+        });
+
+      const inferred = yield* normalizeFailure("inferred-reset");
+      const inferredFailure = inferred[0];
+      assert.isDefined(inferredFailure);
+      assert.equal(inferredFailure.type, "turn-item.updated");
+      if (inferredFailure.type !== "turn-item.updated") return;
+      assert.equal(inferredFailure.payload.type, "error");
+      if (inferredFailure.payload.type !== "error") return;
+      assert.equal(inferredFailure.payload.failure.resetAt, "2030-02-01T00:00:00.000Z");
+
+      const explicitReset = "2031-05-06T07:08:09.000Z";
+      const explicit = yield* normalizeFailure("explicit-reset", explicitReset);
+      const explicitFailure = explicit[0];
+      assert.isDefined(explicitFailure);
+      assert.equal(explicitFailure.type, "turn-item.updated");
+      if (explicitFailure.type !== "turn-item.updated") return;
+      assert.equal(explicitFailure.payload.type, "error");
+      if (explicitFailure.payload.type !== "error") return;
+      assert.equal(explicitFailure.payload.failure.resetAt, explicitReset);
+    }),
+  );
+});
 
 it.effect("records accepted billed turn usage once without billing the context window", () => {
   const recorded: Array<Readonly<Record<string, unknown>>> = [];
