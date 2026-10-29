@@ -22,6 +22,11 @@ import { setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
 import * as Schema from "effect/Schema";
 import { announceSidebarVisibility } from "~/lib/accessibilityAnnouncements";
+import {
+  canStartSidebarSwipe,
+  isSidebarSwipeOpenIntent,
+  isSidebarSwipeStart,
+} from "./sidebarSwipe";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
@@ -276,6 +281,45 @@ function Sidebar({
 }) {
   const { isMobile, state, openMobile, setOpenMobile, setMobileSheetElement } = useSidebar();
   const offcanvasCollapsed = !isMobile && collapsible === "offcanvas" && state === "collapsed";
+
+  React.useEffect(() => {
+    if (!isMobile || openMobile || collapsible !== "offcanvas") return;
+
+    let start: { pointerId: number; x: number; y: number } | null = null;
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        event.pointerType !== "touch" ||
+        !event.isPrimary ||
+        !isSidebarSwipeStart(event.clientX, window.innerWidth, side) ||
+        !canStartSidebarSwipe(event.target)
+      ) {
+        start = null;
+        return;
+      }
+      start = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      if (!start || event.pointerId !== start.pointerId) return;
+      if (isSidebarSwipeOpenIntent(start.x, start.y, event.clientX, event.clientY, side)) {
+        start = null;
+        setOpenMobile(true);
+      }
+    };
+    const onPointerEnd = (event: PointerEvent) => {
+      if (start?.pointerId === event.pointerId) start = null;
+    };
+
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("pointermove", onPointerMove, true);
+    document.addEventListener("pointerup", onPointerEnd, true);
+    document.addEventListener("pointercancel", onPointerEnd, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("pointermove", onPointerMove, true);
+      document.removeEventListener("pointerup", onPointerEnd, true);
+      document.removeEventListener("pointercancel", onPointerEnd, true);
+    };
+  }, [collapsible, isMobile, openMobile, setOpenMobile, side]);
 
   const resolvedResizable = resolveSidebarResizable({ collapsible, isMobile, resizable });
   const instanceContextValue: SidebarInstanceContextProps = { side, resizable: resolvedResizable };
