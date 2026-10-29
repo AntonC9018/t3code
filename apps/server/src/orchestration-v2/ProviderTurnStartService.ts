@@ -1,3 +1,5 @@
+import { providerUsageLimitResetAt } from "@t3tools/shared/usageLimits";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -126,6 +128,7 @@ export class ProviderTurnStartServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
+  | ProviderRegistry.ProviderRegistry
   | EventSink.EventSinkV2
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
@@ -144,6 +147,7 @@ export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
+    const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -412,6 +416,14 @@ export const layer: Layer.Layer<
             updatedAt: now,
             ...input.item,
           };
+          const failedSession =
+            status === "failed" && input.item.type === "error"
+              ? projection.providerSessions.find(
+                  (session) =>
+                    session.id === providerThread.providerSessionId &&
+                    session.providerInstanceId === input.providerInstanceId,
+                )
+              : undefined;
           const eventPayloads = [
             { type: "turn-item.updated", payload: item },
             { type: "run.updated", payload: { ...run, status, ...started, completedAt: now } },
@@ -423,6 +435,18 @@ export const layer: Layer.Layer<
               type: "node.updated",
               payload: { ...rootNode, status, ...started, completedAt: now },
             },
+            ...(failedSession === undefined || input.item.type !== "error"
+              ? []
+              : [
+                  {
+                    type: "provider-session.updated" as const,
+                    payload: {
+                      ...failedSession,
+                      lastError: input.item.failure.message,
+                      updatedAt: now,
+                    },
+                  },
+                ]),
             ...(input.providerThreadUpdate === undefined
               ? []
               : [
@@ -710,6 +734,44 @@ export const layer: Layer.Layer<
           ),
         });
         if (!repaired.committed) return;
+      }
+      const quotaNow = yield* DateTime.now;
+      const selectedProvider = (yield* providerRegistry.getProviders).find(
+        (provider) => provider.instanceId === run.providerInstanceId,
+      );
+      const cachedResetAt = providerUsageLimitResetAt(
+        selectedProvider,
+        DateTime.toEpochMillis(quotaNow),
+      );
+      const confirmedProvider =
+        cachedResetAt === null
+          ? undefined
+          : (yield* providerRegistry.refreshInstance(run.providerInstanceId)).find(
+              (provider) => provider.instanceId === run.providerInstanceId,
+            );
+      const quotaResetAt = providerUsageLimitResetAt(
+        confirmedProvider,
+        DateTime.toEpochMillis(yield* DateTime.now),
+      );
+      if (quotaResetAt !== null) {
+        yield* settleRunBeforeStart({
+          signal: "subscription-usage-limit",
+          status: "failed",
+          now: quotaNow,
+          providerInstanceId: run.providerInstanceId,
+          itemProviderThreadId: providerThread.id,
+          item: {
+            type: "error",
+            title: "Usage limit reached",
+            failure: makeProviderFailure({
+              message:
+                "This subscription has no quota remaining. Schedule this message to continue at reset.",
+              class: "usage_limit",
+              resetAt: quotaResetAt,
+            }),
+          },
+        });
+        return;
       }
       const sessionResult = yield* Effect.result(
         providerSessions.open({

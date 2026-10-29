@@ -17,6 +17,7 @@ import {
   ThreadId,
   ProjectId,
   type OrchestrationV2ThreadProjection,
+  type ServerProvider,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -38,6 +39,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
@@ -131,6 +133,7 @@ function startWithMissingWorktree(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.succeed(FileSystem.FileSystem, {
           exists: () => Effect.succeed(false),
           realPath: (target: string) =>
@@ -263,6 +266,8 @@ it.each([
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly providers?: ReadonlyArray<ServerProvider>;
+  readonly refreshedProviders?: ReadonlyArray<ServerProvider>;
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
   readonly workspaceRoot?: string;
@@ -698,6 +703,10 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed(input.providers ?? []),
+          refreshInstance: () => Effect.succeed(input.refreshedProviders ?? input.providers ?? []),
+        }),
         layerWorktreeLocation(input.worktreesDir),
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
@@ -1253,6 +1262,118 @@ effectIt.effect("starts another provider in the same checkout while a turn is pe
     yield* Deferred.succeed(releaseTurn, undefined);
     yield* Fiber.join(pending);
   }),
+);
+
+effectIt.effect.each([
+  {
+    state: "new conversation",
+    previousNativeSession: false,
+    availableAfterRefresh: false,
+    otherExhausted: false,
+  },
+  {
+    state: "existing conversation",
+    previousNativeSession: true,
+    availableAfterRefresh: false,
+    otherExhausted: false,
+  },
+  {
+    state: "refilled subscription",
+    previousNativeSession: false,
+    availableAfterRefresh: true,
+    otherExhausted: false,
+  },
+  {
+    state: "another exhausted subscription",
+    previousNativeSession: false,
+    availableAfterRefresh: true,
+    otherExhausted: true,
+  },
+])(
+  "offers recovery only for confirmed selected exhaustion: $state",
+  ({ previousNativeSession, availableAfterRefresh, otherExhausted }) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const resetAt = DateTime.formatIso(DateTime.makeUnsafe(DateTime.toEpochMillis(now) + 60_000));
+      const selected = {
+        instanceId: ProviderInstanceId.make("codex-personal"),
+        driver: ProviderDriverKind.make("codex"),
+        enabled: true,
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: DateTime.formatIso(now),
+        version: null,
+        models: [],
+        slashCommands: [],
+        skills: [],
+        usageLimits: {
+          checkedAt: DateTime.formatIso(now),
+          windows: [
+            {
+              id: "primary",
+              kind: "session",
+              label: "Session",
+              usedPercent: 100,
+              resetsAt: resetAt,
+            },
+          ],
+        },
+      } as const;
+      const available = { ...selected, usageLimits: { ...selected.usageLimits, windows: [] } };
+      const harness = makeLocalCommandHarness({
+        text: "Please implement this new task",
+        previousNativeSession,
+        providers: [
+          {
+            ...selected,
+            instanceId: ProviderInstanceId.make("codex-other"),
+            usageLimits: otherExhausted ? selected.usageLimits : available.usageLimits,
+          },
+          otherExhausted ? available : selected,
+        ],
+        refreshedProviders: [availableAfterRefresh ? available : selected],
+        openFailure: new Error("startup fixture failure"),
+      });
+      if (previousNativeSession) {
+        const current = harness.projection();
+        harness.setProjection({
+          ...current,
+          thread: { ...current.thread, providerInstanceId: harness.newInstanceId },
+          providerSessions: [
+            {
+              id: current.providerThreads.at(-1)!.providerSessionId!,
+              driver: ProviderDriverKind.make("codex"),
+              providerInstanceId: harness.newInstanceId,
+              status: "error",
+              cwd: "/tmp/native-account-command",
+              model: null,
+              capabilities: CodexProviderCapabilitiesV2,
+              createdAt: now,
+              updatedAt: now,
+              lastError: "An older provider error",
+            },
+          ],
+        });
+      }
+      yield* harness.start;
+      expect(harness.open).toHaveBeenCalledTimes(availableAfterRefresh ? 1 : 0);
+      expect(harness.projection().turnItems).toMatchObject([
+        {
+          type: "error",
+          failure: availableAfterRefresh
+            ? { class: "provider_error" }
+            : { class: "usage_limit", resetAt },
+        },
+      ]);
+      expect(harness.projection().messages.at(-1)?.text).toBe("Please implement this new task");
+      if (previousNativeSession) {
+        expect(ProjectionStore.threadShellFromProjection(harness.projection())).toMatchObject({
+          lastErrorClass: "usage_limit",
+          usageLimitResetAt: resetAt,
+        });
+      }
+    }),
 );
 
 effectIt.effect("terminalizes a starting run when its provider session cannot open", () =>

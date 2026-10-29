@@ -67,6 +67,29 @@ function providersWithLimits(providers: readonly ServerProvider[]): readonly Ser
   );
 }
 
+/** Only shared subscription windows can block every model on an instance. */
+export function providerUsageLimitResetAt(
+  provider: ServerProvider | undefined,
+  nowMs: number,
+): string | null {
+  if (!provider?.enabled || !provider.installed || provider.usageLimits?.unavailable) return null;
+  const ids =
+    provider.driver === "codex"
+      ? ["primary", "secondary", "individual"]
+      : provider.driver === "claudeAgent"
+        ? ["five_hour", "seven_day"]
+        : [];
+  const exhausted = (provider.usageLimits?.windows ?? []).filter(
+    (window) =>
+      ids.includes(window.id) &&
+      window.usedPercent >= 100 &&
+      (window.resetsAt === undefined || Date.parse(window.resetsAt) > nowMs),
+  );
+  if (exhausted.length === 0 || exhausted.some((window) => !window.resetsAt)) return null;
+  const resetMs = Math.max(...exhausted.map((window) => Date.parse(window.resetsAt!)));
+  return Number.isFinite(resetMs) ? DateTime.formatIso(DateTime.makeUnsafe(resetMs)) : null;
+}
+
 export type LimitPresentations = ReadonlyMap<
   EnvironmentId,
   {

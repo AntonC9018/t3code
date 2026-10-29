@@ -3,6 +3,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderUsageWindow,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -20,6 +21,7 @@ import {
   paceOf,
   paceRemainingPercent,
   usesChatGptSharing,
+  providerUsageLimitResetAt,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -1288,5 +1290,67 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("selected subscription recovery", () => {
+  const resetAt = "2026-09-03T14:00:00.000Z";
+  const laterResetAt = "2026-09-06T12:00:00.000Z";
+  const session = { ...window, id: "primary", usedPercent: 100, resetsAt: resetAt };
+  const weekly = { ...session, id: "secondary", kind: "weekly" as const, resetsAt: laterResetAt };
+  const selected = (windows: readonly ServerProviderUsageWindow[]) =>
+    provider({ usageLimits: { checkedAt: "2026-09-03T12:00:00.000Z", windows } });
+
+  it("waits for every exhausted window without borrowing another account's reset", () => {
+    expect(providerUsageLimitResetAt(selected([session, weekly]), now)).toBe(laterResetAt);
+    expect(
+      providerUsageLimitResetAt(selected([session, { ...weekly, usedPercent: 20 }]), now),
+    ).toBe(resetAt);
+    expect(providerUsageLimitResetAt(undefined, now)).toBeNull();
+  });
+
+  it.each([
+    { name: "available", windows: [{ ...session, usedPercent: 99 }] },
+    { name: "already reset", windows: [{ ...session, resetsAt: "2026-09-03T11:00:00.000Z" }] },
+    {
+      name: "missing clock",
+      windows: [{ id: "primary", kind: "session" as const, label: "Session", usedPercent: 100 }],
+    },
+    {
+      name: "unknown clock on another blocking window",
+      windows: [
+        session,
+        { id: "secondary", kind: "weekly" as const, label: "Weekly", usedPercent: 100 },
+      ],
+    },
+    { name: "model-specific allowance", windows: [{ ...session, id: "spark" }] },
+  ])("does not invent a reset for $name", ({ windows }) => {
+    expect(
+      providerUsageLimitResetAt(
+        provider({ usageLimits: { checkedAt: "2026-09-03T12:00:00.000Z", windows } }),
+        now,
+      ),
+    ).toBeNull();
+  });
+
+  it("does not block unsupported providers or failed probes with retained bars", () => {
+    expect(
+      providerUsageLimitResetAt(
+        { ...selected([session]), driver: ProviderDriverKind.make("cursor") },
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      providerUsageLimitResetAt(
+        provider({
+          usageLimits: {
+            checkedAt: "2026-09-03T12:00:00.000Z",
+            windows: [session],
+            unavailable: { reason: "probeFailed" },
+          },
+        }),
+        now,
+      ),
+    ).toBeNull();
   });
 });
