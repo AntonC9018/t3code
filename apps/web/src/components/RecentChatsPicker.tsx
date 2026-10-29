@@ -79,6 +79,7 @@ function useRecentChatVisitTracking() {
   const environmentId = routeTarget?.kind === "server" ? routeTarget.threadRef.environmentId : null;
   const threadId = routeTarget?.kind === "server" ? routeTarget.threadRef.threadId : null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records committed route visits in the persisted recent-chat history
   useEffect(() => {
     if (environmentId === null || threadId === null) return;
     recordRecentChatVisit(scopeThreadRef(environmentId, threadId));
@@ -104,10 +105,12 @@ export function RecentChatsPicker() {
 
   useRecentChatVisitTracking();
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to requests from command-palette actions
   useEffect(() => onOpenRecentChats(() => setOpen(true)), []);
 
   const toggleOpen = useEffectEvent(() => setOpen((current) => !current));
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the capture-phase shortcut before focused widgets consume it
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (
@@ -256,6 +259,7 @@ function RecentChatsDialog(props: {
 
   return (
     <CommandDialogPopup
+      animated={false}
       aria-label="Recent chats"
       className="overflow-hidden"
       data-recent-chats-picker="true"

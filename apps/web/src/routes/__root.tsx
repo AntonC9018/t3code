@@ -150,6 +150,7 @@ function RootRouteBranch() {
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
   const registerCompanion = useAtomCommand(connectPairing, { reportFailure: false });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- submits companion pairing URLs to the connection service after primary authentication
   useEffect(() => {
     if (!primaryEnvironmentAuthenticated) return;
     for (const pairingUrl of takePendingCompanionPairingUrls()) {
@@ -228,6 +229,7 @@ function RootRouteBranch() {
         <SshPasswordPromptDialog />
         <SnapShotCoordinator />
         <ReopenClosedViewShortcut />
+        <RecentChatsPicker />
         <ConfirmDialogHost />
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />

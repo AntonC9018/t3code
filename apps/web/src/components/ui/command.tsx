@@ -25,10 +25,19 @@ function CommandDialogTrigger(props: CommandDialogPrimitive.Trigger.Props) {
   return <CommandDialogPrimitive.Trigger data-slot="command-dialog-trigger" {...props} />;
 }
 
-function CommandDialogBackdrop({ className, ...props }: CommandDialogPrimitive.Backdrop.Props) {
+function CommandDialogBackdrop({
+  className,
+  animated = true,
+  ...props
+}: CommandDialogPrimitive.Backdrop.Props & { animated?: boolean }) {
   return (
     <CommandDialogPrimitive.Backdrop
-      className={cn(DIALOG_BACKDROP_CLASS, className)}
+      className={cn(
+        DIALOG_BACKDROP_CLASS,
+        !animated &&
+          "transition-none data-ending-style:opacity-100 data-starting-style:opacity-100",
+        className,
+      )}
       data-slot="command-dialog-backdrop"
       {...props}
     />
@@ -52,14 +61,16 @@ function CommandDialogPopup({
   className,
   children,
   onBackdropPointerDown,
+  animated = true,
   ...props
 }: CommandDialogPrimitive.Popup.Props & {
   onBackdropPointerDown?: React.PointerEventHandler<HTMLDivElement>;
+  animated?: boolean;
 }) {
   const popupRef = useRef<HTMLDivElement>(null);
   return (
     <CommandDialogPortal>
-      <CommandDialogBackdrop onPointerDown={onBackdropPointerDown} />
+      <CommandDialogBackdrop animated={animated} onPointerDown={onBackdropPointerDown} />
       <CommandDialogViewport>
         <CommandDialogPrimitive.Popup
           // The first tabbable can be an input addon, such as a submenu's Back button.
@@ -68,6 +79,8 @@ function CommandDialogPopup({
           className={cn(
             DIALOG_POPUP_CLASS,
             "pointer-events-auto max-h-105 max-w-xl text-foreground",
+            !animated &&
+              "transition-none will-change-auto data-ending-style:scale-100 data-starting-style:scale-100 data-ending-style:opacity-100 data-starting-style:opacity-100",
             className,
           )}
           data-slot="command-dialog-popup"
