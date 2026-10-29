@@ -498,6 +498,64 @@ describe("mobile composer drafts", () => {
     expect(appAtomRegistry.get(composerDraftsAtom)[key]).toBeUndefined();
   });
 
+  it("keeps a newer pending pick when an older server acknowledgment arrives", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const threadId = ThreadId.make("thread-1");
+    const key = `${environmentId}:${threadId}`;
+    const h = modelReconciliationHarness(environmentId, threadId, "cached");
+    const acknowledgedPick = h.model();
+    const newerPick = { ...acknowledgedPick, model: "newer-local-model" };
+
+    updateComposerDraftSettings(key, { modelSelection: acknowledgedPick });
+    updateComposerDraftSettings(key, { modelSelection: newerPick });
+    h.update({ modelSelection: acknowledgedPick }, "live");
+
+    expect(getComposerDraftSnapshot(key)).toMatchObject({
+      modelSelection: newerPick,
+      modelSelectionPending: true,
+    });
+
+    h.update({ modelSelection: newerPick });
+    expect(appAtomRegistry.get(composerDraftsAtom)[key]).toBeUndefined();
+  });
+
+  it("clears persisted stale picks but retains persisted picks marked pending", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const threadId = ThreadId.make("thread-1");
+    const key = `${environmentId}:${threadId}`;
+    const pick = { instanceId: ProviderInstanceId.make("codex"), model: "old-persisted-model" };
+    const restoredStale = decodePersistedComposerState({
+      schemaVersion: 1,
+      drafts: { [key]: { text: "unsent", attachments: [], modelSelection: pick } },
+    }).drafts[key]!;
+    appAtomRegistry.set(composerDraftsAtom, {
+      [key]: restoredStale,
+    });
+    const h = modelReconciliationHarness(environmentId, threadId);
+
+    expect(getComposerDraftSnapshot(key)).toMatchObject({ text: "unsent" });
+    expect(getComposerDraftSnapshot(key).modelSelection).toBeUndefined();
+    expect(getComposerDraftSnapshot(key).modelSelectionPending).toBeUndefined();
+
+    const restoredPending = decodePersistedComposerState({
+      schemaVersion: 1,
+      drafts: {
+        [key]: {
+          text: "unsent",
+          attachments: [],
+          modelSelection: pick,
+          modelSelectionPending: true,
+        },
+      },
+    }).drafts[key]!;
+    appAtomRegistry.set(composerDraftsAtom, { [key]: restoredPending });
+    expect(getComposerDraftSnapshot(key).modelSelection).toEqual(pick);
+    expect(getComposerDraftSnapshot(key).modelSelectionPending).toBe(true);
+    h.update({ modelSelection: pick });
+    expect(getComposerDraftSnapshot(key).modelSelection).toBeUndefined();
+    expect(getComposerDraftSnapshot(key).modelSelectionPending).toBeUndefined();
+  });
+
   it("releases an inactive thread pick only after its queued model becomes durable", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const threadId = ThreadId.make("thread-1");
@@ -535,7 +593,14 @@ describe("mobile composer drafts", () => {
       status: "running",
       modelSelection: { ...pick, options: [{ id: "fastMode", value: false }] },
     });
-    expect(getComposerDraftSnapshot(key)).toEqual({ ...before, modelSelection: undefined });
+    const durable = getComposerDraftSnapshot(key);
+    expect(durable).toMatchObject({
+      text: before.text,
+      runtimeMode: before.runtimeMode,
+      interactionMode: before.interactionMode,
+    });
+    expect(durable.modelSelection).toBeUndefined();
+    expect(durable.modelSelectionPending).toBeUndefined();
     expect(getComposerDraftSnapshot(remoteKey)).toEqual(remoteBefore);
 
     h.update({
@@ -545,7 +610,8 @@ describe("mobile composer drafts", () => {
       },
     });
     expect(getComposerDraftSnapshot(key).modelSelection ?? h.model()).toEqual(h.model());
-    expect(getComposerDraftSnapshot(key)).toEqual({ ...before, modelSelection: undefined });
+    expect(getComposerDraftSnapshot(key).modelSelection).toBeUndefined();
+    expect(getComposerDraftSnapshot(key).modelSelectionPending).toBeUndefined();
   });
 
   it("retains an unavailable provider pick through differing durable model updates", () => {

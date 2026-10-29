@@ -364,6 +364,8 @@ export interface ComposerDraft {
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly importedShareIds?: ReadonlyArray<string>;
   readonly modelSelection?: ModelSelection;
+  /** True while a local model choice is waiting for its thread metadata acknowledgment. */
+  readonly modelSelectionPending?: boolean;
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
@@ -429,6 +431,7 @@ const ComposerDraftSchema = Schema.Struct({
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   importedShareIds: Schema.optional(Schema.Array(Schema.String)),
   modelSelection: Schema.optional(ModelSelectionSchema),
+  modelSelectionPending: Schema.optional(Schema.Boolean),
   runtimeMode: Schema.optional(RuntimeModeSchema),
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
@@ -677,7 +680,7 @@ export function decodePersistedComposerState(value: unknown): {
               draft.runtimeMode === undefined &&
               draft.interactionMode === undefined &&
               draft.workspaceSelection === undefined
-              ? { ...draft, modelSelection: undefined }
+              ? { ...draft, modelSelection: undefined, modelSelectionPending: undefined }
               : draft,
             now,
           ),
@@ -1482,9 +1485,14 @@ export function updateComposerDraftSettings(
   settings: Partial<ComposerDraftSettingsUpdate>,
 ): void {
   updateComposerDrafts((current) => {
+    const previous = normalizeDraft(current[draftKey]);
+    const modelSelectionWasUpdated = Object.hasOwn(settings, "modelSelection");
     const draft = {
-      ...normalizeDraft(current[draftKey]),
+      ...previous,
       ...settings,
+      ...(modelSelectionWasUpdated
+        ? { modelSelectionPending: settings.modelSelection !== undefined }
+        : {}),
     };
     return withComposerDraft(current, draftKey, draft);
   });
@@ -1513,21 +1521,19 @@ export function subscribeComposerDraftModelReconciliation(input: {
       if (!draft.modelSelection || isNewTaskDraftKey(key) || isQueuedEditDraftKey(key)) continue;
       const ref = parseScopedThreadKey(key);
       if (!ref || !threadKeys.has(key)) continue;
-      const thread = get(input.threadShellAtom(ref));
-      if (!thread || !draftModelPickMatchesThread(draft.modelSelection, thread.modelSelection))
-        continue;
+      if (!get(input.threadShellAtom(ref))) continue;
       // Status and selection must come from the same emission; derived atoms can update apart.
       const shell = AsyncResult.getOrElse(get(input.shellStateAtom(ref.environmentId)), () => null);
       if (shell?.status !== "live") continue;
       const authoritativeThread = Option.getOrNull(shell.snapshot)?.threads.find(
         (candidate) => candidate.id === ref.threadId,
       );
-      if (
-        authoritativeThread &&
-        draftModelPickMatchesThread(draft.modelSelection, authoritativeThread.modelSelection)
-      ) {
-        matches.push([key, draft]);
-      }
+      if (!authoritativeThread) continue;
+      const acknowledged = draftModelPickMatchesThread(
+        draft.modelSelection,
+        authoritativeThread.modelSelection,
+      );
+      if (!draft.modelSelectionPending || acknowledged) matches.push([key, draft]);
     }
     return matches;
   });
@@ -1539,7 +1545,11 @@ export function subscribeComposerDraftModelReconciliation(input: {
         let next = current;
         for (const [key, matchedDraft] of matches) {
           if (next[key] !== matchedDraft) continue;
-          const { modelSelection: _modelSelection, ...draft } = matchedDraft;
+          const {
+            modelSelection: _modelSelection,
+            modelSelectionPending: _modelSelectionPending,
+            ...draft
+          } = matchedDraft;
           next = withComposerDraft(next, key, draft);
         }
         return next;
@@ -1569,6 +1579,7 @@ export function clearComposerDraftContentState(
     importedShareIds: _importedShareIds,
     context: _context,
     modelSelection,
+    modelSelectionPending,
     workspaceSelection,
     project: _project,
     ...retained
@@ -1576,6 +1587,11 @@ export function clearComposerDraftContentState(
   const draft = {
     ...retained,
     ...(options?.clearModelSelection || modelSelection === undefined ? {} : { modelSelection }),
+    ...(options?.clearModelSelection || modelSelection === undefined
+      ? {}
+      : modelSelectionPending
+        ? { modelSelectionPending }
+        : {}),
     ...(options?.clearWorkspaceSelection || workspaceSelection === undefined
       ? {}
       : { workspaceSelection }),
