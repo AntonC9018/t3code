@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { vi } from "vite-plus/test";
 
 import { makePendingClaudeProvider } from "./ClaudeProvider.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
 import {
   ClaudeAgentSdkQueryRunner,
   layerQueryRunner,
@@ -38,6 +39,7 @@ it.effect("prepares the query runner without loading an unused SDK", () =>
   }).pipe(
     Effect.provide(
       layerQueryRunner.pipe(
+        Layer.provide(PortScanner.layerTest),
         Layer.provide(
           Layer.succeed(ProviderEventLoggers, { native: undefined, canonical: undefined }),
         ),

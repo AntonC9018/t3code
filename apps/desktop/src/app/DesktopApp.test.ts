@@ -210,15 +210,7 @@ const makeStartupHarness = (scenario: StartupScenario, hydrateShellEnvironment: 
           attachGuest: () => () => {},
         }),
       ),
-      Layer.effect(
-        DesktopState.DesktopState,
-        Effect.gen(function* () {
-          return DesktopState.DesktopState.of({
-            backendReady: yield* Ref.make(false),
-            quitting: yield* Ref.make(false),
-          });
-        }),
-      ),
+      DesktopState.layer,
       Layer.mock(DesktopWindow.DesktopWindow, {
         createMainIfBackendReady: Effect.void,
       }),

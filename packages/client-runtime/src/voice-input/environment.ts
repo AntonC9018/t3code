@@ -73,11 +73,11 @@ export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
     prepared,
     method: "POST",
     path: (urls) => {
-      const ticketUrl = urls.webSocketTicket();
+      const ticketUrl = urls.webSocketTicketFor({ params: { use: "media" } });
       endpoint = new URL(ticketUrl).origin;
       return ticketUrl;
     },
-    run: ({ client, headers }) => client.webSocketTicket({ headers }),
+    run: ({ client, headers }) => client.webSocketTicketFor({ headers, params: { use: "media" } }),
   }).pipe(
     Effect.map(({ ticket }) => {
       const url = new URL(SPEECH_STREAM_PATH, endpoint);

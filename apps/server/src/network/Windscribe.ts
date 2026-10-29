@@ -45,7 +45,7 @@ const make = Effect.gen(function* () {
         return unavailable;
     }
   });
-  const safeRead = read().pipe(Effect.catch(() => Effect.succeed(unavailable)));
+  const safeRead = read().pipe(Effect.orElseSucceed(() => unavailable));
   const setEnabled = Effect.fn("Windscribe.setEnabled")(function* ({
     enabled,
   }: {

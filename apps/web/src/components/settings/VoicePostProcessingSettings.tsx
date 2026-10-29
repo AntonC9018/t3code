@@ -7,7 +7,6 @@ import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { useEnvironmentProviders } from "../../state/environments";
@@ -41,12 +40,10 @@ export function VoicePostProcessingSettings() {
   const textGenerationProviders = providers.filter(
     (provider) => provider.supportsTextGeneration !== false,
   );
-  const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(
-      deriveProviderInstanceEntries(textGenerationProviders),
-      settings,
-      target?.projectId ?? null,
-    ),
+  const instanceEntries = applyProviderInstanceSettings(
+    deriveProviderInstanceEntries(textGenerationProviders),
+    settings,
+    target?.projectId ?? null,
   );
   const hasTextGenerationProvider = instanceEntries.some(
     (entry) => entry.enabled && entry.isAvailable,

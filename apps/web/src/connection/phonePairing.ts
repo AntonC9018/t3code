@@ -59,7 +59,7 @@ async function companionAuth<A, E>(
         Effect.map(Option.getOrThrow),
       );
       if (prepared.httpAuthorization?._tag !== "Bearer") {
-        return yield* Effect.fail(new PhonePairingConnectionError());
+        return yield* new PhonePairingConnectionError();
       }
       const token = prepared.httpAuthorization.token;
       const client = yield* makeEnvironmentHttpApiGroupClient(prepared.httpBaseUrl, "auth");

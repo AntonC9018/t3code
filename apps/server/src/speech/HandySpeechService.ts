@@ -179,8 +179,10 @@ export const make = Effect.fn("HandySpeechService.make")(function* (url: string,
   return SpeechService.SpeechService.of({
     status,
     models,
-    downloadModel: (modelId) => select(modelId, true),
-    selectModel: (modelId) => select(modelId, false),
+    downloadModel: Effect.fn("HandySpeechService.downloadModel")((modelId) =>
+      select(modelId, true),
+    ),
+    selectModel: Effect.fn("HandySpeechService.selectModel")((modelId) => select(modelId, false)),
     prepareModel: status.pipe(
       Effect.flatMap((snapshot) =>
         snapshot.supported && snapshot.state === "missing-model"
@@ -188,64 +190,66 @@ export const make = Effect.fn("HandySpeechService.make")(function* (url: string,
           : Effect.void,
       ),
     ),
-    transcribe: (pcmBytes, options) =>
-      Effect.gen(function* () {
-        const pcm = yield* Effect.try({
-          try: () => SpeechService.decodeSpeechPcm(pcmBytes),
-          catch: (cause) =>
-            isSpeechInvalidAudioError(cause)
-              ? cause
-              : new SpeechService.SpeechOperationError({ operation: "Handy audio", cause }),
-        });
-        if (pcm.length === 0) return "";
-        const result = yield* request(
-          HttpClientRequest.post(`${origin}/transcribe`).pipe(
-            HttpClientRequest.bodyUint8Array(
-              new Uint8Array(pcm.buffer),
-              "application/octet-stream",
-            ),
-            HttpClientRequest.setHeader("X-Speech-Language", options.speechLanguage),
-            HttpClientRequest.setHeader(
-              "X-Speech-Translate",
-              String(options.speechTranslateToEnglish),
-            ),
+    transcribe: Effect.fn("HandySpeechService.transcribe")(function* (pcmBytes, options) {
+      const pcm = yield* Effect.try({
+        try: () => SpeechService.decodeSpeechPcm(pcmBytes),
+        catch: (cause) =>
+          isSpeechInvalidAudioError(cause)
+            ? cause
+            : new SpeechService.SpeechOperationError({ operation: "Handy audio", cause }),
+      });
+      if (pcm.length === 0) return "";
+      const result = yield* request(
+        HttpClientRequest.post(`${origin}/transcribe`).pipe(
+          HttpClientRequest.bodyUint8Array(new Uint8Array(pcm.buffer), "application/octet-stream"),
+          HttpClientRequest.setHeader("X-Speech-Language", options.speechLanguage),
+          HttpClientRequest.setHeader(
+            "X-Speech-Translate",
+            String(options.speechTranslateToEnglish),
           ),
-          Transcript,
-          "transcription",
-        ).pipe(
-          Effect.catchTag(
-            "SpeechOperationError",
-            Effect.fnUntraced(function* (error) {
-              if (error.cause === "Handy is busy.") {
-                return yield* new SpeechService.SpeechBusyError({ operation: "transcription" });
-              }
-              return yield* error;
-            }),
-          ),
-        );
-        const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
-        const corrected = applySpeechAliases(
-          applySpeechCustomWords(result.text, transcriptionCustomWords(options)),
-          dictionary,
-        );
-        return (
-          options.speechRemoveFillerWords
-            ? removeSpeechFillerWords(
-                corrected,
-                options.speechLanguage,
-                options.speechPostProcessingEnabled ? options.speechCorrectionWord : undefined,
-              )
-            : corrected
-        ).trim();
-      }),
-    startStream: () => managedInHandy("Handy streaming"),
-    cancelDownload: (modelId) =>
+        ),
+        Transcript,
+        "transcription",
+      ).pipe(
+        Effect.catchTag(
+          "SpeechOperationError",
+          Effect.fnUntraced(function* (error) {
+            if (error.cause === "Handy is busy.") {
+              return yield* new SpeechService.SpeechBusyError({ operation: "transcription" });
+            }
+            return yield* error;
+          }),
+        ),
+      );
+      const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
+      const corrected = applySpeechAliases(
+        applySpeechCustomWords(result.text, transcriptionCustomWords(options)),
+        dictionary,
+      );
+      return (
+        options.speechRemoveFillerWords
+          ? removeSpeechFillerWords(
+              corrected,
+              options.speechLanguage,
+              options.speechPostProcessingEnabled ? options.speechCorrectionWord : undefined,
+            )
+          : corrected
+      ).trim();
+    }),
+    startStream: Effect.fn("HandySpeechService.startStream")(() =>
+      managedInHandy("Handy streaming"),
+    ),
+    cancelDownload: Effect.fn("HandySpeechService.cancelDownload")((modelId) =>
       control({ action: "cancel_download", model_id: modelId }).pipe(Effect.andThen(models)),
-    removeModel: (modelId) =>
+    ),
+    removeModel: Effect.fn("HandySpeechService.removeModel")((modelId) =>
       control({ action: "remove_model", model_id: modelId }).pipe(Effect.andThen(models)),
-    updateAcceleration: (acceleration) =>
+    ),
+    updateAcceleration: Effect.fn("HandySpeechService.updateAcceleration")((acceleration) =>
       control({ action: "acceleration", value: acceleration }).pipe(Effect.andThen(status)),
-    updateModelUnloadTimeout: (timeout) =>
+    ),
+    updateModelUnloadTimeout: Effect.fn("HandySpeechService.updateModelUnloadTimeout")((timeout) =>
       control({ action: "unload_timeout", value: timeout }).pipe(Effect.andThen(status)),
+    ),
   });
 });

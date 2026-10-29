@@ -94,7 +94,6 @@ async function pendingRequestsHarness(projection: OrchestrationV2ThreadProjectio
     const state = usePendingThreadRequests({
       environmentId,
       activeThreadId: projection.thread.id,
-      activeThread: projection.thread,
       serverProjection: loading ? null : projection,
       supportsQuestionAttachments: false,
       composerDraftTarget: { environmentId, threadId: projection.thread.id },

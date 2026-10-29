@@ -122,7 +122,7 @@ describe("DesktopWslBackend", () => {
       snapshot: primarySnapshot,
     });
     const poolLayer = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
-      get: () => Effect.succeed(Option.some(primary)),
+      get: () => Effect.succeedSome(primary),
       list: Effect.sync(() => (registeredSpec ? [primary, wsl] : [primary])),
       primary: Effect.succeed(primary),
       register: (spec) =>

@@ -76,19 +76,21 @@ export const layer = Layer.effect(
       Effect.forEach(bridges, (bridge) => bridge.stop, { discard: true }),
     );
     return DesktopWslLoopbackBridge.of({
-      start: (target) =>
-        start(target).pipe(
-          Effect.map((bridge) => {
-            bridges.add(bridge);
-            return {
-              ...bridge,
-              stop: bridge.stop.pipe(
-                Effect.andThen(Effect.sync(() => bridges.delete(bridge))),
-                Effect.asVoid,
-              ),
-            };
-          }),
-        ),
+      start: Effect.fn("desktop.wslLoopbackBridge.start")(
+        function (target) {
+          return start(target);
+        },
+        Effect.map((bridge) => {
+          bridges.add(bridge);
+          return {
+            ...bridge,
+            stop: bridge.stop.pipe(
+              Effect.andThen(Effect.sync(() => bridges.delete(bridge))),
+              Effect.asVoid,
+            ),
+          };
+        }),
+      ),
     });
   }),
 );
