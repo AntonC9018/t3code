@@ -1964,6 +1964,7 @@ export default function ChatView(props: ChatViewProps) {
     threadId: ThreadId;
     createdAt: string;
     branch?: string;
+    modelSelection?: ModelSelection;
     runtimeMode: RuntimeMode;
     interactionMode: ProviderInteractionMode;
   }): Promise<AtomCommandResult<void, unknown>> => {
@@ -1974,6 +1975,7 @@ export default function ChatView(props: ChatViewProps) {
     let result: AtomCommandResult<void, unknown> = AsyncResult.success(undefined);
     const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
       currentModelSelection: serverThread.modelSelection,
+      ...(input.modelSelection ? { nextModelSelection: input.modelSelection } : {}),
       currentBranch: serverThread.branch,
       ...(input.branch ? { nextBranch: input.branch } : {}),
     });
@@ -2457,7 +2459,11 @@ export default function ChatView(props: ChatViewProps) {
     });
     return item ? [item] : [];
   });
+  const limitedRunProviderInstanceId = serverProjection
+    ? latestExecutedRun(serverProjection.runs)?.providerInstanceId
+    : activeThreadShell?.modelSelection.instanceId;
   const limitRecoveryBanner =
+    limitedRunProviderInstanceId === activeProviderInstanceId &&
     serverRuntime?.status === "failed" &&
     serverRuntime.lastErrorClass === "usage_limit" &&
     activeThreadShell?.latestRun
@@ -2641,6 +2647,27 @@ export default function ChatView(props: ChatViewProps) {
     void sendStandaloneCommand("/compact", "Failed to compact context.");
   };
 
+  const persistModelSelectionForNextTurn = async (modelSelection: ModelSelection) => {
+    if (!activeThread || !serverThread) return;
+    const metadata = resolveThreadMetadataUpdateForNextTurn({
+      currentModelSelection: serverThread.modelSelection,
+      nextModelSelection: modelSelection,
+      currentBranch: serverThread.branch,
+    });
+    if (!metadata) return;
+    const result = await updateThreadMetadata({
+      environmentId,
+      input: { threadId: activeThread.id, ...metadata },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: "Could not save model selection",
+        description: error instanceof Error ? error.message : "Try selecting the model again.",
+      });
+    }
+  };
   const {
     getModelDisabledReason,
     handleInteractionModeChange,
@@ -2671,6 +2698,7 @@ export default function ChatView(props: ChatViewProps) {
     setPendingServerThreadEnvModeEntry,
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus,
+    persistModelSelection: persistModelSelectionForNextTurn,
   });
   const { onResume, isResuming } = useComposerResume({
     environmentId,
@@ -3386,6 +3414,7 @@ export default function ChatView(props: ChatViewProps) {
                                 true
                               }
                               onMultipleModelSelectionsChange={setMultipleModelSelectionsStable}
+                              onPersistModelSelection={persistModelSelectionForNextTurn}
                               composerRef={composerRef}
                               composerDraftTarget={composerDraftTarget}
                               environmentId={environmentId}

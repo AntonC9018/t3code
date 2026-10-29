@@ -1499,9 +1499,7 @@ export function ExistingThreadSettingsRouteScreen({
   // Reads the same environmentId/threadId params as the Thread route beneath it.
   const { selectedThread, selectedThreadDetailRef, selectedEnvironmentRuntime } =
     useThreadSelection();
-  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
-    reportFailure: false,
-  });
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata);
   // Streamed text would otherwise re-render the whole model picker on every delta.
   const structure = useQuietThreadStructure(selectedThreadDetailRef);
   const reportedModelSelection = useThreadReportedModelSelection(selectedThreadDetailRef);
