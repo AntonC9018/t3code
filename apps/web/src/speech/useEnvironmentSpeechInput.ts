@@ -434,6 +434,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       : null;
   const retainedKey = input.retainedDraft ? (closedQuestionOwner ?? input.ownerKey) : null;
   const closedQuestionRecordings = input.closedQuestionRecordings;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribes to voice-recording recovery changes while this chat owner is mounted and resolves its retained recording.
   useEffect(() => {
     if (!closedQuestionRecordings || !input.retainedDraft) return;
     let disposed = false;
@@ -560,6 +561,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
   const previousDraftInputRef = useRef({ ownerKey: input.ownerKey, text: input.draftText });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keeps async speech callbacks and the draft revision check in step with the latest editor props.
   useEffect(() => {
     latestInputRef.current = input;
     const previous = previousDraftInputRef.current;
@@ -575,6 +577,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     }
   }, [input]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keeps a retained session's mutable context and editor callbacks in step with React inputs.
   useEffect(() => {
     latestSessionContextRef.current = sessionContext;
     const session = sessionRef.current;
@@ -591,6 +594,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     }
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Attaches the controller to this hook's owner and detaches or disposes it on connection or owner changes.
   useEffect(() => {
     if (typeof navigator === "undefined") return;
     const existing = retainedKey ? retainedSessions.get(retainedKey) : null;
@@ -623,6 +627,18 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         });
         setLevel(session.level);
         setPreview(session.preview);
+        if (session.state.phase === "idle") {
+          const pending = pendingSubmissionRef.current;
+          if (!pending) return;
+          pendingSubmissionRef.current = null;
+          const latestInput = latestInputRef.current;
+          if (
+            !latestInput.disabled &&
+            pending.ownerKey === latestInput.ownerKey &&
+            pending.text !== undefined
+          )
+            pending.submit(pending.text);
+        }
       },
     };
     session.attachment = attachment;
@@ -641,6 +657,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     };
   }, [postProcessingPrepared, prepared, retainedKey]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Loads speech capability status for the prepared connection and ignores results after it changes.
   useEffect(() => {
     if (!prepared) return;
     let disposed = false;
@@ -659,6 +676,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   const currentStatus = status?.prepared === prepared ? status.value : null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Polls model download progress while the setup dialog is open and clears its timer on exit.
   useEffect(() => {
     if (!setupOpen || !setupDownloading || !prepared || !currentStatus?.supported) return;
     let disposed = false;
@@ -686,6 +704,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   }, [currentStatus, prepared, setupDownloading, setupOpen]);
 
   const previousOwnerRef = useRef(input.ownerKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Cancels active recording and queued submission work when the owner changes or becomes disabled.
   useEffect(() => {
     if (previousOwnerRef.current === input.ownerKey && !input.disabled) return;
     previousOwnerRef.current = input.ownerKey;
@@ -695,14 +714,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (!retainedKey) sessionRef.current?.controller.ownerChanged();
     setSetupOpen(false);
   }, [input.ownerKey, input.disabled, retainedKey]);
-
-  useEffect(() => {
-    const pending = pendingSubmissionRef.current;
-    if (state.phase !== "idle" || !pending) return;
-    pendingSubmissionRef.current = null;
-    if (!input.disabled && pending.ownerKey === input.ownerKey && pending.text !== undefined)
-      pending.submit(pending.text);
-  }, [state, input.ownerKey, input.disabled]);
 
   const submitAfterDictation = (submit: (text: string) => void) => {
     if (latestInputRef.current.disabled || state.phase === "preparing") return;

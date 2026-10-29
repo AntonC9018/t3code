@@ -1847,7 +1847,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const speechDraftOwnerKey =
     questionAttachmentTarget ?? JSON.stringify([composerDraftTarget, undefined]);
   const speechDraftOwnerKeyRef = useRef<string | null>(speechDraftOwnerKey);
-  // A completion can race the speech hook's passive detach after navigation or resolution.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keeps the owner guard current before speech-hook passive cleanup, so late completion cannot update a different draft.
   useLayoutEffect(() => {
     speechDraftOwnerKeyRef.current = speechDraftOwnerKey;
     return () => {
@@ -2203,6 +2203,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   };
   const submitComposerStable = useStableCallback(submitComposer);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keeps the deferred dictation submit callback current before shortcut and form handlers can run.
   useLayoutEffect(() => {
     submitComposerRef.current = (mode, intent) => submitComposerStable(undefined, mode, intent);
   }, [submitComposerStable]);
