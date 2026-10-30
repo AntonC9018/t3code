@@ -6,10 +6,9 @@ import { render } from "../../test/render";
 
 const state = vi.hoisted(() => ({ navigate: vi.fn() }));
 
-// One key toggles Usage: it opens Usage elsewhere and goes back from it.
+// This is the persisted binding shape from before Usage became a toggle.
 const keybindings = compileResolvedKeybindingsConfig([
-  { key: "mod+u", command: "navigation.back", when: "usagePageOpen" },
-  { key: "mod+u", command: "usage.open", when: "!usagePageOpen" },
+  { key: "mod+u", command: "usage.open", when: "!terminalFocus" },
 ]);
 
 vi.mock(import("@effect/atom-react"), async (original) => ({
@@ -21,10 +20,7 @@ vi.mock(import("../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const { compileResolvedKeybindingsConfig: compile } = await import("@t3tools/shared/keybindings");
   // Factories are hoisted above the module's own constants.
-  const compiled = compile([
-    { key: "mod+u", command: "navigation.back", when: "usagePageOpen" },
-    { key: "mod+u", command: "usage.open", when: "!usagePageOpen" },
-  ]);
+  const compiled = compile([{ key: "mod+u", command: "usage.open", when: "!terminalFocus" }]);
   return { ...actual, primaryServerKeybindingsAtom: Atom.make(compiled) };
 });
 vi.mock(import("@tanstack/react-router"), async (original) => ({

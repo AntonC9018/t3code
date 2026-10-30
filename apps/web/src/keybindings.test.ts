@@ -911,6 +911,28 @@ describe("composer and pull request shortcuts", () => {
 });
 
 describe("Usage shortcuts", () => {
+  it("toggles a persisted Usage shortcut back when Usage is already open", () => {
+    const persisted = compileResolvedKeybindingsConfig([
+      { key: "mod+u", command: "usage.open", when: "!terminalFocus" },
+    ]);
+    const shortcut = event({ key: "u", ctrlKey: true });
+
+    assert.strictEqual(
+      resolveShortcutCommand(shortcut, persisted, {
+        platform: "Linux",
+        context: { usagePageOpen: false },
+      }),
+      "usage.open",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(shortcut, persisted, {
+        platform: "Linux",
+        context: { usagePageOpen: true },
+      }),
+      "navigation.back",
+    );
+  });
+
   it.each(["Linux", "MacIntel"])(
     "preserves desktop numbered thread shortcuts on Usage on %s",
     (platform) => {

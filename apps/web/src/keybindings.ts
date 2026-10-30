@@ -178,6 +178,7 @@ export function resolveShortcutCommand(
     if (!binding) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
     if (!matchesKeybindingShortcut(event, shortcutForContext(binding, context), platform)) continue;
+    if (context.usagePageOpen && binding.command === "usage.open") return "navigation.back";
     return binding.command;
   }
   return null;
