@@ -48,6 +48,9 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   makeProviderEventRoutingState,
@@ -70,13 +73,19 @@ const layerGit = GitVcsDriver.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
+const layerEmptyInstances = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+  // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
+  getInstance: () => Effect.succeed(undefined),
+});
 const makeLayerTest = <E>(
   ingestorEventSink: Layer.Layer<EventSink.EventSinkV2, E>,
+  instances = layerEmptyInstances,
   providerRegistryLayer: Layer.Layer<ProviderRegistry.ProviderRegistry> = Layer.mock(
     ProviderRegistry.ProviderRegistry,
   )({ getProviders: Effect.succeed([]) }),
 ) =>
   Layer.mergeAll(
+    instances,
     layerTestDatabase,
     layerTestStores,
     layerTestEventSink,
@@ -86,6 +95,7 @@ const makeLayerTest = <E>(
     ProviderEventIngestor.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          instances,
           layerTestStores,
           ingestorEventSink,
           IdAllocator.layer,
@@ -300,7 +310,7 @@ const usageLimitFallbackProviders = Layer.mock(ProviderRegistry.ProviderRegistry
     ]),
 });
 const layerUsageLimitFallback = it.layer(
-  makeLayerTest(layerTestEventSink, usageLimitFallbackProviders),
+  makeLayerTest(layerTestEventSink, layerEmptyInstances, usageLimitFallbackProviders),
 );
 
 layerUsageLimitFallback("ProviderEventIngestor usage-limit reset fallback", (it) => {
@@ -366,6 +376,101 @@ layerUsageLimitFallback("ProviderEventIngestor usage-limit reset fallback", (it)
     }),
   );
 });
+
+it.effect("refreshes the failing instance snapshot after a committed usage_limit terminal", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const refreshed = yield* Deferred.make<void>();
+      const adapter = yield* ProviderAdapter.ProviderAdapterV2.pipe(
+        Effect.provide(
+          Layer.mock(ProviderAdapter.ProviderAdapterV2)({
+            instanceId: ProviderInstanceId.make("cursor-work"),
+            driver: ProviderDriverKind.make("cursor"),
+          }),
+        ),
+      );
+      const instance: ProviderInstance = {
+        instanceId: ProviderInstanceId.make("cursor-work"),
+        driverKind: ProviderDriverKind.make("cursor"),
+        continuationIdentity: {
+          driverKind: ProviderDriverKind.make("cursor"),
+          continuationKey: "work",
+        },
+        enabled: true,
+        displayName: undefined,
+        orchestrationAdapter: adapter,
+        textGeneration: {
+          generateBranchName: () => Effect.die("unused"),
+          generateCommitMessage: () => Effect.die("unused"),
+          generatePrContent: () => Effect.die("unused"),
+          generateThreadTitle: () => Effect.die("unused"),
+          generateReviewGuide: () => Effect.die("unused"),
+        },
+        snapshot: {
+          refreshUsage: Deferred.succeed(refreshed, undefined).pipe(Effect.asVoid),
+          getSnapshot: Effect.die("unused"),
+          refresh: Effect.die("unused"),
+          resolveMaintenance: () => Effect.die("unused"),
+          applyUsageLimits: () => Effect.die("unused"),
+          streamChanges: Stream.empty,
+        },
+      };
+      const lookups: ProviderInstanceId[] = [];
+      const instances = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+        getInstance: (id) =>
+          Effect.sync(() => {
+            lookups.push(id);
+            return id === instance.instanceId ? instance : undefined;
+          }),
+      });
+      yield* Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const threadEvent = yield* threadCreatedEvent(now);
+        yield* eventSink.write({ events: [threadEvent] });
+        const input = {
+          providerSessionId: yield* idAllocator.allocate.providerSession({
+            providerInstanceId: instance.instanceId,
+            threadId: threadEvent.threadId,
+          }),
+          providerInstanceId: instance.instanceId,
+          threadId: threadEvent.threadId,
+        };
+        for (const failureClass of ["validation_error", "usage_limit"] as const) {
+          const stored = yield* ingestor.ingestNormalized({
+            ...input,
+            event: {
+              type: "turn.terminal",
+              driver: instance.driverKind,
+              providerThreadId: idAllocator.derive.providerThread({
+                driver: instance.driverKind,
+                nativeThreadId: "limited",
+              }),
+              providerTurnId: idAllocator.derive.providerTurn({
+                driver: instance.driverKind,
+                nativeTurnId: failureClass,
+              }),
+              runOrdinal: 1,
+              failureItemOrdinal: 1,
+              status: "failed",
+              failure: makeProviderFailure({
+                class: failureClass,
+                message: "Provider rejected turn.",
+              }),
+              threadDisposition: "reusable",
+            },
+          });
+          assert.equal(stored.length, 1);
+          if (failureClass === "validation_error") assert.deepEqual(lookups, []);
+        }
+        assert.deepEqual(lookups, [instance.instanceId]);
+        yield* Deferred.await(refreshed);
+      }).pipe(Effect.provide(makeLayerTest(layerTestEventSink, instances)));
+    }),
+  ),
+);
 
 it.effect("records accepted billed turn usage once without billing the context window", () => {
   const recorded: Array<Readonly<Record<string, unknown>>> = [];

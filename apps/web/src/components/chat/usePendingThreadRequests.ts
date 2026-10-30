@@ -150,6 +150,7 @@ export function usePendingThreadRequests(input: {
   const activePendingQuestionIndex = usePendingUserInputQuestionIndex(
     (state) => state[activePendingRequestKey] ?? 0,
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Seed persisted question draft sidecars when server requests arrive.
   useLayoutEffect(() => {
     if (!activeThreadId) return;
     for (const request of pendingUserInputs) {
@@ -434,6 +435,7 @@ export function usePendingThreadRequests(input: {
     ) {
       return;
     }
+    if (!activePendingProgress.canAdvance) return;
     if (activePendingProgress.isLastQuestion) {
       if (activePendingResolvedAnswers) {
         void onRespondToUserInput(activePendingUserInput.requestId, activePendingResolvedAnswers);

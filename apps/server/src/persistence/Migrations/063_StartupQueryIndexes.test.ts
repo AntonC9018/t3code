@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import migration from "./063_StartupQueryIndexes.ts";
+import migration from "./startupQueryIndexes.ts";
 
 const query = (source: string, kind: string) => {
   const recoverySource = source.slice(source.indexOf("const getRecoveryThreadIds ="));

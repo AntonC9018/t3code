@@ -6,7 +6,9 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
-import legacyStartupQueryIndexes from "./063_StartupQueryIndexes.ts";
+import legacyStartupQueryIndexes from "./startupQueryIndexes.ts";
+
+const isMigrationError = Schema.is(Schema.instanceOf(Migrator.MigrationError));
 
 it.effect("upgrades the deployed fork's migration 63 without rewriting its history", () =>
   Effect.gen(function* () {
@@ -23,7 +25,7 @@ it.effect("upgrades the deployed fork's migration 63 without rewriting its histo
 
     // Do not accept the collision when the caller stops before its repair.
     const blocked = yield* runMigrations({ toMigrationInclusive: 72 }).pipe(Effect.flip);
-    assert(Schema.is(Schema.instanceOf(Migrator.MigrationError))(blocked));
+    assert(isMigrationError(blocked));
     assert.equal(blocked.kind, "BadState");
     const applied = yield* runMigrations();
     assert.includeDeepMembers(applied, [[73, "ForkStartupCompatibility"]]);
@@ -59,7 +61,7 @@ it.effect("repairs upstream search skipped by the fork's deployed migration 69",
       )
     `;
     const blocked = yield* runMigrations({ toMigrationInclusive: 72 }).pipe(Effect.flip);
-    assert(Schema.is(Schema.instanceOf(Migrator.MigrationError))(blocked));
+    assert(isMigrationError(blocked));
     assert.equal(blocked.kind, "BadState");
     assert.include(blocked.message, "69_ThreadMessageSearch");
 

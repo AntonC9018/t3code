@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import dropUnusedV1Projections from "./063_DropUnusedV1Projections.ts";
-import startupQueryIndexes from "./063_StartupQueryIndexes.ts";
+import startupQueryIndexes from "./startupQueryIndexes.ts";
 import threadMessageSearch from "./069_ThreadMessageSearch.ts";
 
 // Preserve fork history while applying schema skipped by its colliding migration ids.
