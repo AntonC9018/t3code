@@ -2370,6 +2370,7 @@ export default function ChatView(props: ChatViewProps) {
     threadStatusLine,
     shortcuts: threadLifecycleShortcuts,
   } = useThreadLifecycle({
+    threadDetailRef: routeThreadDetailRef,
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,

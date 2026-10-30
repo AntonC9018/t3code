@@ -8,6 +8,7 @@ import {
   ExecutionEnvironmentDescriptor,
   MessageId,
   ORCHESTRATION_PROTOCOL_VERSION,
+  OrchestrationV2ThreadBoundedSnapshot,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
   ProviderInstanceId,
@@ -305,6 +306,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
+const shellSubscribers = new Set<Queue.Queue<OrchestrationV2ShellStreamItem>>();
 // Keyed by thread id: a live thread subscription's queue, for pushing events to it.
 const threadSubscribers = new Map<string, Queue.Queue<OrchestrationV2ThreadStreamItem>>();
 let threads: ReadonlyArray<FakeThread> = [];
@@ -325,19 +327,25 @@ const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>
 
 const handlers: Record<string, (input: never) => unknown> = {
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
-    subscribe<OrchestrationV2ShellStreamItem>([
-      {
-        kind: "snapshot",
-        snapshot: {
-          schemaVersion: 1,
-          snapshotSequence: sequence,
-          projects: [project],
-          threads: threads.map(shellOf),
-          archivedThreads: [],
+    subscribe<OrchestrationV2ShellStreamItem>(
+      [
+        {
+          kind: "snapshot",
+          snapshot: {
+            schemaVersion: 1,
+            snapshotSequence: sequence,
+            projects: [project],
+            threads: threads.map(shellOf),
+            archivedThreads: [],
+          },
         },
+        { kind: "synchronized" },
+      ],
+      (queue) => {
+        shellSubscribers.add(queue);
+        return () => shellSubscribers.delete(queue);
       },
-      { kind: "synchronized" },
-    ]),
+    ),
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input: { readonly threadId: ThreadId }) => {
     const thread = threads.find((candidate) => candidate.id === input.threadId);
     if (!thread) return Stream.never;
@@ -403,12 +411,16 @@ export const fakeDriver = {
 export type FakeDriver = typeof fakeDriver;
 
 const realFetch = globalThis.fetch;
+const encodeBoundedSnapshot = Schema.encodeSync(OrchestrationV2ThreadBoundedSnapshot);
 const encodedDescriptor = Schema.encodeSync(ExecutionEnvironmentDescriptor)(
   Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor)(descriptor),
 );
 
 /** Serves the environment's HTTP API and these threads until disposed. */
-export function installFakeEnvironment(fixtures: ReadonlyArray<FakeThread>): Disposable {
+export function installFakeEnvironment(
+  fixtures: ReadonlyArray<FakeThread>,
+  options: { readonly serveThreadSnapshots?: boolean } = {},
+): Disposable {
   threads = fixtures;
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
@@ -422,6 +434,31 @@ export function installFakeEnvironment(fixtures: ReadonlyArray<FakeThread>): Dis
         sessionMethod: "browser-session-cookie",
         expiresAt: "2099-01-01T00:00:00.000Z",
       });
+    }
+    const threadMatch = /^\/api\/orchestration\/threads\/([^/]+)\/bounded$/.exec(url.pathname);
+    if (options.serveThreadSnapshots && threadMatch) {
+      const thread = threads.find(
+        (candidate) => candidate.id === decodeURIComponent(threadMatch[1]!),
+      );
+      if (!thread)
+        return json(
+          {
+            _tag: "EnvironmentResourceNotFoundError",
+            code: "not_found",
+            reason: "thread_not_found",
+            traceId: "fake-thread-not-found",
+          },
+          404,
+        );
+      return json(
+        encodeBoundedSnapshot({
+          snapshotSequence: sequence,
+          projection: projectionOf(thread),
+          historyCursor: null,
+          hasMoreHistory: false,
+          latestLocalTurnOrdinal: thread.runs.at(-1)?.ordinal ?? null,
+        }),
+      );
     }
     // Snapshot endpoints fall back to the socket, which serves the same fixtures.
     if (/^\/(api|oauth|\.well-known)\//.test(url.pathname)) return json({}, 404);
@@ -468,3 +505,28 @@ export function runningRun(threadId: ThreadId, id: string, ordinal: number, user
 }
 
 export { userItem };
+
+/** Publishes a newly created thread to the live shell without reopening the app. */
+export async function publishThread(thread: FakeThread): Promise<void> {
+  threads = [...threads, thread];
+  sequence += 1;
+  await Effect.runPromise(
+    Effect.forEach(
+      shellSubscribers,
+      (queue) =>
+        Queue.offer(queue, {
+          kind: "snapshot",
+          snapshot: {
+            schemaVersion: 1,
+            snapshotSequence: sequence,
+            projects: [project],
+            threads: threads.map(shellOf),
+            archivedThreads: [],
+          },
+        }),
+      { discard: true },
+    ),
+  );
+}
+
+export const isShellSubscribed = (): boolean => shellSubscribers.size > 0;
