@@ -495,6 +495,7 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
               calls.push(input.modelSelection);
               return { title: "Generated title" };
             }),
+          generateTranscriptionPostProcessing: () => Effect.die("unused"),
         }),
       };
     });
