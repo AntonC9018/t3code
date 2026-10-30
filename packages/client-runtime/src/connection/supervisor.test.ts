@@ -1,5 +1,6 @@
 import { AuthStandardClientScopes, EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -407,6 +408,36 @@ describe("EnvironmentSupervisor", () => {
           message: "Relay connection timed out.",
         },
       });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps retries bounded after repeated transport failures", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: () => Effect.fail(transient("VPN route is unavailable.")),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const delays = ["2 seconds", "4 seconds", "8 seconds", "16 seconds"] as const;
+      for (const [index, delay] of delays.entries()) {
+        const attempt = index + 1;
+        const backoff = yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt === attempt,
+        );
+        const now = yield* Clock.currentTimeMillis;
+        expect(backoff.retryAt! - now).toBeGreaterThan(0);
+        yield* TestClock.adjust(delay);
+        const next = yield* SubscriptionRef.get(supervisor.state);
+        expect(next).toMatchObject({ phase: "backoff", attempt: attempt + 1 });
+      }
+
+      const cappedRetry = yield* SubscriptionRef.get(supervisor.state);
+      expect(cappedRetry).toMatchObject({ phase: "backoff", attempt: 5 });
+      const now = yield* Clock.currentTimeMillis;
+      expect(cappedRetry.retryAt! - now).toBeLessThanOrEqual(30_000);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
