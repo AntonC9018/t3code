@@ -32,6 +32,7 @@ import {
 } from "../../questionAnswerDrafts";
 import type {
   KeybindingCommand,
+  UserInputQuestion,
   AssistantCitation,
   ChatAttachment as ContractChatAttachment,
   ChatFileAttachment,
@@ -414,12 +415,7 @@ export interface ChatComposerProps {
     isLastQuestion: boolean;
     canAdvance: boolean;
     customAnswer: string;
-    activeQuestion: {
-      id: string;
-      initialAnswer?: string | undefined;
-      multiSelect?: boolean | undefined;
-      allowCustomAnswer?: boolean | undefined;
-    } | null;
+    activeQuestion: UserInputQuestion | null;
   } | null;
   activePendingResolvedAnswers: Record<string, unknown> | null;
   activePendingIsResponding: boolean;
