@@ -9,7 +9,10 @@ import {
 import { questionAttachmentDraftPrefix } from "./questionAttachments";
 import { notifyVoiceRecordingRecoveryChange } from "./speech/recordingRecoveryEvents";
 
-type QuestionAnswerTarget = Pick<UserInputQuestion, "id" | "initialAnswer" | "allowCustomAnswer">;
+type QuestionAnswerTarget = Pick<
+  UserInputQuestion,
+  "id" | "initialAnswer" | "allowCustomAnswer" | "options" | "multiSelect"
+>;
 
 export function seedQuestionAnswerDraft(target: DraftId, question: QuestionAnswerTarget): void {
   const store = useComposerDraftStore.getState();

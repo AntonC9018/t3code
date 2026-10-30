@@ -527,7 +527,7 @@ interface ComposerDraftStoreState {
   setPrompt: (threadRef: ComposerThreadTarget, prompt: string, voiceRecordingId?: string) => void;
   setQuestionAnswer: (
     target: DraftId,
-    answer: QuestionAnswerDraft,
+    answer: typeof QuestionAnswerDraft.Type,
     voiceRecordingId?: string,
   ) => void;
   setTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
@@ -2967,7 +2967,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
-        setQuestionAnswer: (target, questionAnswer, voiceRecordingId) => {
+        setQuestionAnswer: (target, answer, voiceRecordingId) => {
+          const questionAnswer = hydrateQuestionAnswerDraft(answer);
           set((state) => ({
             draftsByThreadKey: {
               ...state.draftsByThreadKey,
