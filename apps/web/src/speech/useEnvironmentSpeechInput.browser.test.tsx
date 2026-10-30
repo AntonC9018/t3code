@@ -264,7 +264,11 @@ function probeInput(): Parameters<typeof useEnvironmentSpeechInput>[0] {
         end: (mocks.editorDraft ?? mocks.draft).length,
       },
     }),
-    commitDraft: mocks.committed,
+    commitDraft: (text, selection) => {
+      mocks.draft = text;
+      mocks.editorDraft = text;
+      mocks.committed(text, selection);
+    },
     retainedDraft: mocks.retainRecording
       ? {
           hasDelivered: (id: string) => mocks.deliveredRecording === id,

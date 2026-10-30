@@ -288,11 +288,11 @@ function createSpeechSession(
       }),
     readDraft: () => readSessionDraft(session),
     onStreamingTranscript: (text, captured, locale) => {
-      if (session.context.retainedDraft) return captured;
+      if (session.context.retainedDraft) return null;
       const current = readSessionDraft(session);
       if (!current) return null;
       const update = resolveLiveTranscriptUpdate(current, session.liveTranscript, text, locale);
-      if (!update) return captured;
+      if (!update) return null;
       session.liveTranscript = update.live;
       Object.assign(session.revision, {
         ownerKey: update.draft.ownerKey,
@@ -300,6 +300,7 @@ function createSpeechSession(
         revision: update.draft.revision,
       });
       session.attachment?.commitDraft(update.draft.text, update.draft.selection);
+      session.attachment?.onCommit(update.draft.text);
       return update.draft;
     },
     onStreamingCancel: () => {
