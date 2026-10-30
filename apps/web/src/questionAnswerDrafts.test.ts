@@ -1,6 +1,10 @@
 import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 import {
+  resolvePendingUserInputAnswer,
+  togglePendingUserInputOptionSelection,
+} from "@t3tools/client-runtime/state/pending-user-input";
+import {
   COMPOSER_DRAFT_STORAGE_KEY,
   makeRetainedComposerDraft,
   useComposerDraftStore,
@@ -11,10 +15,6 @@ import {
   setQuestionCustomAnswer,
 } from "./questionAnswerDrafts";
 import { clearQuestionAttachmentDraft, questionAttachmentDraftId } from "./questionAttachments";
-import {
-  resolvePendingUserInputAnswer,
-  togglePendingUserInputOptionSelection,
-} from "./pendingUserInput";
 
 vi.mock("./lib/attachmentUploadQueue", () => ({ releaseDraftAttachments: vi.fn() }));
 

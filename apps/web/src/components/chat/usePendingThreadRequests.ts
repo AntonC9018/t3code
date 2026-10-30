@@ -21,17 +21,19 @@ import {
 import { create } from "zustand";
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { useShallow } from "zustand/react/shallow";
+import {
+  buildPendingUserInputAnswers,
+  togglePendingUserInputOptionSelection,
+  type PendingUserInputDraftAnswer,
+} from "@t3tools/client-runtime/state/pending-user-input";
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { getUploadedAttachments, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
 import {
-  buildPendingUserInputAnswers,
   carryDisplacedCustomAnswerIntoPrompt,
   derivePendingUserInputProgress,
   projectPendingUserInputAnswer,
   threadContextsReferencedByAnswer,
-  togglePendingUserInputOptionSelection,
-  type PendingUserInputDraftAnswer,
 } from "../../pendingUserInput";
 import { seedQuestionAnswerDraft, setQuestionCustomAnswer } from "../../questionAnswerDrafts";
 import {

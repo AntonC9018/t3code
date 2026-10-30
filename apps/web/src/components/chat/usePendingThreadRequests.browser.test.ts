@@ -6,6 +6,10 @@ import {
   TurnItemId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import {
+  makeThreadRequestsResolvedAnnouncer,
+  pendingRuntimeRequestIds,
+} from "@t3tools/client-runtime/state/thread-requests";
 import { createElement, useLayoutEffect, useRef } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../test/render";
@@ -81,6 +85,10 @@ function questionProjection(threadId: ThreadId, requestIds = ["first", "second"]
 
 async function pendingRequestsHarness(projection: OrchestrationV2ThreadProjection) {
   let current!: ReturnType<typeof usePendingThreadRequests>;
+  const requestAnnouncers = new Map<
+    ThreadId,
+    ReturnType<typeof makeThreadRequestsResolvedAnnouncer>
+  >();
   function Probe({
     projection,
     loading = false,
@@ -105,6 +113,15 @@ async function pendingRequestsHarness(projection: OrchestrationV2ThreadProjectio
     useLayoutEffect(() => {
       current = state;
     });
+    useLayoutEffect(() => {
+      if (loading) return;
+      let announce = requestAnnouncers.get(projection.thread.id);
+      if (!announce) {
+        announce = makeThreadRequestsResolvedAnnouncer(environmentId, projection.thread.id);
+        requestAnnouncers.set(projection.thread.id, announce);
+      }
+      announce(pendingRuntimeRequestIds(projection));
+    }, [loading, projection]);
     return null;
   }
   const screen = await render(createElement(Probe, { projection }));

@@ -1,11 +1,11 @@
 import type { ScopedThreadRef, UserInputQuestion } from "@t3tools/contracts";
+import { setPendingUserInputCustomAnswer } from "@t3tools/client-runtime/state/pending-user-input";
 import {
   DraftId,
   flushComposerDraftPersistence,
   forgetComposerVoiceRecordingDelivery,
   useComposerDraftStore,
 } from "./composerDraftStore";
-import { setPendingUserInputCustomAnswer } from "./pendingUserInput";
 import { questionAttachmentDraftPrefix } from "./questionAttachments";
 import { notifyVoiceRecordingRecoveryChange } from "./speech/recordingRecoveryEvents";
 
@@ -44,7 +44,7 @@ export function setQuestionCustomAnswer(
   if (answer === undefined || question.allowCustomAnswer === false) return false;
   store.setQuestionAnswer(
     target,
-    setPendingUserInputCustomAnswer(answer, value, question),
+    setPendingUserInputCustomAnswer(question, answer, value),
     voiceRecordingId,
   );
   return true;
