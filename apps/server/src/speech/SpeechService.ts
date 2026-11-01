@@ -183,7 +183,7 @@ export class SpeechService extends Context.Service<
   }
 >()("t3/speech/SpeechService") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const handyUrl = yield* Config.String("T3_SPEECH_HANDY_URL").pipe(Config.withDefault(""));
   if (handyUrl) {

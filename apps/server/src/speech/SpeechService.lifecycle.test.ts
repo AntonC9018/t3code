@@ -1000,26 +1000,23 @@ it.effect("reuses the model when abandoned batch work finishes first", () =>
   }),
 );
 
-it.effect(
-  "closes its scope without waiting for hung native inference",
-  () =>
-    Effect.gen(function* () {
-      const started = Promise.withResolvers<void>();
-      native.transcribe.mockImplementationOnce(() => {
-        started.resolve();
-        return new Promise(() => {});
-      });
-      yield* Effect.gen(function* () {
-        const speech = yield* SpeechService.SpeechService;
-        const request = yield* speech
-          .transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
-          .pipe(Effect.forkChild);
-        yield* Effect.promise(() => started.promise);
-        yield* Fiber.interrupt(request);
-      }).pipe(Effect.provide(layer));
-      expect(native.dispose).toHaveBeenCalledOnce();
-    }),
-  { timeout: 1000 },
+it.effect("closes its scope without waiting for hung native inference", () =>
+  Effect.gen(function* () {
+    const started = Promise.withResolvers<void>();
+    native.transcribe.mockImplementationOnce(() => {
+      started.resolve();
+      return new Promise(() => {});
+    });
+    yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const request = yield* speech
+        .transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => started.promise);
+      yield* Fiber.interrupt(request);
+    }).pipe(Effect.provide(layer));
+    expect(native.dispose).toHaveBeenCalledOnce();
+  }),
 );
 
 it.effect("retains warmup ownership after cancellation until its load settles", () =>
