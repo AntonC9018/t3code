@@ -12,6 +12,10 @@ import {
   OrchestrationV2ContextHandoff,
   type OrchestrationV2HistoricalMessage,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
+  MessageId,
+  NodeId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -23,6 +27,7 @@ import {
   historyResponseItems,
   selectHistory,
   historicalMessage,
+  historySinceCustomCompaction,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
@@ -395,6 +400,105 @@ describe("handoff budget", () => {
         0,
       );
     }
+  });
+});
+
+describe("history since custom compaction", () => {
+  const run = (
+    ordinal: number,
+    status: OrchestrationV2ThreadProjection["runs"][number]["status"] = "completed",
+  ): OrchestrationV2ThreadProjection["runs"][number] => ({
+    id: RunId.make(`run:${ordinal}`),
+    threadId,
+    ordinal,
+    providerInstanceId: providerThread.providerInstanceId,
+    modelSelection: { instanceId: providerThread.providerInstanceId, model: "gpt-5.4" },
+    providerThreadId: providerThread.id,
+    userMessageId: MessageId.make(`message:${ordinal}`),
+    rootNodeId: NodeId.make(`node:${ordinal}`),
+    activeAttemptId: null,
+    status,
+    requestedAt: now,
+    startedAt: now,
+    completedAt: now,
+    checkpointId: null,
+    contextHandoffId: null,
+  });
+  const base = (id: string, runOrdinal: number, ordinal: number) => ({
+    id: TurnItemId.make(id),
+    threadId,
+    runId: RunId.make(`run:${runOrdinal}`),
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal,
+    status: "completed" as const,
+    title: null,
+    startedAt: now,
+    completedAt: now,
+    updatedAt: now,
+  });
+  const item = (
+    id: string,
+    runOrdinal: number,
+    ordinal: number,
+    text: string,
+  ): OrchestrationV2TurnItem => ({
+    ...base(id, runOrdinal, ordinal),
+    messageId: MessageId.make(id),
+    text,
+    createdBy: "user",
+    creationSource: "web",
+    type: "user_message",
+    inputIntent: "turn_start",
+    attachments: [],
+  });
+  const boundary = (runOrdinal: number, ordinal: number): OrchestrationV2TurnItem => ({
+    ...base("boundary", runOrdinal, ordinal),
+    type: "handoff",
+    contextHandoffId: ContextHandoffId.make("handoff:compaction"),
+    fromProviderThreadIds: [],
+    toProviderThreadId: providerThread.id,
+    fromProviderInstanceIds: [],
+    toProviderInstanceId: providerThread.providerInstanceId,
+    fromModelSelections: [],
+    toModel: "gpt-5.4",
+    compactionModelSelection: { instanceId: providerThread.providerInstanceId, model: "luna" },
+    strategy: "manual_context",
+    summary: "SUMMARY",
+  });
+  const texts = (items: ReadonlyArray<OrchestrationV2TurnItem>) =>
+    items.map((entry) => (entry.type === "user_message" ? entry.text : entry.type));
+
+  it("orders by run even without a boundary, since provider ordinals restart", () => {
+    assert.deepEqual(
+      texts(
+        historySinceCustomCompaction(
+          [item("later", 2, 1, "CORRECTION: use Postgres"), item("first", 1, 7, "Use SQLite")],
+          [run(1), run(2)],
+        ),
+      ),
+      ["Use SQLite", "CORRECTION: use Postgres"],
+    );
+  });
+
+  it("ignores rolled-back history and boundaries", () => {
+    assert.deepEqual(
+      texts(
+        historySinceCustomCompaction(
+          [
+            item("kept", 1, 1, "kept"),
+            boundary(2, 2),
+            item("abandoned", 2, 1, "abandoned"),
+            item("after", 3, 1, "after rewind"),
+          ],
+          [run(1), run(2, "rolled_back"), run(3)],
+        ),
+      ),
+      ["kept", "after rewind"],
+    );
   });
 });
 

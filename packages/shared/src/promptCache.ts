@@ -6,6 +6,7 @@ import type {
   OrchestrationV2Run,
   OrchestrationV2RunAttempt,
 } from "@t3tools/contracts";
+import { DateTime } from "effect";
 import { modelSelectionsEqual } from "./model.ts";
 
 export type PromptCacheStatus = {
@@ -39,7 +40,7 @@ export function derivePromptCacheStatus(input: {
 export function deriveThreadPromptCacheStatus(input: {
   readonly providerThread?: Pick<
     OrchestrationV2ProviderThread,
-    "id" | "driver" | "nativeThreadRef" | "contextUsage"
+    "id" | "driver" | "nativeThreadRef" | "contextUsage" | "forkedFrom"
   > | null;
   readonly providerTurns: ReadonlyArray<
     Pick<OrchestrationV2ProviderTurn, "providerThreadId" | "runAttemptId" | "nodeId" | "tokenUsage">
@@ -84,12 +85,15 @@ export function deriveThreadPromptCacheStatus(input: {
     latest = turn;
     latestRun = run;
   }
+  const threadAttempts = input.attempts.filter((attempt) => attempt.providerThreadId === thread.id);
+  // Forked and imported conversations carry history that no local attempt produced.
   const hasContext =
     (thread.contextUsage?.usedTokens ?? 0) > 0 ||
     latest !== undefined ||
-    input.attempts.some(
+    thread.forkedFrom !== null ||
+    threadAttempts.length === 0 ||
+    threadAttempts.some(
       (attempt) =>
-        attempt.providerThreadId === thread.id &&
         attempt.providerTurnId !== null &&
         (attempt.nativeThreadId === undefined || attempt.nativeThreadId === nativeId),
     );
@@ -101,6 +105,63 @@ export function deriveThreadPromptCacheStatus(input: {
     hasContext,
     nowMs: input.nowMs,
   });
+}
+
+type ProviderThreadCandidate = Pick<
+  OrchestrationV2ProviderThread,
+  | "id"
+  | "driver"
+  | "nativeThreadRef"
+  | "contextUsage"
+  | "forkedFrom"
+  | "providerInstanceId"
+  | "compactionSuperseded"
+  | "appThreadId"
+  | "ownerNodeId"
+  | "lastRunOrdinal"
+  | "updatedAt"
+>;
+
+/** Root conversations a thread can resume on an instance, most recently used first. */
+export function rootProviderThreadsForInstance<Thread extends ProviderThreadCandidate>(
+  providerThreads: ReadonlyArray<Thread>,
+  threadId: string,
+  instanceId: ModelSelection["instanceId"],
+): ReadonlyArray<Thread> {
+  return providerThreads
+    .filter(
+      (providerThread) =>
+        providerThread.providerInstanceId === instanceId &&
+        providerThread.compactionSuperseded !== true &&
+        providerThread.appThreadId === threadId &&
+        providerThread.ownerNodeId === null,
+    )
+    .sort(
+      (left, right) =>
+        (right.lastRunOrdinal ?? 0) - (left.lastRunOrdinal ?? 0) ||
+        DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+    );
+}
+
+/** Cache status of the conversation a message with `modelSelection` would resume. */
+export function deriveSendPromptCacheStatus(
+  input: Omit<Parameters<typeof deriveThreadPromptCacheStatus>[0], "providerThread"> & {
+    readonly thread: { readonly id: string; readonly activeProviderThreadId: string | null };
+    readonly providerThreads: ReadonlyArray<ProviderThreadCandidate>;
+  },
+): PromptCacheStatus {
+  const active = input.providerThreads.find(
+    (candidate) => candidate.id === input.thread.activeProviderThreadId,
+  );
+  const providerThread =
+    active?.providerInstanceId === input.modelSelection.instanceId
+      ? active
+      : rootProviderThreadsForInstance(
+          input.providerThreads,
+          input.thread.id,
+          input.modelSelection.instanceId,
+        )[0];
+  return deriveThreadPromptCacheStatus({ ...input, providerThread: providerThread ?? null });
 }
 
 export function promptCacheNeedsAcknowledgement(status: PromptCacheStatus): boolean {

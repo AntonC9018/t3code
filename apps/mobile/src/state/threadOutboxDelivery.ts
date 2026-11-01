@@ -19,8 +19,13 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type EnvironmentId,
   type MessageId,
+  type ModelSelection,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import {
+  derivePromptCacheStatus,
+  promptCacheNeedsAcknowledgement,
+} from "@t3tools/shared/promptCache";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -152,6 +157,18 @@ function logThreadOutboxUploadFailure(queuedMessage: QueuedThreadMessage, error:
   } else {
     console.warn("[thread-outbox] failed to upload attachments", { ...context, error });
   }
+}
+
+/** Rechecks at delivery: the cache can expire between queueing and reconnecting. */
+export function queuedPromptCacheNeedsConfirmation(
+  thread: Pick<EnvironmentThreadShell, "promptCache" | "modelSelection">,
+  modelSelection: ModelSelection,
+): boolean {
+  if (thread.promptCache === undefined) return false;
+  if (modelSelection.instanceId !== thread.modelSelection.instanceId) return false;
+  return promptCacheNeedsAcknowledgement(
+    derivePromptCacheStatus({ ...thread.promptCache, nowMs: Date.now() }),
+  );
 }
 
 function beginDispatchingQueuedMessage(queuedMessageId: MessageId): void {
@@ -864,6 +881,15 @@ export function createThreadOutboxDelivery(): {
       settings,
       currentConfig.providers,
     );
+    if (
+      !queuedMessage.allowUncachedRead &&
+      queuedPromptCacheNeedsConfirmation(thread, sendSettings.modelSelection)
+    ) {
+      return restoreQueuedMessage(
+        persistedMessage,
+        "Claude's prompt cache went cold while this message was queued. Send it again to confirm an uncached read.",
+      );
+    }
     if (!hasAccess()) return true;
     const deliveryResult = await runDeliveryCommand(threadEnvironment.startTurn, {
       environmentId: queuedMessage.environmentId,

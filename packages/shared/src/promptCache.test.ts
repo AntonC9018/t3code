@@ -7,9 +7,12 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  ThreadId,
 } from "@t3tools/contracts";
+import { DateTime } from "effect";
 import {
   derivePromptCacheStatus,
+  deriveSendPromptCacheStatus,
   deriveThreadPromptCacheStatus,
   promptCacheNeedsAcknowledgement,
 } from "./promptCache.ts";
@@ -64,6 +67,7 @@ describe("prompt cache protection", () => {
       providerThread: {
         id: providerThreadId,
         driver: ProviderDriverKind.make("claudeAgent"),
+        forkedFrom: null,
         nativeThreadRef: {
           driver: ProviderDriverKind.make("claudeAgent"),
           nativeId: "old-native",
@@ -103,19 +107,88 @@ describe("prompt cache protection", () => {
         modelSelection: { ...modelSelection, model: "sonnet" },
       }).state,
     ).toBe("unknown");
+    const newNative = {
+      ...input,
+      providerThread: {
+        ...input.providerThread!,
+        nativeThreadRef: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          nativeId: "new-native",
+          strength: "strong",
+        },
+      },
+    } satisfies typeof input;
+    expect(deriveThreadPromptCacheStatus(newNative).state).toBe("fresh");
+    // Forked and imported conversations carry history no local attempt produced.
     expect(
       deriveThreadPromptCacheStatus({
-        ...input,
-        providerThread: {
-          ...input.providerThread!,
-          nativeThreadRef: {
-            driver: ProviderDriverKind.make("claudeAgent"),
-            nativeId: "new-native",
-            strength: "strong",
-          },
-        },
+        ...newNative,
+        providerThread: { ...newNative.providerThread, forkedFrom: { providerThreadId } },
+      }).state,
+    ).toBe("unknown");
+    expect(deriveThreadPromptCacheStatus({ ...newNative, attempts: [] }).state).toBe("unknown");
+    expect(deriveThreadPromptCacheStatus({ ...input, providerTurns: [] }).state).toBe("unknown");
+  });
+
+  it("checks the conversation the selected provider would resume, not the active one", () => {
+    const threadId = ThreadId.make("thread");
+    const claude = ProviderInstanceId.make("claude");
+    const codex = ProviderInstanceId.make("codex");
+    const updatedAt = DateTime.makeUnsafe(epoch);
+    const root = {
+      appThreadId: threadId,
+      ownerNodeId: null,
+      contextUsage: null,
+      forkedFrom: null,
+      lastRunOrdinal: 1,
+      updatedAt,
+    };
+    const coldClaude = {
+      ...root,
+      id: ProviderThreadId.make("claude-thread"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: claude,
+      nativeThreadRef: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        nativeId: "imported",
+        strength: "strong" as const,
+      },
+    };
+    const codexThread = {
+      ...root,
+      id: ProviderThreadId.make("codex-thread"),
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: codex,
+      nativeThreadRef: null,
+      lastRunOrdinal: 2,
+    };
+    const base = {
+      providerThreads: [coldClaude, codexThread],
+      providerTurns: [],
+      attempts: [],
+      runs: [],
+      nowMs: epoch,
+    };
+    const fromClaude = { ...base, thread: { id: threadId, activeProviderThreadId: coldClaude.id } };
+    const fromCodex = { ...base, thread: { id: threadId, activeProviderThreadId: codexThread.id } };
+    expect(
+      deriveSendPromptCacheStatus({
+        ...fromClaude,
+        modelSelection: { instanceId: codex, model: "luna" },
+      }).state,
+    ).toBe("unsupported");
+    expect(
+      deriveSendPromptCacheStatus({
+        ...fromCodex,
+        modelSelection: { instanceId: claude, model: "opus" },
+      }).state,
+    ).toBe("unknown");
+    expect(
+      deriveSendPromptCacheStatus({
+        ...fromCodex,
+        providerThreads: [{ ...coldClaude, compactionSuperseded: true as const }, codexThread],
+        modelSelection: { instanceId: claude, model: "opus" },
       }).state,
     ).toBe("fresh");
-    expect(deriveThreadPromptCacheStatus({ ...input, providerTurns: [] }).state).toBe("unknown");
   });
 });

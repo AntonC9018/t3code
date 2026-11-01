@@ -532,6 +532,9 @@ export const layer: Layer.Layer<
             attempt.attemptOrdinal === 1
           )
             return true;
+          // A conversation the projection has not recorded yet was just opened by this attempt.
+          if (!projection.providerThreads.some((thread) => thread.id === destination.id))
+            return true;
           const now = yield* DateTime.now;
           const status = deriveThreadPromptCacheStatus({
             providerThread: destination,

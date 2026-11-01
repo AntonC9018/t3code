@@ -354,10 +354,10 @@ export const layer: Layer.Layer<
               "attempts",
               "runs",
             ]);
+            // A steering message is delivered once, so its acknowledgement cannot be replayed.
             const acknowledged =
               context.message.allowUncachedRead === true &&
-              context.message.runId === context.run.id &&
-              context.attempt?.attemptOrdinal === 1;
+              context.message.runId === context.run.id;
             const cache = deriveThreadPromptCacheStatus({
               providerThread: context.providerThread,
               providerTurns: cacheContext.providerTurns,

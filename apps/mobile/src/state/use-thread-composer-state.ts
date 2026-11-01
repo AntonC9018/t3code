@@ -1,5 +1,5 @@
 import {
-  deriveThreadPromptCacheStatus,
+  deriveSendPromptCacheStatus,
   promptCacheNeedsAcknowledgement,
 } from "@t3tools/shared/promptCache";
 import { useComposerAttachmentActions } from "./use-composer-attachment-actions";
@@ -609,11 +609,9 @@ export function useThreadComposerState() {
 
     const projection = selectedThreadProjection?.projection;
     const cacheStatus = projection
-      ? deriveThreadPromptCacheStatus({
-          providerThread:
-            projection.providerThreads.find(
-              (candidate) => candidate.id === projection.thread.activeProviderThreadId,
-            ) ?? null,
+      ? deriveSendPromptCacheStatus({
+          thread: projection.thread,
+          providerThreads: projection.providerThreads,
           providerTurns: projection.providerTurns,
           attempts: projection.attempts,
           runs: projection.runs,

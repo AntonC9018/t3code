@@ -19,6 +19,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import {
   historicalMessage,
   historySinceCustomCompaction,
+  sinceLastCustomCompaction,
 } from "@t3tools/provider-core/server/handoffBudget";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -48,8 +49,23 @@ function snapshotIdentity(projection: OrchestrationV2ThreadProjection): string {
     runtimeRequests: projection.runtimeRequests,
     subagents: projection.subagents,
     contextTransfers: projection.contextTransfers,
-    turnItems: projection.turnItems.map((item) => [item.id, item.status, item.updatedAt]),
+    turnItems: projection.visibleTurnItems.map(({ item }) => [
+      item.id,
+      item.status,
+      item.updatedAt,
+    ]),
   });
+}
+
+/** Inherited fork history, then local history, from the latest compaction boundary on. */
+function compactionHistory(projection: OrchestrationV2ThreadProjection) {
+  const local = historySinceCustomCompaction(projection.turnItems, projection.runs);
+  const first = local[0];
+  if (first?.type === "handoff" && first.compactionModelSelection !== undefined) return local;
+  const inherited = projection.visibleTurnItems
+    .filter((row) => row.visibility === "inherited")
+    .map((row) => row.item);
+  return [...sinceLastCustomCompaction(inherited), ...local];
 }
 
 function isBusy(projection: OrchestrationV2ThreadProjection): boolean {
@@ -193,7 +209,7 @@ export const layer = Layer.effect(
                       threadId: input.threadId,
                       reason: "empty",
                     });
-                  const transcript = historySinceCustomCompaction(original.turnItems, original.runs)
+                  const transcript = compactionHistory(original)
                     .flatMap((item) => {
                       const message = historicalMessage(item);
                       return message === null

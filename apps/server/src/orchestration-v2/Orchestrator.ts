@@ -1,3 +1,4 @@
+import { rootProviderThreadsForInstance } from "@t3tools/shared/promptCache";
 import { historySinceCustomCompaction } from "@t3tools/provider-core/server/handoffBudget";
 import type {
   GuestShareId,
@@ -961,19 +962,11 @@ function rootProviderThreadsForProvider(
   projection: Pick<OrchestrationV2ThreadProjection, "providerThreads" | "thread">,
   providerInstanceId: ModelSelection["instanceId"],
 ): ReadonlyArray<OrchestrationV2ProviderThread> {
-  return projection.providerThreads
-    .filter(
-      (providerThread) =>
-        providerThread.providerInstanceId === providerInstanceId &&
-        providerThread.compactionSuperseded !== true &&
-        providerThread.appThreadId === projection.thread.id &&
-        providerThread.ownerNodeId === null,
-    )
-    .toSorted(
-      (left, right) =>
-        (right.lastRunOrdinal ?? 0) - (left.lastRunOrdinal ?? 0) ||
-        DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-    );
+  return rootProviderThreadsForInstance(
+    projection.providerThreads,
+    projection.thread.id,
+    providerInstanceId,
+  );
 }
 
 function isHandoffSourceRun(run: OrchestrationV2Run): boolean {

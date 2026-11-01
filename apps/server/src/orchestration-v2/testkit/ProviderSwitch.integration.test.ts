@@ -571,6 +571,8 @@ describe("orchestration v2 provider switching", () => {
               messageId: MessageId.make(`regression:${ordinal}`),
               createdBy: "user",
               creationSource: "web",
+              // Switching back to Claude has no cache telemetry here; these cases test handoffs.
+              allowUncachedRead: true,
               text,
               attachments:
                 turnUsageScenario && ordinal === 2
@@ -1085,6 +1087,7 @@ describe("orchestration v2 provider switching", () => {
                 messageId: MessageId.make(`retry:${ordinal}`),
                 createdBy: "user",
                 creationSource: "web",
+                allowUncachedRead: true,
                 text,
                 attachments: [],
                 modelSelection: selection,

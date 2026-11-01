@@ -340,7 +340,7 @@ it.effect(
     }),
 );
 
-it.effect.each(["expired", "unknown", "override", "retry"] as const)(
+it.effect.each(["expired", "unknown", "override"] as const)(
   "protects Claude steering messages before reaching the live session: %s",
   (cache) =>
     Effect.gen(function* () {
@@ -374,7 +374,6 @@ it.effect.each(["expired", "unknown", "override", "retry"] as const)(
       const attempt = {
         ...initial.attempts[0]!,
         nativeThreadId: "native-cache-steer",
-        attemptOrdinal: cache === "retry" ? 2 : 1,
       };
       const run: OrchestrationV2ThreadProjection["runs"][number] = {
         id: attempt.runId,
@@ -406,7 +405,7 @@ it.effect.each(["expired", "unknown", "override", "retry"] as const)(
         creationSource: "web",
         createdAt: now,
         updatedAt: now,
-        ...(cache === "override" || cache === "retry" ? { allowUncachedRead: true } : {}),
+        ...(cache === "override" ? { allowUncachedRead: true } : {}),
       };
       const turn = {
         ...initial.providerTurns[0]!,
@@ -426,8 +425,14 @@ it.effect.each(["expired", "unknown", "override", "retry"] as const)(
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(ProjectionStore.ProjectionStoreV2)({
-              getProviderControlContext: () =>
-                Effect.succeed({ providerThread, providerTurn: turn, attempt, message, run }),
+              getProviderControlContext: (_threadId, target) =>
+                Effect.succeed({
+                  providerThread,
+                  providerTurn: turn,
+                  attempt: target.attemptId === attempt.id ? attempt : undefined,
+                  message,
+                  run,
+                }),
               getThreadRecords: () =>
                 Effect.succeed({
                   ...initial,

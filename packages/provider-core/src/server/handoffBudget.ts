@@ -124,29 +124,33 @@ export function handoffBudget(input: {
   );
 }
 
+/** Items from the latest custom-compaction boundary on; `items` must be chronological. */
+export function sinceLastCustomCompaction<Item extends OrchestrationV2TurnItem>(
+  items: ReadonlyArray<Item>,
+): ReadonlyArray<Item> {
+  const boundary = items.findLastIndex(
+    (item) => item.type === "handoff" && item.compactionModelSelection !== undefined,
+  );
+  return boundary === -1 ? items : items.slice(boundary);
+}
+
+/** Local thread history the next provider conversation must carry, in run order. */
 export function historySinceCustomCompaction(
   items: ReadonlyArray<OrchestrationV2TurnItem>,
   runs: OrchestrationV2ThreadProjection["runs"],
 ) {
-  const runOrdinals = new Map(runs.map((run) => [run.id, run.ordinal]));
+  const runsById = new Map(runs.map((run) => [run.id, run]));
   const runOrdinal = (item: OrchestrationV2TurnItem) =>
-    item.runId === null ? -1 : (runOrdinals.get(item.runId) ?? -1);
-  const boundary = items
-    .filter((item) => item.type === "handoff" && item.compactionModelSelection !== undefined)
-    .toSorted(
-      (left, right) => runOrdinal(right) - runOrdinal(left) || right.ordinal - left.ordinal,
-    )[0];
-  if (boundary === undefined) return items;
-  // Provider item ordinals can restart in the fresh native conversation.
-  return items
-    .filter(
-      (item) =>
-        runOrdinal(item) > runOrdinal(boundary) ||
-        (item.runId === boundary.runId && item.ordinal >= boundary.ordinal),
-    )
-    .toSorted(
-      (left, right) => runOrdinal(left) - runOrdinal(right) || left.ordinal - right.ordinal,
-    );
+    item.runId === null ? -1 : (runsById.get(item.runId)?.ordinal ?? -1);
+  // Provider item ordinals restart per native conversation, so order by run first. Run-less
+  // imported history sorts first and keeps its order.
+  return sinceLastCustomCompaction(
+    items
+      .filter((item) => item.runId === null || runsById.get(item.runId)?.status !== "rolled_back")
+      .toSorted(
+        (left, right) => runOrdinal(left) - runOrdinal(right) || left.ordinal - right.ordinal,
+      ),
+  );
 }
 
 export function historicalMessage(

@@ -106,6 +106,73 @@ function makeHarness(
   return { layer, generateContextSummary };
 }
 
+/** Records a finished turn so the thread is idle with a native conversation to supersede. */
+const completeTurn = Effect.fn(function* (target: ThreadId, id: string, text: string) {
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  yield* threads.dispatch({
+    type: "message.dispatch",
+    commandId: CommandId.make(id),
+    threadId: target,
+    messageId: MessageId.make(id),
+    text,
+    attachments: [],
+    dispatchMode: { type: "defer_start" },
+    createdBy: "user",
+    creationSource: "web",
+  });
+  const projection = yield* threads.getThreadProjection(target);
+  const run = projection.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0]!;
+  const provider = projection.providerThreads.find(
+    (candidate) => candidate.id === run.providerThreadId,
+  )!;
+  const ids = yield* IdAllocator.IdAllocatorV2;
+  const sink = yield* EventSink.EventSinkV2;
+  const now = yield* DateTime.now;
+  const settled = [
+    ...projection.turnItems
+      .filter((item) => item.status === "running" || item.status === "pending")
+      .map((item) => ({
+        type: "turn-item.updated" as const,
+        payload: { ...item, status: "completed" as const, completedAt: now },
+      })),
+    ...projection.contextTransfers
+      .filter((transfer) => transfer.status === "pending")
+      .map((transfer) => ({
+        type: "context-transfer.updated" as const,
+        payload: { ...transfer, status: "consumed" as const },
+      })),
+    {
+      type: "run.updated" as const,
+      payload: { ...run, status: "completed" as const, completedAt: now },
+    },
+    {
+      type: "provider-thread.updated" as const,
+      payload: {
+        ...provider,
+        status: "idle" as const,
+        nativeThreadRef: {
+          driver: provider.driver,
+          nativeId: `native:${target}`,
+          strength: "strong" as const,
+        },
+      },
+    },
+  ];
+  for (const event of settled) {
+    yield* sink.write({
+      events: [
+        {
+          ...event,
+          id: yield* ids.allocate.event({ threadId: target }),
+          threadId: target,
+          occurredAt: now,
+        },
+      ],
+    });
+  }
+  return yield* threads.getThreadProjection(target);
+});
+
 const seed = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   yield* threads.dispatch({
@@ -122,65 +189,7 @@ const seed = Effect.gen(function* () {
     createdBy: "user",
     creationSource: "web",
   });
-  yield* threads.dispatch({
-    type: "message.dispatch",
-    commandId: CommandId.make("first"),
-    threadId,
-    messageId: MessageId.make("first"),
-    text: "ORIGINAL_LONG_TRANSCRIPT",
-    attachments: [],
-    dispatchMode: { type: "defer_start" },
-    createdBy: "user",
-    creationSource: "web",
-  });
-  const original = yield* threads.getThreadProjection(threadId);
-  const run = original.runs[0]!;
-  const provider = original.providerThreads[0]!;
-  const ids = yield* IdAllocator.IdAllocatorV2;
-  const sink = yield* EventSink.EventSinkV2;
-  const now = yield* DateTime.now;
-  for (const item of original.turnItems.filter(
-    (item) => item.status === "running" || item.status === "pending",
-  )) {
-    yield* sink.write({
-      events: [
-        {
-          id: yield* ids.allocate.event({ threadId }),
-          threadId,
-          type: "turn-item.updated",
-          occurredAt: now,
-          payload: { ...item, status: "completed", completedAt: now },
-        },
-      ],
-    });
-  }
-  yield* sink.write({
-    events: [
-      {
-        id: yield* ids.allocate.event({ threadId }),
-        threadId,
-        type: "run.updated",
-        occurredAt: now,
-        payload: { ...run, status: "completed", completedAt: now },
-      },
-      {
-        id: yield* ids.allocate.event({ threadId }),
-        threadId,
-        type: "provider-thread.updated",
-        occurredAt: now,
-        payload: {
-          ...provider,
-          status: "idle",
-          nativeThreadRef: {
-            driver: provider.driver,
-            nativeId: "original-native-context",
-            strength: "strong",
-          },
-        },
-      },
-    ],
-  });
-  return yield* threads.getThreadProjection(threadId);
+  return yield* completeTurn(threadId, "first", "ORIGINAL_LONG_TRANSCRIPT");
 });
 
 describe("custom model compaction", () => {
@@ -322,6 +331,40 @@ describe("custom model compaction", () => {
       assert.include(transcript, "Later request");
       assert.include(transcript, "Preserved objective and next steps.");
       assert.notInclude(transcript, "ORIGINAL_LONG_TRANSCRIPT");
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("summarizes history a fork inherited from its source thread", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const source = yield* seed;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const service = yield* CustomCompaction.CustomCompactionService;
+      const forkId = ThreadId.make("thread:custom-compaction-fork");
+      yield* threads.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("fork"),
+        sourceThreadId: threadId,
+        targetThreadId: forkId,
+        sourcePoint: { type: "run", runId: source.runs[0]!.id },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const fork = yield* completeTurn(forkId, "fork-turn", "Implement that plan");
+      assert.isTrue(fork.visibleTurnItems.some((row) => row.visibility === "inherited"));
+      yield* service.compact({
+        ...request,
+        threadId: forkId,
+        commandId: CommandId.make("compact:fork"),
+      });
+      assert.include(
+        harness.generateContextSummary.mock.calls.at(-1)![0].transcript,
+        "Implement that plan",
+      );
+      assert.include(
+        harness.generateContextSummary.mock.calls.at(-1)![0].transcript,
+        "ORIGINAL_LONG_TRANSCRIPT",
+      );
     }).pipe(Effect.provide(harness.layer));
   });
 

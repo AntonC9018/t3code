@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -154,6 +155,7 @@ import { editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import {
   completeQueuedMessageDelivery,
   prepareQueuedMessageAttachments,
+  queuedPromptCacheNeedsConfirmation,
   recoverEditedCreationAfterDelivery,
   removeAcknowledgedExistingThreadMessage,
   restoreRejectedQueuedMessage,
@@ -790,5 +792,27 @@ describe("thread outbox recovery rollback", () => {
     );
     expect(remainingMessages()).toEqual([]);
     expect(appAtomRegistry.get(threadComposerErrorsAtom)[draftKey]?.message).toBe("too large");
+  });
+});
+
+describe("thread outbox prompt-cache recheck", () => {
+  it("asks again when the Claude cache expired after the message was queued", () => {
+    const claude = { instanceId: ProviderInstanceId.make("claude"), model: "opus" };
+    const thread = (promptCacheExpiresAt: string) => ({
+      modelSelection: claude,
+      promptCache: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        hasContext: true,
+        usage: { promptCacheExpiresAt },
+      },
+    });
+    expect(queuedPromptCacheNeedsConfirmation(thread("2000-01-01T00:00:00Z"), claude)).toBe(true);
+    expect(queuedPromptCacheNeedsConfirmation(thread("2999-01-01T00:00:00Z"), claude)).toBe(false);
+    expect(
+      queuedPromptCacheNeedsConfirmation(thread("2000-01-01T00:00:00Z"), {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "luna",
+      }),
+    ).toBe(false);
   });
 });

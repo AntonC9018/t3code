@@ -1,4 +1,4 @@
-import { deriveThreadPromptCacheStatus, type PromptCacheStatus } from "@t3tools/shared/promptCache";
+import { deriveSendPromptCacheStatus, type PromptCacheStatus } from "@t3tools/shared/promptCache";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import {
   mergeDirectPreviewAnnotation,
@@ -262,11 +262,9 @@ function readSendPromptCacheStatus(
   modelSelection: ModelSelection,
 ): PromptCacheStatus {
   if (!projection) return { state: "fresh" };
-  return deriveThreadPromptCacheStatus({
-    providerThread:
-      projection.providerThreads.find(
-        (thread) => thread.id === projection.thread.activeProviderThreadId,
-      ) ?? null,
+  return deriveSendPromptCacheStatus({
+    thread: projection.thread,
+    providerThreads: projection.providerThreads,
     providerTurns: projection.providerTurns,
     attempts: projection.attempts,
     runs: projection.runs,
