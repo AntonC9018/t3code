@@ -64,3 +64,7 @@ Claude threads show an estimated prompt-cache lifetime. Expired or unknown cache
 turn unless you explicitly allow an uncached read for that message. You can compact with another model
 instead. The estimate cannot guarantee a cache hit: model or prompt changes may invalidate the cache
 earlier. A fresh conversation still needs to process its summary and instructions on the next turn.
+
+Agents and scheduled tasks cannot confirm an uncached read. In **Settings → Threads**, choose
+whether their sends to a cold Claude thread are blocked, allowed, or compacted first with your
+compaction model.

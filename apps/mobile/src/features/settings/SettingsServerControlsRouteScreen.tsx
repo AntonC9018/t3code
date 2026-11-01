@@ -5,6 +5,7 @@ import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/sess
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { AppText as Text } from "../../components/ui/AppText";
 import {
+  type AgentColdCachePolicy,
   type ResponseStreamingMode,
   type ServerSettings,
   type ServerSettingsPatch,
@@ -127,6 +128,28 @@ const STREAMING_CHOICES: ReadonlyArray<{
     mode: "paragraph",
     label: "Finished paragraphs",
     description: "Show each paragraph or code block as it completes.",
+  },
+];
+
+const COLD_CACHE_CHOICES: ReadonlyArray<{
+  readonly mode: AgentColdCachePolicy;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  {
+    mode: "block",
+    label: "Block the send",
+    description: "The agent or scheduled task is told the thread needs you.",
+  },
+  {
+    mode: "allow",
+    label: "Allow the uncached read",
+    description: "Claude rereads the whole context, which uses more of your limits.",
+  },
+  {
+    mode: "compact",
+    label: "Compact with another model first",
+    description: "Uses the model last chosen in the compaction menu.",
   },
 ];
 
@@ -364,6 +387,26 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                         separated={index > 0}
                         disabled={disabledFor("responseStreamingMode")}
                         onPress={() => write({ responseStreamingMode: choice.mode })}
+                      />
+                    ))}
+                  </SettingsSection>
+                  <SettingsSection
+                    title="Agent sends to a cold Claude cache"
+                    trailing={
+                      pendingWrites === 0 && uniform("agentColdCachePolicy") === null ? (
+                        <MixedValuesLabel projectSelected={projectSelected} />
+                      ) : null
+                    }
+                  >
+                    {COLD_CACHE_CHOICES.map((choice, index) => (
+                      <SettingsChoiceRow
+                        key={choice.mode}
+                        label={choice.label}
+                        description={choice.description}
+                        selected={uniform("agentColdCachePolicy") === choice.mode}
+                        separated={index > 0}
+                        disabled={disabledFor("agentColdCachePolicy")}
+                        onPress={() => write({ agentColdCachePolicy: choice.mode })}
                       />
                     ))}
                   </SettingsSection>

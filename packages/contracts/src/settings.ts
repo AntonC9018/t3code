@@ -1222,6 +1222,13 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+/**
+ * What an agent or scheduled send does when the target Claude conversation's prompt cache is
+ * cold: refuse, accept the uncached read, or first compact with `customCompactionModelSelection`.
+ */
+export const AgentColdCachePolicy = Schema.Literals(["block", "allow", "compact"]);
+export type AgentColdCachePolicy = typeof AgentColdCachePolicy.Type;
+
 export const ServerSettings = Schema.Struct({
   speechProjectCustomWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
@@ -1366,6 +1373,9 @@ export const ServerSettings = Schema.Struct({
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   customCompactionModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  agentColdCachePolicy: AgentColdCachePolicy.pipe(
+    Schema.withDecodingDefault(Effect.succeed("block" as const)),
   ),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
@@ -1708,6 +1718,7 @@ export const ServerSettingsPatch = Schema.Struct({
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   customCompactionModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  agentColdCachePolicy: Schema.optionalKey(AgentColdCachePolicy),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   threadTitleInstructions: Schema.optionalKey(TrimmedString),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),

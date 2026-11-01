@@ -259,6 +259,19 @@ export class ThreadManagementNoSteerableRunError extends Schema.TaggedError<Thre
   }
 }
 
+export class ThreadManagementPromptCacheColdError extends Schema.TaggedError<ThreadManagementPromptCacheColdError>()(
+  "ThreadManagementPromptCacheColdError",
+  {
+    threadId: ThreadId,
+    cacheStatus: Schema.Literals(["expired", "unknown"]),
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} has a ${this.cacheStatus === "expired" ? "cold" : "possibly cold"} Claude prompt cache, so the send would reread its full context. ${this.detail}`;
+  }
+}
+
 export class ThreadManagementThreadNotInterruptibleError extends Schema.TaggedError<ThreadManagementThreadNotInterruptibleError>()(
   "ThreadManagementThreadNotInterruptibleError",
   {
@@ -347,6 +360,7 @@ export const ThreadManagementError = Schema.Union([
   ThreadManagementRunNotFoundError,
   ThreadManagementThreadArchivedError,
   ThreadManagementNoSteerableRunError,
+  ThreadManagementPromptCacheColdError,
   ThreadManagementThreadNotInterruptibleError,
   ThreadManagementProjectionLoadError,
   ThreadManagementProjectThreadsListError,

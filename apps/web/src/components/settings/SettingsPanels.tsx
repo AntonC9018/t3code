@@ -72,6 +72,7 @@ import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { AgentColdCacheRow } from "./AgentColdCacheSettings";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -1813,6 +1814,7 @@ export function ThreadsSettingsPanel() {
             )
           }
         />
+        <AgentColdCacheRow />
         <AdvancedSettings
           targetIds={[
             searchableSetting("thread-title-instructions").id,

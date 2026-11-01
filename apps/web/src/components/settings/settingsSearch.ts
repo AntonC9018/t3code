@@ -733,6 +733,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
+    id: "agent-cold-cache-policy",
+    title: "Agent sends to a cold Claude cache",
+    to: "/settings/threads",
+    searchTerms: [
+      "prompt cache expired uncached read compaction compact block allow scheduled tasks mcp",
+    ],
+    environmentOnly: true,
+  },
+  {
     id: "speech-post-processing",
     title: "Voice post-processing",
     to: "/settings/voice",

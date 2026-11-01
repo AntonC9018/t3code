@@ -1,3 +1,4 @@
+import * as AgentColdCachePolicy from "./AgentColdCachePolicy.ts";
 import * as CustomCompactionService from "./CustomCompactionService.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
@@ -282,11 +283,27 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
+const layerCustomCompactionProvided = CustomCompactionService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerThreadManagementProvided,
+      ProjectStore.layer,
+      TextGeneration.layer,
+      ThreadCommandExecutor.layer,
+      layerEventSink,
+      IdAllocator.layer,
+    ),
+  ),
+);
+/** The thread service agents and scheduled tasks see, with the cold-cache policy on sends. */
+const layerAgentThreadManagementProvided = AgentColdCachePolicy.layer.pipe(
+  Layer.provide(Layer.mergeAll(layerThreadManagementProvided, layerCustomCompactionProvided)),
+);
 const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       layerThreadLaunchProvided,
-      layerThreadManagementProvided,
+      layerAgentThreadManagementProvided,
       layerManagedProjectFoldersProvided,
       layerSecretRequestsProvided,
     ),
@@ -307,18 +324,6 @@ const layerProviderContinuationWorkerProvided = ProviderContinuationService.laye
     Layer.mergeAll(
       ProviderContinuationRequests.layer,
       layerThreadManagementProvided,
-      IdAllocator.layer,
-    ),
-  ),
-);
-const layerCustomCompactionProvided = CustomCompactionService.layer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      layerThreadManagementProvided,
-      ProjectStore.layer,
-      TextGeneration.layer,
-      ThreadCommandExecutor.layer,
-      layerEventSink,
       IdAllocator.layer,
     ),
   ),
@@ -372,7 +377,7 @@ export const layer = Layer.mergeAll(
   layerCommandOutputHubProvided,
   layerOrchestratorProvided,
   layerMcpAppRequestsProvided,
-  layerThreadManagementProvided,
+  layerAgentThreadManagementProvided,
   layerCustomCompactionProvided,
   layerEffectWorkerProvided,
   layerProviderSessionManagerProvided,
