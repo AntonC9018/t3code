@@ -1,29 +1,30 @@
 import { Editor, type EditorFactory } from "@pierre/diffs/edit";
 import { EditProvider, File } from "@pierre/diffs/react";
 import type { CSSProperties } from "react";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../test/render";
 
-afterEach(() => vi.restoreAllMocks());
+// Stretches measured text so the canvas reports widths the DOM layout does not match.
+function stretchCanvasText() {
+  const measureText = CanvasRenderingContext2D.prototype.measureText;
+  return vi.spyOn(CanvasRenderingContext2D.prototype, "measureText").mockImplementation(function (
+    this: CanvasRenderingContext2D,
+    text: string,
+  ) {
+    const metrics = measureText.call(this, text);
+    return new Proxy(metrics, {
+      get(target, key) {
+        return key === "width" ? target.width * 1.05 : Reflect.get(target, key, target);
+      },
+    });
+  });
+}
 
 it.each([false, true])(
   "keeps an existing editor's caret aligned after typography changes (canvas mismatch: %s)",
   async (canvasMismatch) => {
-    if (canvasMismatch) {
-      const measureText = CanvasRenderingContext2D.prototype.measureText;
-      vi.spyOn(CanvasRenderingContext2D.prototype, "measureText").mockImplementation(function (
-        this: CanvasRenderingContext2D,
-        text: string,
-      ) {
-        const metrics = measureText.call(this, text);
-        return new Proxy(metrics, {
-          get(target, key) {
-            return key === "width" ? target.width * 1.05 : Reflect.get(target, key, target);
-          },
-        });
-      });
-    }
+    using _measureText = canvasMismatch ? stretchCanvasText() : undefined;
     const contents = "replace the need to test a real NixOS boot.";
     let editor: Editor<"file", undefined, undefined> | undefined;
     const createEditor: EditorFactory<undefined, undefined> = (type, options, key) =>

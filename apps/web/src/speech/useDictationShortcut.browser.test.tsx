@@ -1,10 +1,9 @@
-// @vitest-environment jsdom
-import { act, useRef } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { useRef } from "react";
+import { expect, it, vi } from "vite-plus/test";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
 
+import { act, render } from "../../test/render";
 import { useDictationShortcut } from "./useDictationShortcut";
 
 const settings = vi.hoisted(() => ({ mode: "toggle" as "toggle" | "hold" | "auto" }));
@@ -25,8 +24,6 @@ const comment = {
   stop: vi.fn(async () => {}),
   cancel: vi.fn(),
 };
-let root: Root;
-let container: HTMLDivElement;
 function Editors({ showComment = true }: { showComment?: boolean }) {
   useDictationShortcut({
     keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
@@ -66,32 +63,24 @@ const key = (type: "keydown" | "keyup", value = "d") =>
     }),
   );
 
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function resetFakes() {
   settings.mode = "toggle";
   vi.clearAllMocks();
   main.state = { phase: "idle", error: null, errorAction: null };
   comment.state = { phase: "idle", error: null, errorAction: null };
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(() => root.render(<Editors />));
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+}
 
 it("dictates into the focused comment instead of the main composer", async () => {
-  container.querySelector<HTMLTextAreaElement>('[aria-label="Comment"]')!.focus();
+  resetFakes();
+  await using screen = await render(<Editors />, { router: false });
+  screen.container.querySelector<HTMLTextAreaElement>('[aria-label="Comment"]')!.focus();
   await act(() => {
     key("keydown");
     key("keyup");
   });
   expect(comment.start).toHaveBeenCalledOnce();
   expect(main.start).not.toHaveBeenCalled();
-  container.querySelector<HTMLTextAreaElement>('[aria-label="Main"]')!.focus();
+  screen.container.querySelector<HTMLTextAreaElement>('[aria-label="Main"]')!.focus();
   await act(() => {
     key("keydown");
     key("keyup");
@@ -100,9 +89,10 @@ it("dictates into the focused comment instead of the main composer", async () =>
 });
 
 it("stops and cancels the recording owner even after focus moves", async () => {
+  resetFakes();
   comment.state = { phase: "recording", error: null, errorAction: null };
-  await act(() => root.render(<Editors />));
-  container.querySelector<HTMLTextAreaElement>('[aria-label="Main"]')!.focus();
+  await using screen = await render(<Editors />, { router: false });
+  screen.container.querySelector<HTMLTextAreaElement>('[aria-label="Main"]')!.focus();
   await act(() => {
     key("keydown");
     key("keyup");
@@ -114,9 +104,10 @@ it("stops and cancels the recording owner even after focus moves", async () => {
 });
 
 it("finishes hold dictation on release", async () => {
+  resetFakes();
   settings.mode = "hold";
-  await act(() => root.render(<Editors key={settings.mode} />));
-  container.querySelector<HTMLTextAreaElement>('[aria-label="Comment"]')!.focus();
+  await using screen = await render(<Editors key={settings.mode} />, { router: false });
+  screen.container.querySelector<HTMLTextAreaElement>('[aria-label="Comment"]')!.focus();
   await act(() => {
     key("keydown");
     key("keyup");
@@ -126,6 +117,7 @@ it("finishes hold dictation on release", async () => {
 });
 
 it("does not stop a later session when the editor closes during preparation", async () => {
+  resetFakes();
   settings.mode = "hold";
   let resolve!: () => void;
   comment.start.mockImplementationOnce(
@@ -134,18 +126,19 @@ it("does not stop a later session when the editor closes during preparation", as
         resolve = done;
       }),
   );
-  await act(() => root.render(<Editors key={settings.mode} />));
-  container.querySelector<HTMLTextAreaElement>('[aria-label="Comment"]')!.focus();
+  await using screen = await render(<Editors key={settings.mode} />, { router: false });
+  screen.container.querySelector<HTMLTextAreaElement>('[aria-label="Comment"]')!.focus();
   await act(() => {
     key("keydown");
     key("keyup");
   });
-  await act(() => root.render(<Editors showComment={false} />));
+  await screen.rerender(<Editors showComment={false} />);
   await act(async () => resolve());
   expect(comment.stop).not.toHaveBeenCalled();
 });
 
 it("does not finish a new recording when a cancelled hold start resolves", async () => {
+  resetFakes();
   settings.mode = "hold";
   let resolve!: () => void;
   comment.start.mockImplementationOnce(
@@ -154,8 +147,8 @@ it("does not finish a new recording when a cancelled hold start resolves", async
         resolve = done;
       }),
   );
-  await act(() => root.render(<Editors key={settings.mode} />));
-  container.querySelector<HTMLTextAreaElement>('[aria-label="Comment"]')!.focus();
+  await using screen = await render(<Editors key={settings.mode} />, { router: false });
+  screen.container.querySelector<HTMLTextAreaElement>('[aria-label="Comment"]')!.focus();
   await act(() => {
     key("keydown");
     key("keyup");

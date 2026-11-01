@@ -1,7 +1,5 @@
-// @vitest-environment jsdom
-import { act, useRef } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { beforeEach, afterEach, it, expect, vi } from "vite-plus/test";
+import { useRef } from "react";
+import { it, expect, vi } from "vite-plus/test";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import {
   EnvironmentId,
@@ -9,6 +7,7 @@ import {
   type DesktopPreviewAnnotationVoiceEvent,
 } from "@t3tools/contracts";
 import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
+import { act, render } from "../../../test/render";
 import { useDictationShortcut } from "../../speech/useDictationShortcut";
 import { PreviewAnnotationSpeech } from "./PreviewAnnotationSpeech";
 
@@ -30,9 +29,13 @@ vi.mock("../../speech/useEnvironmentSpeechInput", () => ({
 vi.mock("../../hooks/useSettings", () => ({ useClientSettings: () => "toggle" }));
 vi.mock("../../commandPaletteBus", () => ({ isCommandPaletteOpen: () => false }));
 vi.mock("../../lib/terminalFocus", () => ({ getTerminalFocusOwner: () => null }));
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-router")>()),
+  useNavigate: () => vi.fn(),
+}));
 vi.mock("../../state/entities", () => ({ useThreadShell: () => null, useProject: () => null }));
 vi.mock("../../composerDraftStore", () => ({ useComposerDraftStore: () => null }));
+vi.mock("~/components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("../chat/VoiceInputSetup", () => ({ VoiceInputSetup: () => null }));
 vi.mock("../chat/ComposerSpeechButton", () => ({
   resolveSpeechPresentation: () => ({ status: null }),
@@ -115,25 +118,16 @@ function host(key = "d") {
     new KeyboardEvent("keyup", { key, code: key === "d" ? "KeyD" : "Escape", cancelable: true }),
   );
 }
-let root: Root;
-let container: HTMLDivElement;
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function resetFakes() {
   vi.clearAllMocks();
   main.state = mocks.speech.state = { phase: "idle", error: null, errorAction: null };
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(() => root.render(<Editors />));
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+}
+
 it("returns shortcut ownership to the composer and back to the open guest annotation", async () => {
+  resetFakes();
+  await using screen = await render(<Editors />, { router: false });
   await act(() => guest("focus"));
-  container.querySelector<HTMLTextAreaElement>("textarea")!.focus();
+  screen.container.querySelector<HTMLTextAreaElement>("textarea")!.focus();
   await act(() => host());
   expect(main.start).toHaveBeenCalledOnce();
   expect(mocks.speech.start).not.toHaveBeenCalled();
@@ -144,17 +138,21 @@ it("returns shortcut ownership to the composer and back to the open guest annota
   expect(mocks.speech.start).toHaveBeenCalledOnce();
   expect(main.start).toHaveBeenCalledOnce();
 });
+
 it("cancels annotation recording from the main window after focus moves", async () => {
+  resetFakes();
   mocks.speech.state = { phase: "recording", error: null, errorAction: null };
-  await act(() => root.render(<Editors />));
-  container.querySelector<HTMLTextAreaElement>("textarea")!.focus();
+  await using screen = await render(<Editors />, { router: false });
+  screen.container.querySelector<HTMLTextAreaElement>("textarea")!.focus();
   await act(() => host("Escape"));
   expect(mocks.speech.cancel).toHaveBeenCalledOnce();
   expect(main.cancel).not.toHaveBeenCalled();
 });
+
 it("cancels main-window recording with a forwarded guest Escape", async () => {
+  resetFakes();
   main.state = { phase: "recording", error: null, errorAction: null };
-  await act(() => root.render(<Editors />));
+  await using _screen = await render(<Editors />, { router: false });
   await act(() => {
     guest("focus");
     guest("key", "Escape");
