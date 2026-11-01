@@ -82,8 +82,6 @@ const DESKTOP_BACKEND_ENV_NAMES = [
 
 // Windows forwards these variables into WSL only through WSLENV.
 const WSL_FORWARDED_ENV_NAMES = [
-  "T3_SPEECH_HANDY_URL",
-  "T3_SPEECH_HANDY_TOKEN",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "T3CODE_TELEMETRY_ENABLED",
