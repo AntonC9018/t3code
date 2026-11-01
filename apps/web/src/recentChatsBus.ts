@@ -8,9 +8,3 @@ export function onOpenRecentChats(listener: () => void): () => void {
   window.addEventListener(RECENT_CHATS_OPEN_EVENT, listener);
   return () => window.removeEventListener(RECENT_CHATS_OPEN_EVENT, listener);
 }
-
-export function isRecentChatsPickerOpen(): boolean {
-  return (
-    typeof document !== "undefined" && document.querySelector("[data-recent-chats-picker]") !== null
-  );
-}

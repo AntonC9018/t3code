@@ -47,27 +47,24 @@ const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
   Slash: "/",
 };
 
-export function normalizeEventKey(key: string): string {
+function normalizeEventKey(key: string): string {
   const normalized = key.toLowerCase();
   if (normalized === "esc") return "escape";
   return normalized;
 }
 
-export function shortcutKeyFromEvent(event: Pick<ShortcutEventLike, "key" | "code">): string {
+function shortcutKeyFromEvent(event: Pick<ShortcutEventLike, "key" | "code">): string {
   const layoutKey = normalizeEventKey(event.key);
   if (/^[a-z]$/.test(layoutKey)) return layoutKey;
   const physicalKey = event.code ? EVENT_CODE_SHORTCUT_KEYS[event.code] : undefined;
   return physicalKey ?? layoutKey;
 }
 
-export function resolveEventKeys(event: ShortcutEventLike): Set<string> {
+function resolveEventKeys(event: ShortcutEventLike): Set<string> {
   const layoutKey = normalizeEventKey(event.key);
   const keys = new Set([layoutKey]);
-  // The physical-position fallback exists for layouts that type non-Latin
-  // letters (Cyrillic, Greek) and for Option-modified symbols on macOS.
-  // When the layout already produces a Latin letter, match on it alone;
-  // otherwise a remapped physical key triggers shortcuts for two different
-  // letters at once and shadows system shortcuts on non-QWERTY layouts.
+  // Physical-position fallback is for non-Latin layouts and macOS Option symbols. A Latin
+  // layout letter matches alone, or a remapped key would trigger two letters' shortcuts.
   const letterCode = event.code?.match(/^Key([A-Z])$/)?.[1];
   if (letterCode && !/^[a-z]$/.test(layoutKey)) {
     keys.add(letterCode.toLowerCase());
@@ -76,7 +73,7 @@ export function resolveEventKeys(event: ShortcutEventLike): Set<string> {
   return keys;
 }
 
-export function matchesShortcutModifiers(
+function matchesShortcutModifiers(
   event: ShortcutModifierStateLike,
   shortcut: KeybindingShortcut,
   platform: string,
@@ -107,7 +104,7 @@ function matchesShortcut(
   return resolveEventKeys(event).has(shortcut.key);
 }
 
-export function evaluateWhenNode(
+function evaluateWhenNode(
   node: KeybindingWhenNode,
   context: Readonly<Record<string, boolean | undefined>>,
 ): boolean {

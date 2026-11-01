@@ -7,7 +7,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
 
 export const RECENT_CHATS_MAX_ENTRIES = 100;
-export const RECENT_CHATS_STORAGE_KEY = "t3code:recent-chats:v1";
+const RECENT_CHATS_STORAGE_KEY = "t3code:recent-chats:v1";
 
 const MAX_VALID_DATE_MS = 8_640_000_000_000_000;
 const isScopedThreadRef = Schema.is(ScopedThreadRefSchema);
