@@ -4546,6 +4546,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeCode: notificationCode,
                 failure,
               };
+              // retryCapacityFailure shows its own retry item for overloaded root turns.
+              if (notificationCode === "serverOverloaded" && context.subagent === null) return;
               const occurredAt = yield* DateTime.now;
               const itemOrdinal = yield* resolveItemOrdinal(
                 context,
