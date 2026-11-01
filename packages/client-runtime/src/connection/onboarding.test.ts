@@ -14,7 +14,6 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
-import { setCompanionPairingUrls } from "@t3tools/shared/remote";
 import * as Persistence from "../platform/persistence.ts";
 import { fetchRemoteSessionState } from "../authorization/remote.ts";
 import {
@@ -60,7 +59,6 @@ function layerPairingHttp(
     readonly failExchange?: boolean;
     readonly protocolVersion?: number;
     readonly selfUpdate?: boolean;
-    readonly companions?: boolean;
     readonly grantScopes?: ReadonlyArray<AuthEnvironmentScope>;
     readonly exchangeGate?: { readonly reached: () => void; readonly release: Promise<void> };
   },
@@ -79,10 +77,7 @@ function layerPairingHttp(
       }
       return Promise.resolve(
         Response.json({
-          environmentId:
-            options?.companions && url.includes(":8443/")
-              ? "environment-wsl"
-              : "environment-paired",
+          environmentId: "environment-paired",
           label: "Paired environment",
           platform: {
             os: "linux",
@@ -240,29 +235,6 @@ const registerSwitchedOffEnvironment = Effect.gen(function* () {
 });
 
 describe("connection onboarding", () => {
-  it.effect("registers both Windows and WSL from one QR with separate grants", () => {
-    const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
-    return Effect.gen(function* () {
-      const onboarding = yield* Onboarding.ConnectionOnboarding;
-      const pairingUrl = setCompanionPairingUrls(
-        new URL("https://desktop.tail.ts.net/pair#token=windows-code"),
-        ["https://desktop.tail.ts.net:8443/#token=wsl-code"],
-      ).href;
-      expect(yield* onboarding.registerPairing({ pairingUrl })).toBe(PAIRED_ENVIRONMENT_ID);
-      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-      const entries = yield* SubscriptionRef.get(registry.entries);
-      expect([...entries.keys()]).toEqual(["environment-paired", "environment-wsl"]);
-      const exchanges = calls.filter((call) => call.url.endsWith("/oauth/token"));
-      expect(exchanges).toHaveLength(2);
-      for (const [index, exchange] of exchanges.entries()) {
-        const body = exchange.init.body;
-        const params = new URLSearchParams(
-          body instanceof Uint8Array ? new TextDecoder().decode(body) : String(body),
-        );
-        expect(params.get("subject_token")).toBe(index === 0 ? "windows-code" : "wsl-code");
-      }
-    }).pipe(Effect.provide(layerPairingOnboarding({ companions: true }, calls)));
-  });
   it.effect("prepares a persisted bearer registration from pairing details", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];

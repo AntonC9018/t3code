@@ -461,8 +461,6 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl,
     credential: entry.bootstrapToken,
-    // This connection is owned by the local desktop. It must be able to mint
-    // scoped phone grants for WSL without sharing its bootstrap credential.
     scopes: AuthStandardClientScopes,
     clientMetadata: currentClientMetadata(),
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));

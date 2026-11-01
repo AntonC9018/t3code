@@ -1,4 +1,3 @@
-import { toastManager } from "../components/ui/toast";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -51,9 +50,6 @@ import {
 import { useUiStateStore } from "../uiStateStore";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
-import { takePendingCompanionPairingUrls } from "../environments/primary/auth";
-import { connectPairing } from "../connection/onboarding";
-import { useAtomCommand } from "../state/use-atom-command";
 import { GUEST_PAGE_PATH } from "../guestPage";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { useHostedPromptLinkLanding } from "../components/promptLinks/HostedPromptLinkLanding";
@@ -149,23 +145,6 @@ function RootRouteBranch() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
-  const registerCompanion = useAtomCommand(connectPairing, { reportFailure: false });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- submits companion pairing URLs to the connection service after primary authentication
-  useEffect(() => {
-    if (!primaryEnvironmentAuthenticated) return;
-    for (const pairingUrl of takePendingCompanionPairingUrls()) {
-      void registerCompanion({ pairingUrl }).then((result) => {
-        if (result._tag === "Failure") {
-          toastManager.add({
-            type: "error",
-            title: "WSL pairing could not finish",
-            description:
-              "Keep Tailscale connected on both devices and scan a new desktop QR to retry.",
-          });
-        }
-      });
-    }
-  }, [primaryEnvironmentAuthenticated, registerCompanion]);
   // A sync IPC read; the setting only changes across a relaunch.
   const [localEnvironmentDisabled] = useState(isLocalEnvironmentDisabled);
   // Once true, stays true: a visit to /welcome means the bootstrap already chose a route.

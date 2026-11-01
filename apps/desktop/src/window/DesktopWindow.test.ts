@@ -290,7 +290,6 @@ function layerTest(input: {
         return { settings: desktopSettings, changed };
       }),
     setServerExposureMode: () => Effect.die("unexpected server exposure update"),
-    setWslTailscaleServeLease: () => Effect.die("unexpected WSL Serve lease update"),
     setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
     setUpdateChannel: () => Effect.die("unexpected update channel change"),
     setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),

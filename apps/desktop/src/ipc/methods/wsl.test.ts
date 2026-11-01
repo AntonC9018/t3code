@@ -34,8 +34,6 @@ function layerWslBackend(input: { readonly onReconcile?: Effect.Effect<void> } =
     DesktopWslBackend.DesktopWslBackend.of({
       reconcile: input.onReconcile ?? Effect.void,
       lastPreflightError: Effect.succeedNone,
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off -- This fixture requires undefined, not void, in its optional URL.
-      remoteHttpBaseUrl: Effect.succeed(undefined),
     }),
   );
 }

@@ -91,24 +91,6 @@ function writeSettingsPatch(patch: typeof DesktopSettingsPatch.Type) {
 }
 
 describe("DesktopSettings", () => {
-  it.effect("preserves the WSL phone listener lease across reloads and other setting changes", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* settings.load;
-        const lease = {
-          dnsName: "desktop.tail.ts.net",
-          port: 8443,
-          target: "http://127.0.0.1:14774",
-        };
-        assert.isTrue((yield* settings.setWslTailscaleServeLease(lease)).changed);
-        assert.isFalse((yield* settings.setWslTailscaleServeLease(lease)).changed);
-        yield* settings.setWslBackendEnabled(true);
-        assert.deepEqual((yield* settings.load).wslTailscaleServeLease, lease);
-      }),
-    ),
-  );
-
   it.effect("records one bounds operation span with its input attributes", () =>
     Effect.gen(function* () {
       const spans: Array<Tracer.Span> = [];
@@ -199,7 +181,6 @@ describe("DesktopSettings", () => {
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
-          wslTailscaleServeLease: null,
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,
@@ -295,7 +276,6 @@ describe("DesktopSettings", () => {
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
-          wslTailscaleServeLease: null,
           updateChannel: "nightly",
           updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,
@@ -325,7 +305,6 @@ describe("DesktopSettings", () => {
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
-          wslTailscaleServeLease: null,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
           wslBackendEnabled: false,

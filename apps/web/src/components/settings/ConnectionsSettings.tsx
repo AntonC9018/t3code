@@ -1,7 +1,3 @@
-import {
-  revokePhonePairingCredential,
-  type PhonePairingCredential,
-} from "../../connection/phonePairing";
 import { SessionPermissions } from "./SessionPermissions";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
@@ -14,6 +10,7 @@ import {
   AuthRelayWriteScope,
   type AuthClientSession,
   type AuthPairingLink,
+  type AuthPairingCredentialResult,
   type AdvertisedEndpoint,
   type DesktopServerExposureState,
   type DesktopWslState,
@@ -75,6 +72,7 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
   revokeOtherServerClientSessions,
   revokeServerClientSession,
+  revokeServerPairingLink,
   usePrimarySessionState,
   type ServerClientSessionRecord,
 } from "~/environments/primary";
@@ -223,10 +221,10 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
     string | null
   >(null);
   const [createdPairingCredentials, setCreatedPairingCredentials] = useState<
-    ReadonlyMap<string, PhonePairingCredential>
+    ReadonlyMap<string, string>
   >(() => new Map());
-  const handlePairingLinkCreated = (created: PhonePairingCredential) => {
-    setCreatedPairingCredentials((current) => new Map(current).set(created.id, created));
+  const handlePairingLinkCreated = (created: AuthPairingCredentialResult) => {
+    setCreatedPairingCredentials((current) => new Map(current).set(created.id, created.credential));
   };
   const [revokingDesktopPairingLinkId, setRevokingDesktopPairingLinkId] = useState<string | null>(
     null,
@@ -478,7 +476,7 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
     setRevokingDesktopPairingLinkId(id);
     setDesktopAccessManagementMutationError(null);
     const settled = await settlePromise(async () => {
-      await revokePhonePairingCredential(id, createdPairingCredentials.get(id));
+      await revokeServerPairingLink(id);
     });
     if (settled._tag === "Failure") {
       const error = Cause.squash(settled.cause);

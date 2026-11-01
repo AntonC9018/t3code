@@ -11,8 +11,7 @@ import * as Effect from "effect/Effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { installEnvironmentHttpTest } from "../test/environmentHttpTest";
-import { __setPrimaryHttpRunnerForTests, type PrimaryHttpEffectRunner } from "./lib/runtime";
-import { setCompanionPairingUrls } from "@t3tools/shared/remote";
+import { __setPrimaryHttpRunnerForTests } from "./lib/runtime";
 
 type TestWindow = {
   location: URL;
@@ -118,47 +117,6 @@ async function installAuthApi(input: {
 }
 
 describe("resolveInitialServerAuthGateState", () => {
-  it("retains WSL pairing across explicit primary pairing and reload", async () => {
-    const nextSession = sequence(
-      unauthenticatedSession(LOOPBACK_AUTH),
-      authenticatedSession(LOOPBACK_AUTH),
-    );
-    const testApi = await installAuthApi({
-      session: nextSession,
-      browserSession: () => Effect.succeed(browserSession(["orchestration:read"])),
-    });
-    const companion = "https://desktop.tail.ts.net:8443/#token=wsl-code";
-    const testWindow = installTestBrowser(
-      setCompanionPairingUrls(new URL("https://desktop.tail.ts.net/pair#token=windows-code"), [
-        companion,
-      ]).href,
-    );
-    const {
-      resolveInitialServerAuthGateState,
-      takePendingCompanionPairingUrls,
-      submitServerAuthCredential,
-      stripPairingTokenFromUrl,
-      __resetServerAuthBootstrapForTests,
-    } = await import("./environments/primary/auth");
-    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
-      status: "requires-auth",
-      auth: LOOPBACK_AUTH,
-    });
-    expect(testApi.calls.browserSession).toEqual([]);
-    stripPairingTokenFromUrl();
-    await submitServerAuthCredential("windows-code");
-    expect(testApi.calls.browserSession).toEqual([{ credential: "windows-code" }]);
-    expect(testWindow.location.hash).toBe("");
-    testWindow.location = setCompanionPairingUrls(
-      new URL("/", testWindow.location),
-      takePendingCompanionPairingUrls(),
-    );
-    __resetServerAuthBootstrapForTests();
-    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({ status: "authenticated" });
-    expect(testWindow.location.hash).toBe("");
-    expect(takePendingCompanionPairingUrls()).toEqual([companion]);
-    expect(takePendingCompanionPairingUrls()).toEqual([]);
-  });
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();

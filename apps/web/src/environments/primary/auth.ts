@@ -13,7 +13,6 @@ import type { EnvironmentHttpCommonError as EnvironmentHttpCommonErrorType } fro
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClientError } from "effect/http";
-import { getCompanionPairingUrls, stripCompanionPairingUrls } from "@t3tools/shared/remote";
 
 import {
   getPairingTokenFromUrl,
@@ -138,12 +137,6 @@ type ServerAuthGateState =
 
 let bootstrapPromise: Promise<ServerAuthGateState> | null = null;
 let resolvedAuthenticatedGateState: ServerAuthGateState | null = null;
-let pendingCompanionPairingUrls: readonly string[] = [];
-export function takePendingCompanionPairingUrls(): readonly string[] {
-  const pending = pendingCompanionPairingUrls;
-  pendingCompanionPairingUrls = [];
-  return pending;
-}
 let explicitPairingRequested = false;
 const AUTH_SESSION_ESTABLISH_TIMEOUT_MS = 2_000;
 const AUTH_SESSION_ESTABLISH_STEP_MS = 100;
@@ -432,15 +425,7 @@ export async function revokeOtherServerClientSessions(): Promise<number> {
 }
 
 export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
-  const initialUrl = new URL(window.location.href);
-  const companions = getCompanionPairingUrls(initialUrl);
-  if (companions.length > 0) {
-    pendingCompanionPairingUrls = companions;
-    window.history.replaceState({}, document.title, stripCompanionPairingUrls(initialUrl).href);
-  }
-  // An explicit pairing link replaces this browser's grant, even when the
-  // current cookie or a cached gate already authenticates it. Keep that intent
-  // after stripping the token, which causes the router to load this gate again.
+  // Preserve explicit grant replacement across the auth-gate reload triggered by token removal.
   if (window.location.pathname.replace(/\/+$/, "") !== "/pair") {
     explicitPairingRequested = false;
   } else if (peekPairingTokenFromUrl()) {
@@ -450,6 +435,7 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
     const currentSession = await fetchSessionState();
     return { status: "requires-auth", auth: currentSession.auth };
   }
+
   const urlCredential = takePairingTokenFromUrl();
   const previousPromise = bootstrapPromise;
   if (urlCredential) {
@@ -490,6 +476,5 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
 export function __resetServerAuthBootstrapForTests() {
   bootstrapPromise = null;
   resolvedAuthenticatedGateState = null;
-  pendingCompanionPairingUrls = [];
   explicitPairingRequested = false;
 }

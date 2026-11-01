@@ -1,8 +1,3 @@
-import { setCompanionPairingUrls } from "@t3tools/shared/remote";
-import {
-  createPhonePairingCredential,
-  type PhonePairingCredential,
-} from "../../connection/phonePairing";
 import { AUTH_SCOPE_OPTIONS as PAIRING_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
 import { PlusIcon, QrCodeIcon } from "lucide-react";
 import { type ReactNode, memo, useId, useState } from "react";
@@ -15,6 +10,7 @@ import {
   AuthTerminalReadScope,
   type AuthEnvironmentScope,
   type AuthGrantScope,
+  type AuthPairingCredentialResult,
   type AdvertisedEndpoint,
 } from "@t3tools/contracts";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
@@ -50,6 +46,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import {
+  createServerPairingCredential,
   isLoopbackHostname,
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
@@ -123,7 +120,6 @@ function endpointRowClassName(isAvailable: boolean) {
 type PairingLinkListRowProps = {
   pairingLink: ServerPairingLinkRecord;
   credential: string | undefined;
-  companions: PhonePairingCredential["companions"];
   endpointUrl: string | null | undefined;
   endpoints: ReadonlyArray<AdvertisedEndpoint>;
   defaultEndpointKey: string | null;
@@ -135,7 +131,6 @@ type PairingLinkListRowProps = {
 const PairingLinkListRow = memo(function PairingLinkListRow({
   pairingLink,
   credential,
-  companions,
   endpointUrl,
   endpoints,
   defaultEndpointKey,
@@ -155,19 +150,11 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     credential && endpointUrl != null && endpointUrl !== ""
       ? resolveHostedPairingUrl(endpointUrl, credential)
       : null;
-  const withCompanions = (endpoint: AdvertisedEndpoint, credential: string) => {
-    const url = new URL(resolveAdvertisedEndpointPairingUrl(endpoint, credential));
-    return endpoint.httpBaseUrl.startsWith("https://") &&
-      new URL(endpoint.httpBaseUrl).hostname.endsWith(".ts.net")
-      ? setCompanionPairingUrls(
-          url,
-          companions.map((companion) => companion.url),
-        ).href
-      : url.href;
-  };
   const endpointPairingUrl = (() => {
     const endpoint = selectPairingEndpoint(endpoints, defaultEndpointKey);
-    return endpoint && credential ? withCompanions(endpoint, credential) : null;
+    return endpoint && credential
+      ? resolveAdvertisedEndpointPairingUrl(endpoint, credential)
+      : null;
   })();
   const endpointCopyOptions = (() => {
     const options: Array<{
@@ -183,7 +170,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
       if (endpoint.status === "unavailable") {
         continue;
       }
-      const url = withCompanions(endpoint, credential);
+      const url = resolveAdvertisedEndpointPairingUrl(endpoint, credential);
       options.push({
         id: endpoint.id,
         preferenceKey: endpointDefaultPreferenceKey(endpoint),
@@ -575,7 +562,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
 });
 
 type AuthorizedClientsHeaderActionProps = {
-  onPairingLinkCreated: (result: PhonePairingCredential) => void;
+  onPairingLinkCreated: (result: AuthPairingCredentialResult) => void;
   clientSessions: ReadonlyArray<ServerClientSessionRecord> | null;
   isRevokingOtherClients: boolean;
   onRevokeOtherClients: () => void;
@@ -608,7 +595,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
       return;
     setIsCreatingPairingLink(true);
     const settled = await settlePromise(async () => {
-      const created = await createPhonePairingCredential({
+      const created = await createServerPairingCredential({
         label: pairingLabel,
         scopes: selectedScopes,
       });
@@ -789,7 +776,7 @@ type PairingClientsListProps = {
   defaultEndpointKey: string | null;
   isLoading: boolean;
   pairingLinks: ReadonlyArray<ServerPairingLinkRecord>;
-  createdPairingCredentials: ReadonlyMap<string, PhonePairingCredential>;
+  createdPairingCredentials: ReadonlyMap<string, string>;
   clientSessions: ReadonlyArray<ServerClientSessionRecord>;
   revokingPairingLinkId: string | null;
   revokingClientSessionId: string | null;
@@ -818,8 +805,7 @@ export const PairingClientsList = memo(function PairingClientsList({
         <PairingLinkListRow
           key={pairingLink.id}
           pairingLink={pairingLink}
-          credential={createdPairingCredentials.get(pairingLink.id)?.credential}
-          companions={createdPairingCredentials.get(pairingLink.id)?.companions ?? []}
+          credential={createdPairingCredentials.get(pairingLink.id)}
           endpointUrl={endpointUrl}
           endpoints={endpoints}
           defaultEndpointKey={defaultEndpointKey}

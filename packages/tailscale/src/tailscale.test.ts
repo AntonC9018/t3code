@@ -9,16 +9,11 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   ensureTailscaleServe,
-  isTailscaleIpv4Address,
   parseTailscaleExitNode,
   parseTailscaleSshEnabled,
   parseTailscaleStatus,
   readTailscaleSshEnabled,
   readTailscaleStatus,
-  readTailscaleServeConfig,
-  findCompanionServePort,
-  ownsCompanionServeRoute,
-  TAILSCALE_STATUS_TIMEOUT,
   TailscaleCommandExitError,
   TailscaleCommandSpawnError,
   TailscaleStatusParseError,
@@ -99,61 +94,6 @@ function layerMockSpawner(
 }
 
 describe("tailscale", () => {
-  it.effect("reads existing Serve configuration before reserving a companion listener", () => {
-    const layer = layerMockSpawner((command, args) => {
-      assert.equal(command, "tailscale");
-      assert.deepEqual(args, ["serve", "status", "--json"]);
-      return {
-        stdout: JSON.stringify({
-          TCP: { "8443": { HTTPS: true } },
-          Web: {},
-          AllowFunnel: { "desktop.tail.ts.net:8444": true },
-        }),
-      };
-    });
-    return Effect.gen(function* () {
-      const config = yield* readTailscaleServeConfig.pipe(Effect.provide(layer));
-      assert.equal(findCompanionServePort(config, 8445), 8446);
-    });
-  });
-  it("only releases its exact private proxy mapping", () => {
-    const host = "desktop.tail.ts.net:8443";
-    const config = {
-      TCP: { "8443": {} },
-      Web: { [host]: { Handlers: { "/": { Proxy: "http://127.0.0.1:3774" } } } },
-    };
-    assert.isTrue(
-      ownsCompanionServeRoute(config, "desktop.tail.ts.net", 8443, "http://127.0.0.1:3774"),
-    );
-    assert.isFalse(
-      ownsCompanionServeRoute(config, "desktop.tail.ts.net", 8443, "http://127.0.0.1:9999"),
-    );
-    assert.isFalse(
-      ownsCompanionServeRoute(
-        { ...config, AllowFunnel: { [host]: true } },
-        "desktop.tail.ts.net",
-        8443,
-        "http://127.0.0.1:3774",
-      ),
-    );
-  });
-  it.effect("detects Tailnet IPv4 addresses", () =>
-    Effect.sync(() => {
-      assert.equal(isTailscaleIpv4Address("100.64.0.1"), true);
-      assert.equal(isTailscaleIpv4Address("100.127.255.254"), true);
-      assert.equal(isTailscaleIpv4Address("100.128.0.1"), false);
-      assert.equal(isTailscaleIpv4Address("192.168.1.44"), false);
-    }),
-  );
-
-  it.effect("parses MagicDNS names from tailscale status", () =>
-    Effect.gen(function* () {
-      const dnsName = (yield* parseTailscaleStatus(tailscaleStatusJson)).magicDnsName;
-      assert.equal(dnsName, "desktop.tail.ts.net");
-      assert.equal((yield* parseTailscaleStatus("{}")).magicDnsName, null);
-    }),
-  );
-
   it.effect("parses status facts", () =>
     Effect.gen(function* () {
       const status = yield* parseTailscaleStatus(tailscaleStatusJson);

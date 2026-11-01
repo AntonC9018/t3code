@@ -1,6 +1,4 @@
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
-import { setCompanionPairingUrls } from "@t3tools/shared/remote";
-import { takePendingCompanionPairingUrls } from "../environments/primary/auth";
 
 import {
   HostedPairingRouteSurface,
@@ -48,14 +46,8 @@ function PairRouteView() {
     <PairingRouteSurface
       auth={authGateState.auth}
       onAuthenticated={() => {
-        // Recreate the primary connection so its WebSocket and cached scopes
-        // use the newly issued cookie after re-pairing.
-        // Carry WSL grants across the reload that replaces the primary session.
-        const nextUrl = setCompanionPairingUrls(
-          new URL("/", window.location.href),
-          takePendingCompanionPairingUrls(),
-        );
-        router.history.replace(`${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+        // Recreate the connection so WebSocket and cached scopes use the new pairing cookie.
+        router.history.replace("/");
         router.history.flush();
         window.location.reload();
       }}

@@ -378,7 +378,7 @@ export function buildTailscaleHttpsBaseUrl(input: {
 const runTailscaleCommand = Effect.fn("tailscale.runTailscaleCommand")(function* (
   args: readonly string[],
   timeoutInput: Duration.Input,
-): Effect.fn.Return<string, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> {
+): Effect.fn.Return<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const hostPlatform = yield* HostProcess.Platform;
   const executable = tailscaleCommandForPlatform(hostPlatform);
@@ -395,12 +395,8 @@ const runTailscaleCommand = Effect.fn("tailscale.runTailscaleCommand")(function*
         Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
       ),
     );
-    const [stdout, stderr, exitCode] = yield* Effect.all(
-      [
-        collectStdout(child.stdout),
-        collectStderr(child.stderr),
-        child.exitCode.pipe(Effect.map(Number)),
-      ],
+    const [stderr, exitCode] = yield* Effect.all(
+      [collectStderr(child.stderr), child.exitCode.pipe(Effect.map(Number))],
       { concurrency: "unbounded" },
     ).pipe(
       Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
@@ -415,7 +411,6 @@ const runTailscaleCommand = Effect.fn("tailscale.runTailscaleCommand")(function*
           : {}),
       });
     }
-    return stdout;
   }).pipe(
     Effect.scoped,
     Effect.timeout(timeout),
@@ -440,7 +435,7 @@ export const ensureTailscaleServe = (input: {
   const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
   const localHost = input.localHost ?? "127.0.0.1";
   const args = ["serve", "--bg", `--https=${servePort}`, `http://${localHost}:${input.localPort}`];
-  return runTailscaleCommand(args, TAILSCALE_SERVE_TIMEOUT).pipe(Effect.asVoid);
+  return runTailscaleCommand(args, TAILSCALE_SERVE_TIMEOUT);
 };
 
 export const disableTailscaleServe = Effect.fn("tailscale.disableTailscaleServe")(function* (
@@ -452,65 +447,8 @@ export const disableTailscaleServe = Effect.fn("tailscale.disableTailscaleServe"
   return yield* runTailscaleCommand(
     ["serve", `--https=${servePort}`, "off"],
     TAILSCALE_SERVE_TIMEOUT,
-  ).pipe(Effect.asVoid);
-});
-
-const TailscaleServeConfig = Schema.Struct({
-  TCP: Schema.optional(Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown))),
-  Web: Schema.optional(
-    Schema.NullOr(
-      Schema.Record(
-        Schema.String,
-        Schema.Struct({
-          Handlers: Schema.Record(
-            Schema.String,
-            Schema.Struct({ Proxy: Schema.optional(Schema.String) }),
-          ),
-        }),
-      ),
-    ),
-  ),
-  AllowFunnel: Schema.optional(Schema.NullOr(Schema.Record(Schema.String, Schema.Boolean))),
-});
-
-export const readTailscaleServeConfig = runTailscaleCommand(
-  ["serve", "status", "--json"],
-  TAILSCALE_SERVE_TIMEOUT,
-).pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(TailscaleServeConfig))));
-
-// Reserve a different HTTPS listener for a desktop companion backend. Never
-// overwrite a listener belonging to another app, or reuse a public Funnel route.
-export function findCompanionServePort(
-  config: typeof TailscaleServeConfig.Type,
-  primaryPort: number,
-): number | null {
-  for (let port = 8443; port < 8500; port++) {
-    if (
-      port !== primaryPort &&
-      config.TCP?.[String(port)] === undefined &&
-      !Object.keys(config.Web ?? {}).some((host) => host.endsWith(`:${port}`)) &&
-      !Object.keys(config.AllowFunnel ?? {}).some((host) => host.endsWith(`:${port}`))
-    )
-      return port;
-  }
-  return null;
-}
-
-export function ownsCompanionServeRoute(
-  config: typeof TailscaleServeConfig.Type,
-  dnsName: string,
-  port: number,
-  target: string,
-): boolean {
-  const host = `${dnsName}:${port}`;
-  const handlers = config.Web?.[host]?.Handlers;
-  return (
-    config.AllowFunnel?.[host] !== true &&
-    handlers !== undefined &&
-    Object.keys(handlers).length === 1 &&
-    handlers["/"]?.Proxy === target
   );
-}
+});
 
 export const probeTailscaleHttpsEndpoint = Effect.fn("tailscale.probeTailscaleHttpsEndpoint")(
   function* (input: { readonly baseUrl: string; readonly timeout?: Duration.Input }) {

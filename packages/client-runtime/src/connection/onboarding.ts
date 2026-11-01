@@ -1,5 +1,5 @@
 import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
-import { getCompanionPairingUrls, resolveRemotePairingTarget } from "@t3tools/shared/remote";
+import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -155,35 +155,16 @@ export const preparePairingRegistration = Effect.fn(
 const registerPairingConnection = Effect.fn(
   "clientRuntime.connection.onboarding.registerPairingConnection",
 )(function* (input: PairingConnectionInput) {
-  const companions = yield* Effect.try({
-    try: () => (input.pairingUrl ? getCompanionPairingUrls(new URL(input.pairingUrl)) : []),
-    catch: () =>
-      new ConnectionBlockedError({
-        reason: "configuration",
-        detail: "The companion pairing details are invalid.",
-      }),
-  });
   const registration = yield* preparePairingRegistration(input);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-  // Each registration shares this pairing operation's span.
-  const registerPairedEnvironment = Effect.fnUntraced(function* (
-    paired: typeof registration,
-    knownAddressOnly: boolean,
-  ) {
-    // A platform-managed environment belongs to the host, so pairing leaves it alone.
-    if (!(yield* registry.register(paired, { knownAddressOnly }))) return;
-    // Pairing is an explicit request to connect, so clear stale compatibility
-    // state and re-enable the environment after the grant has been exchanged.
-    yield* registry.setCompatibility(paired.target.environmentId, null);
-    yield* registry
-      .setEnabled(paired.target.environmentId, true)
-      .pipe(Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }));
-  });
-  yield* registerPairedEnvironment(registration, input.expectedEnvironmentId === undefined);
-  for (const pairingUrl of companions) {
-    const companion = yield* preparePairingRegistration({ pairingUrl });
-    yield* registerPairedEnvironment(companion, true);
+  const knownAddressOnly = input.expectedEnvironmentId === undefined;
+  if (!(yield* registry.register(registration, { knownAddressOnly }))) {
+    return registration.target.environmentId;
   }
+  yield* registry.setCompatibility(registration.target.environmentId, null);
+  yield* registry
+    .setEnabled(registration.target.environmentId, true)
+    .pipe(Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }));
   return registration.target.environmentId;
 });
 

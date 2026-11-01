@@ -107,10 +107,6 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
     const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
     const instances = yield* pool.list;
     const bootstraps: DesktopEnvironmentBootstrap[] = [];
-    const wslBackend = yield* Effect.serviceOption(DesktopWslBackend.DesktopWslBackend);
-    const remoteHttpBaseUrl = Option.isSome(wslBackend)
-      ? yield* wslBackend.value.remoteHttpBaseUrl
-      : undefined;
     for (const instance of instances) {
       const isPrimary = instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID;
       const config = yield* instance.currentConfig;
@@ -142,9 +138,6 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
         runningDistro,
         httpBaseUrl: httpBaseUrl.href,
         wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
-        ...(instance.id.startsWith(DesktopWslBackend.WSL_INSTANCE_ID_PREFIX) && remoteHttpBaseUrl
-          ? { remoteHttpBaseUrl }
-          : {}),
         // Use the current window's derived token; the launch config's token may be stale.
         ...(bootstrap.desktopBootstrapSecret
           ? { bootstrapToken: yield* configuration.currentBootstrapToken }

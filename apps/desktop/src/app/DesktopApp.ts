@@ -246,10 +246,7 @@ const bootstrap = Effect.gen(function* () {
     }
     yield* primaryBackend.start;
     // The local bootstrap is available after spawn; load renderer assets while the server starts.
-    // WSL keeps its connecting splash until its remote endpoint is known.
-    if (!(settings.wslOnly === true && settings.wslBackendEnabled === true)) {
-      yield* desktopWindow.createMain;
-    }
+    yield* desktopWindow.createMain;
     yield* logBootstrapInfo("bootstrap backend start requested");
     yield* appActivation.start.pipe(
       Effect.tap(() => logBootstrapInfo("desktop app control socket ready")),

@@ -74,7 +74,6 @@ import * as PreviewManager from "./preview/Manager.ts";
 import * as PreviewPasskeys from "./preview/Passkeys.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
-import * as DesktopWslLoopbackBridge from "./wsl/DesktopWslLoopbackBridge.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
 
@@ -195,7 +194,6 @@ const layerDesktopBackend = DesktopBackendPool.layer.pipe(
 );
 
 const layerDesktopWslBackend = DesktopWslBackend.layer.pipe(
-  Layer.provideMerge(DesktopWslLoopbackBridge.layer),
   Layer.provideMerge(layerDesktopBackend),
 );
 

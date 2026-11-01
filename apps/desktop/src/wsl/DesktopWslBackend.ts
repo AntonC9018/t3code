@@ -7,16 +7,6 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
 import * as NetService from "@t3tools/shared/Net";
-import {
-  buildTailscaleHttpsBaseUrl,
-  disableTailscaleServe,
-  ensureTailscaleServe,
-  findCompanionServePort,
-  ownsCompanionServeRoute,
-  readTailscaleServeConfig,
-  readTailscaleStatus,
-} from "@t3tools/tailscale";
-import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopBackendConfiguration from "../backend/DesktopBackendConfiguration.ts";
@@ -24,7 +14,6 @@ import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "./DesktopWslEnvironment.ts";
-import * as DesktopWslLoopbackBridge from "./DesktopWslLoopbackBridge.ts";
 
 export const WSL_INSTANCE_ID_PREFIX = "wsl:";
 const WSL_DEFAULT_DISTRO_ID = `${WSL_INSTANCE_ID_PREFIX}default`;
@@ -35,7 +24,6 @@ export class DesktopWslBackend extends Context.Service<
   {
     readonly reconcile: Effect.Effect<void>;
     readonly lastPreflightError: Effect.Effect<Option.Option<string>>;
-    readonly remoteHttpBaseUrl: Effect.Effect<string | undefined>;
   }
 >()("@t3tools/desktop/wsl/DesktopWslBackend") {}
 
@@ -77,119 +65,10 @@ export const layer = Layer.effect(
     const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     const net = yield* NetService.NetService;
-    const loopbackBridge = yield* DesktopWslLoopbackBridge.DesktopWslLoopbackBridge;
     // Serialize bootstrap and IPC reconciles so concurrent reads cannot register competing WSL instances.
     const reconcileMutex = yield* Semaphore.make(1);
 
     const preflightErrorRef = yield* Ref.make(Option.none<string>());
-    const remoteUrlRef = yield* Ref.make<string | undefined>(undefined);
-    const readyUrlRef = yield* Ref.make<URL | undefined>(undefined);
-    const bridgeRef = yield* Ref.make<
-      { target: string; bridge: DesktopWslLoopbackBridge.Bridge } | undefined
-    >(undefined);
-    const serveLeaseRef = yield* Ref.make<DesktopAppSettings.WslTailscaleServeLease | undefined>(
-      undefined,
-    );
-    const endpointMutex = yield* Semaphore.make(1);
-    // Capture the host spawner for callbacks run by the backend's own runtime.
-    // A missing dependency must not silently disable phone pairing.
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const releaseBridge = Ref.getAndSet(bridgeRef, undefined).pipe(
-      Effect.flatMap((entry) => (entry ? entry.bridge.stop : Effect.void)),
-    );
-    const releaseRemoteEndpoint = Effect.gen(function* () {
-      yield* Ref.set(remoteUrlRef, undefined);
-      const lease = yield* Ref.getAndSet(serveLeaseRef, undefined);
-      if (!lease) return;
-      const config = yield* readTailscaleServeConfig;
-      if (ownsCompanionServeRoute(config, lease.dnsName, lease.port, lease.target)) {
-        yield* disableTailscaleServe({ servePort: lease.port });
-      }
-    }).pipe(
-      Effect.catch(() => logWslBackendWarning("could not release WSL Tailscale endpoint")),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
-    const exposeRemoteEndpoint = Effect.fn("desktop.wslBackend.exposeRemoteEndpoint")(
-      function* (httpBaseUrl: URL) {
-        const settings = yield* appSettings.get;
-        if (!settings.tailscaleServeEnabled) {
-          yield* releaseRemoteEndpoint;
-          yield* releaseBridge;
-          return;
-        }
-        const status = yield* readTailscaleStatus;
-        if (!status.magicDnsName) return;
-        const dnsName = status.magicDnsName;
-        const config = yield* readTailscaleServeConfig;
-        let localUrl = httpBaseUrl;
-        if (httpBaseUrl.hostname !== "127.0.0.1" && httpBaseUrl.hostname !== "localhost") {
-          let entry = yield* Ref.get(bridgeRef);
-          if (entry?.target !== httpBaseUrl.href) {
-            yield* releaseBridge;
-            entry = { target: httpBaseUrl.href, bridge: yield* loopbackBridge.start(httpBaseUrl) };
-            yield* Ref.set(bridgeRef, entry);
-          }
-          localUrl = entry.bridge.httpBaseUrl;
-        }
-        const localPort = Number(localUrl.port);
-        const localHost = localUrl.hostname;
-        const target = `http://${localHost}:${localPort}`;
-        const previousLease = (yield* Ref.get(serveLeaseRef)) ?? settings.wslTailscaleServeLease;
-        const portIsFree = (port: number) =>
-          config.TCP?.[String(port)] === undefined &&
-          !Object.keys(config.Web ?? {}).some((host) => host.endsWith(`:${port}`)) &&
-          !Object.keys(config.AllowFunnel ?? {}).some((host) => host.endsWith(`:${port}`));
-        const reusablePort =
-          previousLease?.dnsName === status.magicDnsName &&
-          previousLease.port !== settings.tailscaleServePort &&
-          (portIsFree(previousLease.port) ||
-            ownsCompanionServeRoute(
-              config,
-              previousLease.dnsName,
-              previousLease.port,
-              previousLease.target,
-            ))
-            ? previousLease.port
-            : undefined;
-        // Adopt a matching older route at upgrade, but never take over a
-        // listener whose target or Funnel status belongs to something else.
-        const matchingPort = Object.keys(config.TCP ?? {})
-          .map(Number)
-          .find(
-            (port) =>
-              port !== settings.tailscaleServePort &&
-              port >= 8443 &&
-              port < 8500 &&
-              ownsCompanionServeRoute(config, dnsName, port, target),
-          );
-        const servePort =
-          reusablePort ??
-          matchingPort ??
-          findCompanionServePort(config, settings.tailscaleServePort);
-        if (servePort === null) {
-          yield* logWslBackendWarning("no free Tailscale HTTPS port for WSL pairing");
-          return;
-        }
-        if (!ownsCompanionServeRoute(config, status.magicDnsName, servePort, target)) {
-          yield* ensureTailscaleServe({ localPort, localHost, servePort });
-        }
-        const lease = {
-          dnsName: status.magicDnsName,
-          port: servePort,
-          target,
-        };
-        yield* Ref.set(serveLeaseRef, lease);
-        yield* appSettings.setWslTailscaleServeLease(lease);
-        yield* Ref.set(
-          remoteUrlRef,
-          buildTailscaleHttpsBaseUrl({ magicDnsName: status.magicDnsName, servePort }),
-        );
-      },
-      Effect.catch(() =>
-        logWslBackendWarning("WSL Tailscale pairing endpoint could not start; will retry"),
-      ),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
     const ownershipRefusedRef = yield* Ref.make(
       Option.none<DesktopBackendPool.BackendInstanceId>(),
     );
@@ -243,22 +122,6 @@ export const layer = Layer.effect(
           configResolve: configuration.resolveWsl({ port: allocatedPort, distro: input.distro }),
           onPreflightFailed: (failure) =>
             Ref.set(preflightErrorRef, Option.some(failure.reason)).pipe(Effect.as(false)),
-          onReady: (httpBaseUrl) =>
-            endpointMutex.withPermits(1)(
-              Effect.gen(function* () {
-                yield* Ref.set(ownershipRefusedRef, Option.none());
-                yield* Ref.set(preflightErrorRef, Option.none());
-                yield* Ref.set(readyUrlRef, httpBaseUrl);
-                yield* exposeRemoteEndpoint(httpBaseUrl);
-              }),
-            ),
-          onShutdown: () =>
-            endpointMutex.withPermits(1)(
-              Ref.set(readyUrlRef, undefined).pipe(
-                Effect.andThen(releaseRemoteEndpoint),
-                Effect.andThen(releaseBridge),
-              ),
-            ),
           onStateDirOwned: () =>
             Ref.set(ownershipRefusedRef, Option.some(targetId)).pipe(
               Effect.andThen(
@@ -269,6 +132,10 @@ export const layer = Layer.effect(
                   ),
                 ),
               ),
+            ),
+          onReady: () =>
+            Ref.set(ownershipRefusedRef, Option.none()).pipe(
+              Effect.andThen(Ref.set(preflightErrorRef, Option.none())),
             ),
         })
         .pipe(
@@ -337,43 +204,18 @@ export const layer = Layer.effect(
       }
     });
 
-    // Top-level safety net. Every internal step today already catches
-    // its own failures (port allocation, register, preWarm), so the
-    // inferred error type is `never` and this catch is a no-op in
-    // steady state. It's here to enforce the file-header contract
-    // ("reconcile never fails; errors are logged") if a future change
-    // introduces an unhandled failure path — otherwise IPC callers
-    // like setWslBackendEnabled would surface it to the renderer as
-    // an opaque error.
-    const refreshRemoteEndpoint = endpointMutex.withPermits(1)(
-      Effect.gen(function* () {
-        const readyUrl = yield* Ref.get(readyUrlRef);
-        if (readyUrl) yield* exposeRemoteEndpoint(readyUrl);
-      }),
-    );
     const reconcile = reconcileMutex
       .withPermits(1)(reconcileBody)
       .pipe(
-        Effect.andThen(refreshRemoteEndpoint),
         Effect.catchCause((cause) =>
           logWslBackendWarning("reconcile failed", { cause: Cause.pretty(cause) }),
         ),
         Effect.withSpan("desktop.wslBackend.reconcile"),
       );
 
-    // The backend may become ready before Tailscale, or a route may be lost
-    // later. Repair only this instance's route, without restarting a backend.
-    yield* Effect.gen(function* () {
-      while (true) {
-        yield* Effect.sleep("15 seconds");
-        yield* refreshRemoteEndpoint;
-      }
-    }).pipe(Effect.forkScoped);
-
     return DesktopWslBackend.of({
       reconcile,
       lastPreflightError: Ref.get(preflightErrorRef),
-      remoteHttpBaseUrl: Ref.get(remoteUrlRef),
     });
   }),
 );
