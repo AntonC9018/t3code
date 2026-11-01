@@ -6694,3 +6694,122 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 });
+
+it.effect("shell cache telemetry follows the active native conversation", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("prompt-cache-shell");
+    const initial = yield* store.getThreadProjection(threadId);
+    const now = yield* DateTime.now;
+    const run = initial.runs[0]!;
+    const claude = ProviderDriverKind.make("claudeAgent");
+    const providerThreadId = ProviderThreadId.make("provider-thread:prompt-cache-shell");
+    const attemptId = RunAttemptId.make("attempt:prompt-cache-shell");
+    const providerThread: OrchestrationV2ProviderThread = {
+      id: providerThreadId,
+      driver: claude,
+      providerInstanceId,
+      providerSessionId: null,
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: { driver: claude, nativeId: "old-native", strength: "strong" },
+      nativeConversationHeadRef: null,
+      status: "idle",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    yield* store.apply({
+      id: EventId.make("event:prompt-cache-shell:thread"),
+      type: "thread.provider-switched",
+      threadId,
+      occurredAt: now,
+      payload: { ...initial.thread, activeProviderThreadId: providerThreadId },
+    });
+    yield* store.apply({
+      id: EventId.make("event:prompt-cache-shell:provider-thread"),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: providerThread,
+    });
+    yield* store.apply({
+      id: EventId.make("event:prompt-cache-shell:attempt"),
+      type: "run-attempt.created",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: attemptId,
+        runId: run.id,
+        attemptOrdinal: 1,
+        nativeThreadId: "old-native",
+        rootNodeId: run.rootNodeId!,
+        providerInstanceId,
+        providerThreadId,
+        providerTurnId: ProviderTurnId.make("provider-turn:prompt-cache-shell"),
+        reason: "initial",
+        status: "completed",
+        startedAt: now,
+        completedAt: now,
+      },
+    });
+    const usage = {
+      usedTokens: 1000,
+      promptCacheExpiresAt: "2026-11-01T01:00:00Z",
+      promptCacheTtlMs: 3_600_000,
+      updatedAt: "2026-11-01T00:00:00Z",
+    };
+    yield* store.apply({
+      id: EventId.make("event:prompt-cache-shell:turn"),
+      type: "provider-turn.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: ProviderTurnId.make("provider-turn:prompt-cache-shell"),
+        providerThreadId,
+        nodeId: run.rootNodeId!,
+        runAttemptId: attemptId,
+        ordinal: 1,
+        nativeTurnRef: null,
+        status: "completed",
+        startedAt: now,
+        completedAt: now,
+        tokenUsage: usage,
+      },
+    });
+    const shell = yield* store.getThreadShell(threadId);
+    assert.deepEqual(shell?.promptCache, {
+      driver: claude,
+      hasContext: true,
+      usage: {
+        promptCacheExpiresAt: usage.promptCacheExpiresAt,
+        promptCacheTtlMs: usage.promptCacheTtlMs,
+      },
+    });
+    assert.deepEqual(
+      shell?.promptCache,
+      ProjectionStore.threadShellFromProjection(yield* store.getThreadProjection(threadId))
+        .promptCache,
+    );
+    yield* store.apply({
+      id: EventId.make("event:prompt-cache-shell:replacement"),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        ...providerThread,
+        nativeThreadRef: { driver: claude, nativeId: "new-native", strength: "strong" },
+      },
+    });
+    const replacement = yield* store.getThreadShell(threadId);
+    assert.deepEqual(replacement?.promptCache, { driver: claude, hasContext: true });
+    assert.deepEqual(
+      replacement?.promptCache,
+      ProjectionStore.threadShellFromProjection(yield* store.getThreadProjection(threadId))
+        .promptCache,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);

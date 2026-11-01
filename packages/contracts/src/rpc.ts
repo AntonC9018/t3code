@@ -1,4 +1,5 @@
 import {
+  OrchestrationV2CompactContextError,
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -1803,6 +1804,12 @@ const WsOrchestrationV2ForceStopThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS
   error: Schema.Union([OrchestrationV2ForceStopThreadError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2CompactContextRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.compactContext, {
+  payload: OrchestrationV2RpcSchemas.compactContext.input,
+  success: OrchestrationV2RpcSchemas.compactContext.output,
+  error: Schema.Union([OrchestrationV2CompactContextError, EnvironmentAuthorizationError]),
+});
+
 const WsOrchestrationV2GetWorkflowScriptRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
   {
@@ -2159,6 +2166,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2StopWorkflowRpc,
   WsOrchestrationV2ForceStopThreadRpc,
+  WsOrchestrationV2CompactContextRpc,
   WsOrchestrationV2GetTurnItemRpc,
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,

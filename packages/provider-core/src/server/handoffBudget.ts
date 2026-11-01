@@ -124,11 +124,40 @@ export function handoffBudget(input: {
   );
 }
 
+export function historySinceCustomCompaction(
+  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  runs: OrchestrationV2ThreadProjection["runs"],
+) {
+  const runOrdinals = new Map(runs.map((run) => [run.id, run.ordinal]));
+  const runOrdinal = (item: OrchestrationV2TurnItem) =>
+    item.runId === null ? -1 : (runOrdinals.get(item.runId) ?? -1);
+  const boundary = items
+    .filter((item) => item.type === "handoff" && item.compactionModelSelection !== undefined)
+    .toSorted(
+      (left, right) => runOrdinal(right) - runOrdinal(left) || right.ordinal - left.ordinal,
+    )[0];
+  if (boundary === undefined) return items;
+  // Provider item ordinals can restart in the fresh native conversation.
+  return items
+    .filter(
+      (item) =>
+        runOrdinal(item) > runOrdinal(boundary) ||
+        (item.runId === boundary.runId && item.ordinal >= boundary.ordinal),
+    )
+    .toSorted(
+      (left, right) => runOrdinal(left) - runOrdinal(right) || left.ordinal - right.ordinal,
+    );
+}
+
 export function historicalMessage(
   item: OrchestrationV2TurnItem,
 ): OrchestrationV2HistoricalMessage | null {
   let text: string;
   switch (item.type) {
+    case "handoff":
+      if (item.compactionModelSelection === undefined) return null;
+      text = item.summary ?? "";
+      break;
     case "user_message":
     case "assistant_message":
       text = item.text;

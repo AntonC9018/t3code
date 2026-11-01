@@ -60,6 +60,12 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       .filter((handoff) => handoff.history === undefined)
       .map((handoff) => handoff.summaryText)
       .join("\n\n");
+    if (
+      pending.some((handoff) => handoff.compactionModelSelection !== undefined) &&
+      historyCost([], `${coverage}\n${oldContext}`) + 512 > budget
+    ) {
+      return yield* new ContextHandoffBudgetError();
+    }
     const fullCoverage =
       oldContext && historyCost([], `${coverage}\n${oldContext}`) + 512 <= budget
         ? `${coverage}\n${oldContext}`

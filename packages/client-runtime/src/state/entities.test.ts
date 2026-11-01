@@ -26,6 +26,11 @@ describe("V2 client presentation", () => {
     const runId = RunId.make("run-async-question");
     const running = {
       ...v2ThreadShell,
+      promptCache: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        hasContext: true,
+        usage: { promptCacheExpiresAt: "2026-06-20T01:00:00.000Z", promptCacheTtlMs: 3_600_000 },
+      },
       snoozedAt: DateTime.makeUnsafe("2026-06-19T23:59:00.000Z"),
       snoozedUntil: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
       latestRunId: runId,
@@ -40,6 +45,7 @@ describe("V2 client presentation", () => {
     };
     const active = presentThreadShell(environmentId, running);
     expect(active.hasPendingUserInput).toBe(false);
+    expect(active.promptCache).toEqual(running.promptCache);
     expect(isThreadWorking(active)).toBe(true);
     expect(canSnooze(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
 

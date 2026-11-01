@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   type ModelSelection,
+  MessageId,
   NodeId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
@@ -336,5 +337,132 @@ it.effect(
       assert.equal(interrupted?.providerSessionId, oldSessionId);
       assert.equal(interrupted?.id, providerThreadId);
       assert.equal(interrupted?.nativeThreadRef?.nativeId, "native-thread:restart-session");
+    }),
+);
+
+it.effect.each(["expired", "unknown", "override", "retry"] as const)(
+  "protects Claude steering messages before reaching the live session: %s",
+  (cache) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const claude = ProviderDriverKind.make("claudeAgent");
+      const threadId = ThreadId.make("thread:cache-steer");
+      const providerSessionId = ProviderSessionId.make("session:cache-steer");
+      const providerThreadId = ProviderThreadId.make("provider-thread:cache-steer");
+      const providerTurnId = ProviderTurnId.make("provider-turn:cache-steer");
+      const attemptId = RunAttemptId.make("attempt:cache-steer");
+      const messageId = MessageId.make("message:cache-steer");
+      const providerThread: OrchestrationV2ProviderThread = {
+        id: providerThreadId,
+        driver: claude,
+        providerInstanceId,
+        providerSessionId,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: { driver: claude, nativeId: "native-cache-steer", strength: "strong" },
+        nativeConversationHeadRef: null,
+        status: "active",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 1,
+        handoffIds: [],
+        forkedFrom: null,
+        contextUsage: { usedTokens: 1000 },
+        createdAt: now,
+        updatedAt: now,
+      };
+      const initial = makeProjection({ now, threadId, providerThread, providerTurnId, attemptId });
+      const attempt = {
+        ...initial.attempts[0]!,
+        nativeThreadId: "native-cache-steer",
+        attemptOrdinal: cache === "retry" ? 2 : 1,
+      };
+      const run: OrchestrationV2ThreadProjection["runs"][number] = {
+        id: attempt.runId,
+        threadId,
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId,
+        userMessageId: messageId,
+        rootNodeId: attempt.rootNodeId,
+        activeAttemptId: attemptId,
+        status: "running",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      const message: OrchestrationV2ThreadProjection["messages"][number] = {
+        id: messageId,
+        threadId,
+        runId: run.id,
+        nodeId: attempt.rootNodeId,
+        role: "user",
+        text: "Continue",
+        attachments: [],
+        streaming: false,
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: now,
+        updatedAt: now,
+        ...(cache === "override" || cache === "retry" ? { allowUncachedRead: true } : {}),
+      };
+      const turn = {
+        ...initial.providerTurns[0]!,
+        status: "running" as const,
+        ...(cache === "expired"
+          ? {
+              tokenUsage: {
+                usedTokens: 1000,
+                promptCacheExpiresAt: DateTime.formatIso(now),
+                updatedAt: DateTime.formatIso(now),
+              },
+            }
+          : {}),
+      };
+      let sessionReads = 0;
+      const layer = ProviderTurnControlService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getProviderControlContext: () =>
+                Effect.succeed({ providerThread, providerTurn: turn, attempt, message, run }),
+              getThreadRecords: () =>
+                Effect.succeed({
+                  ...initial,
+                  runs: [run],
+                  attempts: [attempt],
+                  providerTurns: [turn],
+                }),
+            }),
+            Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+              get: () =>
+                Effect.sync(() => {
+                  sessionReads += 1;
+                  return Option.none();
+                }),
+            }),
+          ),
+        ),
+      );
+      const result = yield* Effect.result(
+        Effect.gen(function* () {
+          return yield* (yield* ProviderTurnControlService.ProviderTurnControlServiceV2).steer({
+            threadId,
+            providerSessionId,
+            providerThreadId,
+            providerTurnId,
+            messageId,
+          });
+        }).pipe(Effect.provide(layer)),
+      );
+      assert.equal(result._tag, "Failure");
+      if (result._tag !== "Failure") return;
+      assert.equal(
+        result.failure.cacheStatus,
+        cache === "override" ? undefined : cache === "expired" ? "expired" : "unknown",
+      );
+      assert.equal(sessionReads, cache === "override" ? 1 : 0);
     }),
 );

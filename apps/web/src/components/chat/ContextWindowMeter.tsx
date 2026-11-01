@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Button } from "../ui/button";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -19,13 +20,24 @@ function formatPercentage(value: number | null): string | null {
 }
 
 export function ContextWindowMeter(props: {
-  usage: ContextWindowSnapshot;
+  usage: ContextWindowSnapshot | null;
+  customCompaction?: ReactNode;
+  cacheIndicator?: ReactNode;
   modelDisplayName?: string | null;
   onCompact?: (() => void) | undefined;
   compactDisabled?: boolean | undefined;
   compactDisabledReason?: string | null | undefined;
 }) {
-  const { usage, modelDisplayName, onCompact, compactDisabled, compactDisabledReason } = props;
+  const { modelDisplayName, onCompact, compactDisabled, compactDisabledReason } = props;
+  const usage = props.usage ?? {
+    usedTokens: null,
+    maxTokens: null,
+    usedPercentage: null,
+    totalProcessedTokens: null,
+    cost: null,
+    compactsAutomatically: false,
+    autoCompactThreshold: null,
+  };
   const usedPercentage = formatPercentage(usage.usedPercentage);
   const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
   const radius = 9.75;
@@ -43,16 +55,18 @@ export function ContextWindowMeter(props: {
       <PopoverTrigger
         openOnHover
         delay={150}
-        closeDelay={onCompact ? 150 : 0}
+        closeDelay={onCompact || props.customCompaction ? 150 : 0}
         render={
           <Button
             size="icon-sm"
             variant="ghost-muted"
             className="size-7"
             aria-label={
-              usage.maxTokens !== null && usedPercentage
-                ? `Context window ${usedPercentage} used`
-                : `Context window ${formatContextWindowTokens(usage.usedTokens)} tokens used`
+              !props.usage
+                ? "Compact context"
+                : usage.maxTokens !== null && usedPercentage
+                  ? `Context window ${usedPercentage} used`
+                  : `Context window ${formatContextWindowTokens(usage.usedTokens)} tokens used`
             }
           >
             <span className="relative flex size-5 items-center justify-center">
@@ -144,6 +158,7 @@ export function ContextWindowMeter(props: {
               </span>
             </div>
           ) : null}
+          {props.cacheIndicator}
           {usage.compactsAutomatically ? (
             <div className="mt-1 text-pretty text-secondary-label text-2xs font-medium">
               {formatContextWindowCompactionMessage(modelDisplayName, usage.autoCompactThreshold)}
@@ -159,7 +174,7 @@ export function ContextWindowMeter(props: {
                 onClick={onCompact}
               >
                 <Minimize2Icon aria-hidden="true" />
-                Compact context
+                Compact with native provider
               </Button>
               {compactDisabled && compactDisabledReason ? (
                 <div className="text-pretty text-secondary-label text-2xs">
@@ -168,6 +183,7 @@ export function ContextWindowMeter(props: {
               ) : null}
             </>
           ) : null}
+          {props.customCompaction}
         </div>
       </PopoverPopup>
     </Popover>

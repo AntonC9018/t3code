@@ -1050,6 +1050,7 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
   providerSessionId: Schema.NullOr(ProviderSessionId),
   appThreadId: Schema.NullOr(ThreadId),
   ownerNodeId: Schema.NullOr(NodeId),
+  compactionSuperseded: Schema.optional(Schema.Literal(true)),
   nativeThreadRef: Schema.NullOr(OrchestrationV2ProviderRef),
   nativeConversationHeadRef: Schema.NullOr(OrchestrationV2ProviderRef),
   status: Schema.Literals(["not_loaded", "idle", "active", "archived", "closed", "error"]),
@@ -1114,6 +1115,7 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
   status: Schema.Literals(["pending", "ready", "failed", "superseded"]),
   summaryMessageId: Schema.NullOr(MessageId),
   summaryText: Schema.String,
+  compactionModelSelection: Schema.optional(ModelSelection),
   history: Schema.optional(
     Schema.Struct({
       messages: Schema.Array(OrchestrationV2HistoricalMessage),
@@ -1263,6 +1265,7 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
   scheduledTaskId: Schema.optional(ScheduledTaskId),
   senderThreadId: Schema.optional(ThreadId),
   idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
+  allowUncachedRead: Schema.optional(Schema.Boolean),
   /**
    * The message is the script a provider-native workflow run executes, not prose. Clients show
    * the workflow's opening instead and keep the script behind a disclosure.
@@ -1571,6 +1574,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
+    allowUncachedRead: Schema.optional(Schema.Boolean),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
@@ -1712,6 +1716,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     fromProviderInstanceIds: Schema.Array(ProviderInstanceId),
     toProviderInstanceId: ProviderInstanceId,
     fromModelSelections: Schema.optional(Schema.Array(ModelSelection)),
+    compactionModelSelection: Schema.optional(ModelSelection),
     toModel: Schema.optional(Schema.String),
     strategy: Schema.Literals([
       "delta_since_target_last_seen",
@@ -2032,7 +2037,19 @@ export const OrchestrationV2LatestVisibleMessageSummary = Schema.Struct({
 export type OrchestrationV2LatestVisibleMessageSummary =
   typeof OrchestrationV2LatestVisibleMessageSummary.Type;
 
+export const OrchestrationV2PromptCacheSummary = Schema.Struct({
+  driver: ProviderDriverKind,
+  hasContext: Schema.Boolean,
+  usage: Schema.optional(
+    Schema.Struct({
+      promptCacheExpiresAt: Schema.optional(Schema.String),
+      promptCacheTtlMs: Schema.optional(PositiveInt),
+    }),
+  ),
+});
+
 export const OrchestrationV2ThreadShell = Schema.Struct({
+  promptCache: Schema.optional(OrchestrationV2PromptCacheSummary),
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -2403,6 +2420,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
+    allowUncachedRead: Schema.optional(Schema.Boolean),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
@@ -2537,6 +2555,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     fromProviderInstanceIds: Schema.Array(ProviderInstanceId),
     toProviderInstanceId: ProviderInstanceId,
     fromModelSelections: Schema.optional(Schema.Array(ModelSelection)),
+    compactionModelSelection: Schema.optional(ModelSelection),
     toModel: Schema.optional(Schema.String),
     strategy: Schema.Literals([
       "delta_since_target_last_seen",
@@ -3102,6 +3121,7 @@ export const OrchestrationV2Command = Schema.Union([
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
+    allowUncachedRead: Schema.optional(Schema.Boolean),
     commandId: CommandId,
     threadId: ThreadId,
     messageId: MessageId,
@@ -3535,6 +3555,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getWorkflowScript: "orchestration.getWorkflowScript",
   stopWorkflow: "orchestration.stopWorkflow",
   forceStopThread: "orchestration.forceStopThread",
+  compactContext: "orchestration.compactContext",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
   subscribeShell: "orchestration.subscribeShell",
@@ -4102,7 +4123,51 @@ export class OrchestrationV2SearchThreadError extends Schema.TaggedError<Orchest
   }
 }
 
+export class OrchestrationV2CompactContextError extends Schema.TaggedError<OrchestrationV2CompactContextError>()(
+  "OrchestrationV2CompactContextError",
+  {
+    threadId: ThreadId,
+    reason: Schema.Literals([
+      "busy",
+      "changed",
+      "empty",
+      "generation",
+      "storage",
+      "unavailable",
+      "too_large",
+    ]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "busy":
+        return "Stop active and background work before compacting with another model.";
+      case "changed":
+        return "The conversation changed during compaction. Try again.";
+      case "empty":
+        return "This conversation has no context to compact.";
+      case "generation":
+        return "The selected model could not generate a compaction summary. Your context is unchanged.";
+      case "storage":
+        return "Could not save the compaction. Try again.";
+      case "unavailable":
+        return "The selected compaction model is unavailable for this project.";
+      case "too_large":
+        return "This conversation is too large to compact with another model.";
+    }
+  }
+}
+
 export const OrchestrationV2RpcSchemas = {
+  compactContext: {
+    input: Schema.Struct({
+      threadId: ThreadId,
+      commandId: CommandId,
+      modelSelection: ModelSelection,
+    }),
+    output: Schema.Void,
+  },
   searchThread: {
     input: OrchestrationV2SearchThreadInput,
     output: OrchestrationV2SearchThreadResult,

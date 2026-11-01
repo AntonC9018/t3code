@@ -1,3 +1,4 @@
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
@@ -44,6 +45,8 @@ import type {
   RunAttemptId,
 } from "@t3tools/contracts";
 import {
+  ModelSelection,
+  OrchestrationV2ProviderTurnTokenUsage,
   IDLE_COMPACTION_TEXT,
   idleCompactionOf,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
@@ -871,6 +874,7 @@ export function applyToProjection(
         ...base,
         thread:
           event.payload.appThreadId === base.thread.id &&
+          event.payload.compactionSuperseded !== true &&
           !isQueuedProviderThreadPlaceholder(event.payload)
             ? {
                 ...base.thread,
@@ -943,6 +947,7 @@ type ShellThreadRow = {
   readonly thread_id: string;
   readonly payload_json: string;
   readonly forked_from_run_source_thread_id: string | null;
+  readonly prompt_cache_payload_json: string | null;
   readonly latest_run_id: string | null;
   readonly latest_run_status: string | null;
   readonly latest_run_requested_at: string | null;
@@ -1405,6 +1410,35 @@ const waitsOnUser = (item: OrchestrationV2TurnItem, liveRunIds: ReadonlySet<RunI
   item.type === "link_request" ||
   (item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId));
 
+function promptCacheSummary(
+  providerThread: OrchestrationV2ProviderThread | undefined,
+  usage?: OrchestrationV2ProviderTurnTokenUsage,
+): OrchestrationV2ThreadShell["promptCache"] {
+  if (providerThread?.driver !== "claudeAgent") return undefined;
+  return {
+    driver: providerThread.driver,
+    hasContext: providerThread.nativeThreadRef?.nativeId != null,
+    ...(usage === undefined
+      ? {}
+      : {
+          usage: {
+            ...(usage.promptCacheExpiresAt === undefined
+              ? {}
+              : { promptCacheExpiresAt: usage.promptCacheExpiresAt }),
+            ...(usage.promptCacheTtlMs === undefined
+              ? {}
+              : { promptCacheTtlMs: usage.promptCacheTtlMs }),
+          },
+        }),
+  };
+}
+
+const decodePromptCacheShellUsage = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ modelSelection: ModelSelection, usage: OrchestrationV2ProviderTurnTokenUsage }),
+  ),
+);
+
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadShell {
@@ -1415,6 +1449,33 @@ export function threadShellFromProjection(
         (left, right) =>
           DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
       )[0] ?? null;
+  const cacheThread = projection.providerThreads.find(
+    (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+  );
+  const cacheAttempts = new Map(projection.attempts.map((attempt) => [attempt.id, attempt]));
+  const cacheRuns = new Map(projection.runs.map((run) => [run.id, run]));
+  const cacheTurns = projection.providerTurns.filter((turn) => {
+    const attempt = turn.runAttemptId === null ? undefined : cacheAttempts.get(turn.runAttemptId);
+    const run = attempt === undefined ? undefined : cacheRuns.get(attempt.runId);
+    return (
+      turn.providerThreadId === cacheThread?.id &&
+      attempt?.nativeThreadId === cacheThread?.nativeThreadRef?.nativeId &&
+      attempt?.rootNodeId === turn.nodeId &&
+      run !== undefined
+    );
+  });
+  const cacheTurn = cacheTurns
+    .toSorted((left, right) => right.ordinal - left.ordinal)
+    .find((turn) => turn.tokenUsage !== undefined);
+  const cacheAttempt =
+    cacheTurn?.runAttemptId == null ? undefined : cacheAttempts.get(cacheTurn.runAttemptId);
+  const cacheRun = cacheAttempt === undefined ? undefined : cacheRuns.get(cacheAttempt.runId);
+  const promptCache = promptCacheSummary(
+    cacheThread,
+    cacheRun && modelSelectionsEqual(cacheRun.modelSelection, projection.thread.modelSelection)
+      ? cacheTurn?.tokenUsage
+      : undefined,
+  );
   // T3 Code's own idle compactions stay out of the shell unless they fail, so thread lists,
   // notifications and the relay keep presenting the user's last turn.
   const runs = projection.runs.filter((run) => !isSilentRunForShell(run, projection));
@@ -1472,6 +1533,7 @@ export function threadShellFromProjection(
     id: projection.thread.id,
     projectId: projection.thread.projectId,
     title: projection.thread.title,
+    ...(promptCache === undefined ? {} : { promptCache }),
     providerInstanceId: projection.thread.providerInstanceId,
     modelSelection: projection.thread.modelSelection,
     runtimeMode: projection.thread.runtimeMode,
@@ -1624,6 +1686,7 @@ function isActivityRunForShell(
 
 type ShellThreadState = {
   readonly thread: OrchestrationV2ThreadProjection["thread"];
+  readonly promptCache: OrchestrationV2ThreadShell["promptCache"];
   readonly latestRunId: RunId | null;
   readonly latestRunStatus: OrchestrationV2ShellThreadStatus;
   readonly latestRunRequestedAt: DateTime.Utc | null;
@@ -1758,6 +1821,7 @@ function shellFromState(input: {
     id: input.state.thread.id,
     projectId: input.state.thread.projectId,
     title: input.state.thread.title,
+    ...(input.state.promptCache === undefined ? {} : { promptCache: input.state.promptCache }),
     providerInstanceId: input.state.thread.providerInstanceId,
     modelSelection: input.state.thread.modelSelection,
     runtimeMode: input.state.thread.runtimeMode,
@@ -2266,6 +2330,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `;
               if (
                 event.payload.appThreadId !== null &&
+                event.payload.compactionSuperseded !== true &&
                 !isQueuedProviderThreadPlaceholder(event.payload)
               ) {
                 const threadRows = yield* sql<PayloadRow>`
@@ -4289,8 +4354,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const rows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${threadId}
-            AND type IN ('user_message','assistant_message','command_execution','error',
+            AND (type IN ('user_message','assistant_message','command_execution','error',
               'run_interrupt_result','file_change','proposed_plan')
+              OR (type = 'handoff' AND json_extract(payload_json, '$.compactionModelSelection') IS NOT NULL))
             AND ${runIds === undefined ? sql`1` : sql`run_id IN ${sql.in(runIds)}`}
           ORDER BY ordinal ASC, turn_item_id ASC
         `;
@@ -5799,6 +5865,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT
               t.thread_id,
               t.payload_json,
+              (
+                SELECT json_object(
+                  'modelSelection', json_extract(cache_run.payload_json, '$.modelSelection'),
+                  'usage', json_extract(cache_turn.payload_json, '$.tokenUsage')
+                )
+                FROM orchestration_v2_projection_provider_turns cache_turn
+                JOIN orchestration_v2_projection_run_attempts cache_attempt
+                  ON cache_attempt.attempt_id = cache_turn.run_attempt_id
+                JOIN orchestration_v2_projection_runs cache_run
+                  ON cache_run.run_id = cache_attempt.run_id
+                JOIN orchestration_v2_projection_provider_threads cache_thread
+                  ON cache_thread.provider_thread_id = cache_turn.provider_thread_id
+                WHERE cache_thread.provider_thread_id = json_extract(t.payload_json, '$.activeProviderThreadId')
+                  AND cache_thread.driver = 'claudeAgent'
+                  AND json_extract(cache_attempt.payload_json, '$.nativeThreadId') = json_extract(cache_thread.payload_json, '$.nativeThreadRef.nativeId')
+                  AND cache_turn.node_id = json_extract(cache_attempt.payload_json, '$.rootNodeId')
+                  AND json_extract(cache_turn.payload_json, '$.tokenUsage') IS NOT NULL
+                ORDER BY cache_turn.ordinal DESC
+                LIMIT 1
+              ) AS prompt_cache_payload_json,
               CASE
                 WHEN json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
                   THEN json_extract(t.payload_json, '$.forkedFrom.threadId')
@@ -6375,6 +6461,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           pendingTurnItemsByThreadId,
         } = input;
         const thread = yield* decodeThreadPayload(row.payload_json);
+        const cache =
+          row.prompt_cache_payload_json === null
+            ? undefined
+            : yield* decodePromptCacheShellUsage(row.prompt_cache_payload_json);
+        const promptCache = promptCacheSummary(
+          providerThreadsByThreadId
+            .get(thread.id)
+            ?.find((candidate) => candidate.id === thread.activeProviderThreadId),
+          cache && modelSelectionsEqual(cache.modelSelection, thread.modelSelection)
+            ? cache.usage
+            : undefined,
+        );
         const waitingCards = [
           row.pending_secret_request_payload_json === null
             ? null
@@ -6467,6 +6565,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ];
         return {
           thread,
+          promptCache,
           latestRunId,
           latestRunStatus,
           latestRunRequestedAt,

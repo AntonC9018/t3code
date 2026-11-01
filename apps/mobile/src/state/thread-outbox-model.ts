@@ -55,6 +55,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   context: Schema.optional(OrchestrationMessageContext),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
+  allowUncachedRead: Schema.optional(Schema.Boolean),
   dispatchMode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
@@ -89,6 +90,7 @@ export interface QueuedThreadMessage {
   readonly interactionMode?: ProviderInteractionModeType;
   /** Captured at enqueue because draining may occur long after the tap. */
   readonly dispatchMode?: ComposerDispatchMode;
+  readonly allowUncachedRead?: boolean;
   readonly creation?: QueuedThreadCreation;
   readonly createdAt: string;
 }

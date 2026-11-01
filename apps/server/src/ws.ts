@@ -1,3 +1,4 @@
+import * as CustomCompactionService from "./orchestration-v2/CustomCompactionService.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -1227,6 +1228,7 @@ export const layerWsRpc = (
 ) =>
   Layer.effectContext(
     Effect.gen(function* () {
+      const customCompaction = yield* CustomCompactionService.CustomCompactionService;
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
@@ -1918,6 +1920,7 @@ export const layerWsRpc = (
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) => threadManagement.stopWorkflow(input),
+        [ORCHESTRATION_V2_WS_METHODS.compactContext]: (input) => customCompaction.compact(input),
         [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: (input) =>
           threadManagement.forceStopThread(input),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>

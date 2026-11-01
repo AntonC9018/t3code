@@ -1,3 +1,4 @@
+import { PromptCacheIndicator } from "../chat/PromptCacheIndicator";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -1249,6 +1250,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {draftIndicator}
               {title}
+              {thread.promptCache ? <PromptCacheIndicator {...thread.promptCache} /> : null}
               {multiline ? titleLineProviderStack : null}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
@@ -1564,6 +1566,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </div>
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
               {title}
+              {thread.promptCache ? <PromptCacheIndicator {...thread.promptCache} /> : null}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title

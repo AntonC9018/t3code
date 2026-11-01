@@ -1,3 +1,8 @@
+import {
+  deriveThreadPromptCacheStatus,
+  promptCacheNeedsAcknowledgement,
+} from "@t3tools/shared/promptCache";
+import { PromptCacheIndicator } from "./chat/PromptCacheIndicator";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -522,7 +527,9 @@ export default function ChatView(props: ChatViewProps) {
     (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
   );
   const activeThreadLiveTokenUsage = latestProviderTurnTokenUsage(
-    serverProjection?.providerTurns ?? [],
+    serverProjection?.providerTurns.filter(
+      (turn) => turn.providerThreadId === activeProviderThread?.id,
+    ) ?? [],
     serverProjection,
     activeProviderThread,
   );
@@ -2428,7 +2435,6 @@ export default function ChatView(props: ChatViewProps) {
     !activeThreadHasCompactableConversation ||
     !activeProject ||
     !isServerThread ||
-    !manualCompactionProviderAvailable ||
     isWorking ||
     isRevertingCheckpoint ||
     threadDetailLoading ||
@@ -2438,7 +2444,7 @@ export default function ChatView(props: ChatViewProps) {
     pendingApprovals.length > 0 ||
     pendingUserInputs.length > 0 ||
     showPlanFollowUpPrompt;
-  const compactDisabled = compactThreadUnavailable;
+  const compactDisabled = compactThreadUnavailable || !manualCompactionProviderAvailable;
   const compactDisabledReason = compactDisabled
     ? !canOperateThread
       ? "This connection cannot change threads."
@@ -2740,6 +2746,38 @@ export default function ChatView(props: ChatViewProps) {
     });
   const onCompactContext = () => {
     if (compactDisabled) return;
+    const selection = composerRef.current?.getSendContext()?.selectedModelSelection;
+    const needsAcknowledgement =
+      serverProjection &&
+      selection &&
+      promptCacheNeedsAcknowledgement(
+        deriveThreadPromptCacheStatus({
+          providerThread: activeProviderThread ?? null,
+          providerTurns: serverProjection.providerTurns,
+          attempts: serverProjection.attempts,
+          runs: serverProjection.runs,
+          modelSelection: selection,
+          // oxlint-disable-next-line react/purity -- reads the clock only in the send handler
+          nowMs: Date.now(),
+        }),
+      );
+    if (needsAcknowledgement) {
+      const threadKey = routeThreadKey;
+      toastManager.add({
+        type: "warning",
+        title: "Native compaction may reread the full context",
+        description:
+          "Claude's cache is expired or unknown. Choose another model below to avoid resuming Claude.",
+        actionProps: {
+          children: "Compact anyway once",
+          onClick: () => {
+            if (currentRouteThreadKeyRef.current === threadKey)
+              void sendStandaloneCommand("/compact", "Failed to compact context.", true);
+          },
+        },
+      });
+      return;
+    }
     void sendStandaloneCommand("/compact", "Failed to compact context.");
   };
 
@@ -2872,6 +2910,7 @@ export default function ChatView(props: ChatViewProps) {
     panelAnimationDurationMs,
     keepFullHistory,
     resumeCompactionTokens,
+    cacheProjection: serverProjection,
     showPlanFollowUpPrompt,
     usageLimitsKey,
     usageLimitsOffered,
@@ -3595,8 +3634,16 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               activeThreadModelSelection={activeThread?.modelSelection}
                               activeProjectId={activeProject?.id ?? null}
+                              cacheIndicator={
+                                <PromptCacheIndicator
+                                  driver={activeProviderThread?.driver}
+                                  usage={activeThreadLiveTokenUsage}
+                                  hasContext={activeProviderThread?.nativeThreadRef != null}
+                                />
+                              }
                               activeContextWindow={activeContextWindow}
                               compactThreadUnavailable={compactThreadUnavailable}
+                              customCompactionUnavailable={compactThreadUnavailable}
                               compactDisabled={compactDisabled}
                               compactDisabledReason={compactDisabledReason}
                               resolvedTheme={resolvedTheme}

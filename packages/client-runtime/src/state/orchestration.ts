@@ -107,6 +107,10 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:stop-workflow",
       tag: ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
     }),
+    compactContext: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:compact-context",
+      tag: ORCHESTRATION_V2_WS_METHODS.compactContext,
+    }),
     forceStopThread: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:orchestration:force-stop-thread",
       tag: ORCHESTRATION_V2_WS_METHODS.forceStopThread,

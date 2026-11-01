@@ -31,6 +31,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
@@ -1569,3 +1570,113 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect.each([
+  "expired",
+  "unknown",
+  "override",
+  "fresh",
+  "retry",
+  "expiresWhileOpening",
+] as const)("protects a resumed Claude context before opening the provider: %s", (cache) =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    });
+    const initial = harness.projection();
+    const providerThread = initial.providerThreads[0]!;
+    const currentRun = initial.runs.find((run) => run.status === "starting")!;
+    const currentAttempt = initial.attempts.find(
+      (attempt) => attempt.id === currentRun.activeAttemptId,
+    )!;
+    harness.setProjection({
+      ...initial,
+      providerThreads: [
+        {
+          ...providerThread,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          nativeThreadRef:
+            cache === "fresh"
+              ? null
+              : {
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                  nativeId: "existing-native",
+                  strength: "strong",
+                },
+          contextUsage: cache === "fresh" ? null : { usedTokens: 1_000 },
+        },
+      ],
+      messages: initial.messages.map((message) => ({
+        ...message,
+        ...(cache === "override" || cache === "retry" ? { allowUncachedRead: true } : {}),
+      })),
+      ...(cache !== "expired" && cache !== "expiresWhileOpening"
+        ? {}
+        : {
+            attempts: initial.attempts.map((attempt) => ({
+              ...attempt,
+              nativeThreadId: "existing-native",
+            })),
+            providerTurns: [
+              {
+                id: ProviderTurnId.make("previous-cache-turn"),
+                providerThreadId: providerThread.id,
+                nodeId: currentRun.rootNodeId!,
+                runAttemptId: currentAttempt.id,
+                nativeTurnRef: null,
+                ordinal: 1,
+                status: "completed",
+                startedAt: null,
+                completedAt: null,
+                tokenUsage: {
+                  usedTokens: 1_000,
+                  promptCacheExpiresAt:
+                    cache === "expiresWhileOpening"
+                      ? "1970-01-01T00:01:00Z"
+                      : "1970-01-01T00:00:00Z",
+                  updatedAt: "1970-01-01T00:00:00Z",
+                },
+              },
+            ],
+          }),
+    });
+    if (cache === "retry") {
+      harness.setProjection({
+        ...harness.projection(),
+        attempts: harness
+          .projection()
+          .attempts.map((attempt) => ({ ...attempt, attemptOrdinal: 2 })),
+      });
+    }
+    if (cache === "expiresWhileOpening") {
+      const open = harness.open.getMockImplementation()!;
+      harness.open.mockImplementation(() =>
+        TestClock.adjust("1 minute").pipe(Effect.andThen(open)),
+      );
+    }
+    yield* harness.start;
+    if (cache === "fresh" || cache === "override") {
+      expect(harness.open).toHaveBeenCalledTimes(1);
+      expect(harness.startRootRun).toHaveBeenCalledTimes(1);
+      return;
+    }
+    expect(harness.open).toHaveBeenCalledTimes(cache === "expiresWhileOpening" ? 1 : 0);
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    const error = harness.events.find(
+      (event) => event.type === "turn-item.updated" && event.payload.type === "error",
+    );
+    expect(
+      error?.type === "turn-item.updated" && error.payload.type === "error"
+        ? error.payload.failure.code
+        : null,
+    ).toBe(
+      cache === "expired" || cache === "expiresWhileOpening"
+        ? "prompt_cache_expired"
+        : "prompt_cache_unknown",
+    );
+    expect(harness.projection().runs.find((run) => run.id === currentRun.id)?.status).toBe(
+      "failed",
+    );
+  }),
+);

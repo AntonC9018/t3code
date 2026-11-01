@@ -572,7 +572,13 @@ export function HandoffRow(props: {
   const entries = settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
   return (
     <TimelineSystemDivider
-      label={props.pending ? "Context handoff pending" : "Context handoff"}
+      label={
+        props.pending
+          ? "Context handoff pending"
+          : props.endpoints.via
+            ? "Context compacted"
+            : "Context handoff"
+      }
       icon={ArrowRightLeftIcon}
       showDetailSeparator={false}
       tone={props.failed ? "danger" : "neutral"}
@@ -597,6 +603,16 @@ export function HandoffRow(props: {
           ))}
           {fromEndpoints.length > 0 ? (
             <ArrowRightIcon aria-hidden="true" className="size-3 shrink-0" />
+          ) : null}
+          {props.endpoints.via ? (
+            <>
+              <HandoffEndpoint
+                entries={entries}
+                instanceId={props.endpoints.via.instanceId}
+                model={props.endpoints.via.model}
+              />
+              <ArrowRightIcon aria-hidden="true" className="size-3 shrink-0" />
+            </>
           ) : null}
           <HandoffEndpoint entries={entries} instanceId={to.instanceId} model={to.model} />
         </span>

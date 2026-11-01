@@ -43,6 +43,7 @@ const dependencies = Layer.mergeAll(
       generateBranchName: () => Effect.die("not used"),
       generateThreadTitle: () => Effect.die("not used"),
       generateReviewGuide: () => Effect.die("not used"),
+      generateContextSummary: () => Effect.die("unused"),
       generateTranscriptionPostProcessing: () => Effect.die("not used"),
     }),
   ),

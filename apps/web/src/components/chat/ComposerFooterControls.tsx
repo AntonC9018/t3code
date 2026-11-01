@@ -248,6 +248,8 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   compact: boolean;
   canOperateThread: boolean;
   activeContextWindow: ContextWindowSnapshot | null;
+  customCompaction?: React.ReactNode;
+  cacheIndicator?: React.ReactNode;
   reserveContextWindowMeter: boolean;
   activeThreadModelDisplayName: string | null;
   isPreparingWorktree: boolean;
@@ -286,9 +288,11 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
 }) {
   return (
     <>
-      {props.activeContextWindow ? (
+      {props.activeContextWindow || props.customCompaction ? (
         <ContextWindowMeter
           usage={props.activeContextWindow}
+          customCompaction={props.customCompaction}
+
           modelDisplayName={props.activeThreadModelDisplayName}
           onCompact={props.onCompactContext}
           compactDisabled={props.compactDisabled}
@@ -297,6 +301,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
       ) : props.reserveContextWindowMeter ? (
         <ContextWindowMeterPlaceholder />
       ) : null}
+      {props.cacheIndicator}
       {props.children}
       {props.showActions !== false ? (
         <ComposerPrimaryActions

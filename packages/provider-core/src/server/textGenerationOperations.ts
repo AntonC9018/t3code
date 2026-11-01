@@ -8,6 +8,7 @@ import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import type { ProviderTextGeneration } from "./textGeneration.ts";
 import {
   buildBranchNamePrompt,
+  buildContextSummaryPrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildReviewGuidePrompt,
@@ -167,6 +168,25 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     });
   });
 
+  const generateContextSummary: ProviderTextGeneration["generateContextSummary"] = Effect.fn(
+    `${name}.generateContextSummary`,
+  )(function* (input) {
+    const generated = yield* run({
+      operation: "generateContextSummary",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      ...buildContextSummaryPrompt(input.transcript),
+    });
+    const summary = generated.summary.trim();
+    if (summary.length === 0 || new TextEncoder().encode(summary).byteLength > 16_000) {
+      return yield* new TextGenerationError({
+        operation: "generateContextSummary",
+        detail: "The model returned an empty or oversized context summary.",
+      });
+    }
+    return { summary };
+  });
+
   const generateTranscriptionPostProcessing: ProviderTextGeneration["generateTranscriptionPostProcessing"] =
     Effect.fn(`${name}.generateTranscriptionPostProcessing`)(function* (input) {
       return yield* run({
@@ -179,6 +199,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     });
 
   return {
+    generateContextSummary,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,

@@ -1,3 +1,7 @@
+import {
+  deriveThreadPromptCacheStatus,
+  promptCacheNeedsAcknowledgement,
+} from "@t3tools/shared/promptCache";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   MessageId,
@@ -9,7 +13,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
-import type * as DateTime from "effect/DateTime";
+import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -38,6 +42,7 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
     operation: Schema.Literals(["interrupt", "restart", "steer"]),
     providerTurnId: ProviderTurnId,
     turnCompleted: Schema.optional(Schema.Boolean),
+    cacheStatus: Schema.optional(Schema.Literals(["expired", "unknown"])),
     /** The provider never confirmed the stop; Force stop is the way out. */
     unresponsive: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
@@ -339,6 +344,37 @@ export const layer: Layer.Layer<
       steer: Effect.fn("ProviderTurnControlService.steer")(
         function* (input) {
           const context = yield* projections.getProviderControlContext(input.threadId, input);
+          if (
+            context.providerThread?.driver === "claudeAgent" &&
+            context.message !== undefined &&
+            context.run !== undefined
+          ) {
+            const cacheContext = yield* projections.getThreadRecords(input.threadId, [
+              "providerTurns",
+              "attempts",
+              "runs",
+            ]);
+            const acknowledged =
+              context.message.allowUncachedRead === true &&
+              context.message.runId === context.run.id &&
+              context.attempt?.attemptOrdinal === 1;
+            const cache = deriveThreadPromptCacheStatus({
+              providerThread: context.providerThread,
+              providerTurns: cacheContext.providerTurns,
+              attempts: cacheContext.attempts,
+              runs: cacheContext.runs,
+              modelSelection: context.run.modelSelection,
+              nowMs: DateTime.toEpochMillis(yield* DateTime.now),
+            });
+            if (!acknowledged && promptCacheNeedsAcknowledgement(cache)) {
+              return yield* new ProviderTurnControlError({
+                threadId: input.threadId,
+                operation: "steer",
+                providerTurnId: input.providerTurnId,
+                cacheStatus: cache.state === "expired" ? "expired" : "unknown",
+              });
+            }
+          }
           const ownership = context.message?.delegatedCompletion;
           if (ownership !== undefined) {
             const projection = yield* projections.getThreadRecords(input.threadId, ["runs"], {

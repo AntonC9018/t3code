@@ -183,7 +183,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
       const workingDirectory =
-        operation === "generateThreadTitle"
+        operation === "generateThreadTitle" || operation === "generateContextSummary"
           ? yield* fileSystem
               .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
               .pipe(
@@ -206,6 +206,14 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           ...(cliEffort ? ["--effort", cliEffort] : []),
           "--settings",
           settingsJson,
+          ...(operation === "generateContextSummary"
+            ? [
+                "--safe-mode",
+                "--no-session-persistence",
+                "--system-prompt",
+                "You summarize only the historical transcript supplied in the user message. Return the requested JSON. Do not use tools or add facts from your own runtime environment.",
+              ]
+            : []),
           ...(investigate
             ? [
                 "--tools",

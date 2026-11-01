@@ -1,0 +1,423 @@
+import { assert, describe, it, vi } from "@effect/vitest";
+import {
+  CommandId,
+  MessageId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+  TextGenerationError,
+  TurnItemId,
+  type ModelSelection,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
+import * as CustomCompaction from "./CustomCompactionService.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as ProjectStore from "./ProjectStore.ts";
+import * as EventSink from "./EventSink.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+
+const modelSelection: ModelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5.4",
+};
+const summarizer: ModelSelection = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-haiku-4-5",
+};
+const projectId = ProjectId.make("project:custom-compaction");
+const threadId = ThreadId.make("thread:custom-compaction");
+const request = { threadId, commandId: CommandId.make("compact:one"), modelSelection: summarizer };
+
+function makeHarness(
+  generate?: TextGeneration.TextGeneration["Service"]["generateContextSummary"],
+) {
+  const database = SqlitePersistence.layerMemory;
+  const adapters = [modelSelection, summarizer].map(
+    (selection) =>
+      ({
+        instanceId: selection.instanceId,
+        driver: ProviderDriverKind.make(selection.instanceId),
+        getCapabilities: () =>
+          Effect.succeed(
+            selection === modelSelection
+              ? CodexProviderCapabilitiesV2
+              : ClaudeProviderCapabilitiesV2,
+          ),
+        planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+        openSession: () => Effect.die("compaction must not open the original provider"),
+      }) as ProviderAdapter.ProviderAdapterV2["Service"],
+  );
+  const orchestration = ProviderReplayHarness.layerWithRegistry(
+    { name: "custom-compaction" },
+    ProviderAdapterRegistry.layerFromAdapters(adapters),
+    { databaseLayer: database, runEffectWorker: false },
+  );
+  const threads = ThreadManagement.layer.pipe(
+    Layer.provide(orchestration),
+    Layer.provide(ServerSettings.layerTest({})),
+    Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(database))),
+  );
+  const generateContextSummary = vi.fn(
+    generate ?? (() => Effect.succeed({ summary: "Preserved objective and next steps." })),
+  );
+  const layer = CustomCompaction.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        threads,
+        orchestration,
+        IdAllocator.layer,
+        ThreadCommandExecutor.layer,
+        Layer.mock(TextGeneration.TextGeneration)({ generateContextSummary }),
+        Layer.mock(ProjectStore.ProjectStoreV2)({
+          get: () =>
+            Effect.succeedSome({
+              projectId,
+              title: "Compaction",
+              workspaceRoot: "/repo",
+              defaultModelSelection: modelSelection,
+              defaultThreadEnvMode: null,
+              autoPull: false,
+              faviconPath: null,
+              projectIcon: null,
+              scripts: [],
+              createdAt: "2026-06-20T00:00:00.000Z",
+              updatedAt: "2026-06-20T00:00:00.000Z",
+              deletedAt: null,
+            }),
+        }),
+      ),
+    ),
+  );
+  return { layer, generateContextSummary };
+}
+
+const seed = Effect.gen(function* () {
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  yield* threads.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make("create"),
+    threadId,
+    projectId,
+    title: "Original title",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+  });
+  yield* threads.dispatch({
+    type: "message.dispatch",
+    commandId: CommandId.make("first"),
+    threadId,
+    messageId: MessageId.make("first"),
+    text: "ORIGINAL_LONG_TRANSCRIPT",
+    attachments: [],
+    dispatchMode: { type: "defer_start" },
+    createdBy: "user",
+    creationSource: "web",
+  });
+  const original = yield* threads.getThreadProjection(threadId);
+  const run = original.runs[0]!;
+  const provider = original.providerThreads[0]!;
+  const ids = yield* IdAllocator.IdAllocatorV2;
+  const sink = yield* EventSink.EventSinkV2;
+  const now = yield* DateTime.now;
+  for (const item of original.turnItems.filter(
+    (item) => item.status === "running" || item.status === "pending",
+  )) {
+    yield* sink.write({
+      events: [
+        {
+          id: yield* ids.allocate.event({ threadId }),
+          threadId,
+          type: "turn-item.updated",
+          occurredAt: now,
+          payload: { ...item, status: "completed", completedAt: now },
+        },
+      ],
+    });
+  }
+  yield* sink.write({
+    events: [
+      {
+        id: yield* ids.allocate.event({ threadId }),
+        threadId,
+        type: "run.updated",
+        occurredAt: now,
+        payload: { ...run, status: "completed", completedAt: now },
+      },
+      {
+        id: yield* ids.allocate.event({ threadId }),
+        threadId,
+        type: "provider-thread.updated",
+        occurredAt: now,
+        payload: {
+          ...provider,
+          status: "idle",
+          nativeThreadRef: {
+            driver: provider.driver,
+            nativeId: "original-native-context",
+            strength: "strong",
+          },
+        },
+      },
+    ],
+  });
+  return yield* threads.getThreadProjection(threadId);
+});
+
+describe("custom model compaction", () => {
+  it.effect(
+    "persists one summary boundary, keeps app identity, and never replays old history on a later switch",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const original = yield* seed;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const service = yield* CustomCompaction.CustomCompactionService;
+        yield* service.compact(request);
+        yield* service.compact(request);
+        const compacted = yield* threads.getThreadProjection(threadId);
+        assert.equal(harness.generateContextSummary.mock.calls.length, 1);
+        assert.include(
+          harness.generateContextSummary.mock.calls[0]![0].transcript,
+          "ORIGINAL_LONG_TRANSCRIPT",
+        );
+        assert.deepEqual(compacted.thread.modelSelection, original.thread.modelSelection);
+        assert.equal(compacted.thread.title, original.thread.title);
+        assert.equal(compacted.turnItems.filter((item) => item.type === "handoff").length, 1);
+        assert.equal(
+          compacted.providerThreads.find(
+            (provider) => provider.id === compacted.thread.activeProviderThreadId,
+          )?.nativeThreadRef,
+          null,
+        );
+        assert.equal(
+          compacted.providerThreads.find(
+            (provider) => provider.id === original.thread.activeProviderThreadId,
+          )?.compactionSuperseded,
+          true,
+        );
+        assert.equal(
+          compacted.contextHandoffs[0]?.summaryText,
+          "Preserved objective and next steps.",
+        );
+        assert.isUndefined(compacted.contextHandoffs[0]?.history);
+        // Switching before any post-compaction turn exercises the unused summary handoff too.
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("switch"),
+          threadId,
+          modelSelection: summarizer,
+          messageId: MessageId.make("switch"),
+          text: "Continue",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const switched = yield* threads.getThreadProjection(threadId);
+        const handoff = switched.contextHandoffs.find(
+          (handoff) => handoff.toProviderThreadId === switched.thread.activeProviderThreadId,
+        );
+        assert.isDefined(handoff);
+        const transferred =
+          handoff!.history?.messages.map((message) => message.text).join("\n") ??
+          handoff!.summaryText;
+        assert.include(transferred, "Preserved objective and next steps.");
+        assert.notInclude(transferred, "ORIGINAL_LONG_TRANSCRIPT");
+        assert.include(
+          switched.messages.map((message) => message.text).join("\n"),
+          "ORIGINAL_LONG_TRANSCRIPT",
+        );
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
+
+  it.effect("keeps later provider items with restarted ordinals when compacting again", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      yield* seed;
+      const service = yield* CustomCompaction.CustomCompactionService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sink = yield* EventSink.EventSinkV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      yield* service.compact(request);
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("later"),
+        threadId,
+        messageId: MessageId.make("later"),
+        text: "Later request",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const after = yield* threads.getThreadProjection(threadId);
+      const run = after.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0]!;
+      const template = after.turnItems.find((item) => item.type === "user_message")!;
+      const now = yield* DateTime.now;
+      for (const item of after.turnItems.filter(
+        (item) => item.status === "running" || item.status === "pending",
+      )) {
+        yield* sink.write({
+          events: [
+            {
+              id: yield* ids.allocate.event({ threadId }),
+              threadId,
+              type: "turn-item.updated",
+              occurredAt: now,
+              payload: { ...item, status: "completed", completedAt: now },
+            },
+          ],
+        });
+      }
+      yield* sink.write({
+        events: [
+          {
+            id: yield* ids.allocate.event({ threadId }),
+            threadId,
+            type: "run.updated",
+            occurredAt: now,
+            payload: { ...run, status: "completed", completedAt: now },
+          },
+          {
+            id: yield* ids.allocate.event({ threadId }),
+            threadId,
+            type: "turn-item.updated",
+            occurredAt: now,
+            payload: {
+              ...template,
+              type: "assistant_message",
+              streaming: false,
+              id: TurnItemId.make("later-answer"),
+              runId: run.id,
+              ordinal: 0,
+              text: "LATER_LOW_ORDINAL_ANSWER",
+            },
+          },
+        ],
+      });
+      yield* service.compact({ ...request, commandId: CommandId.make("compact:two") });
+      const transcript = harness.generateContextSummary.mock.calls.at(-1)![0].transcript;
+      assert.include(transcript, "LATER_LOW_ORDINAL_ANSWER");
+      assert.include(transcript, "Later request");
+      assert.include(transcript, "Preserved objective and next steps.");
+      assert.notInclude(transcript, "ORIGINAL_LONG_TRANSCRIPT");
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("preserves native context when summary generation fails", () => {
+    const harness = makeHarness(() =>
+      Effect.fail(
+        new TextGenerationError({ operation: "generateContextSummary", detail: "fixture failure" }),
+      ),
+    );
+    return Effect.gen(function* () {
+      const original = yield* seed;
+      const service = yield* CustomCompaction.CustomCompactionService;
+      const result = yield* service.compact(request).pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const after = yield* threads.getThreadProjection(threadId);
+      assert.equal(after.thread.activeProviderThreadId, original.thread.activeProviderThreadId);
+      assert.deepEqual(after.providerThreads, original.providerThreads);
+      assert.isEmpty(after.contextHandoffs);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("rejects a stale summary after a concurrent message arrives", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const harness = makeHarness(() =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as({ summary: "stale summary" }),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const original = yield* seed;
+        const service = yield* CustomCompaction.CustomCompactionService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const fiber = yield* service.compact(request).pipe(Effect.result, Effect.forkChild);
+        yield* Deferred.await(started);
+        const duplicate = yield* service
+          .compact({ ...request, commandId: CommandId.make("compact:different") })
+          .pipe(Effect.result);
+        assert.equal(duplicate._tag, "Failure");
+        yield* threads.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("rename"),
+          threadId,
+          title: "Changed concurrently",
+        });
+        yield* Deferred.succeed(release, undefined);
+        const result = yield* Fiber.join(fiber);
+        assert.equal(result._tag, "Failure");
+        const after = yield* threads.getThreadProjection(threadId);
+        assert.equal(after.thread.activeProviderThreadId, original.thread.activeProviderThreadId);
+        assert.isEmpty(after.contextHandoffs);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect(
+    "cancels summary generation without replacing context and releases the compaction slot",
+    () =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const harness = makeHarness(() =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as({ summary: "Retry summary" }),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const original = yield* seed;
+          const service = yield* CustomCompaction.CustomCompactionService;
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const fiber = yield* service.compact(request).pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          yield* Fiber.interrupt(fiber);
+          const afterCancel = yield* threads.getThreadProjection(threadId);
+          assert.equal(
+            afterCancel.thread.activeProviderThreadId,
+            original.thread.activeProviderThreadId,
+          );
+          assert.isEmpty(afterCancel.contextHandoffs);
+          yield* Deferred.succeed(release, undefined);
+          yield* service.compact({ ...request, commandId: CommandId.make("compact:after-cancel") });
+          const afterRetry = yield* threads.getThreadProjection(threadId);
+          assert.equal(afterRetry.contextHandoffs[0]?.summaryText, "Retry summary");
+        }).pipe(Effect.provide(harness.layer));
+      }),
+  );
+
+  it("splits Unicode transcripts without losing text or exceeding the byte budget", () => {
+    const text = "🧪Контекст".repeat(10_000);
+    const chunks = CustomCompaction.splitCompactionTranscript(text);
+    assert.equal(chunks.join(""), text);
+    assert.isAbove(chunks.length, 1);
+    for (const part of chunks) assert.isAtMost(Buffer.byteLength(part), 48_000);
+  });
+});

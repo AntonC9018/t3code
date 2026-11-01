@@ -8,7 +8,8 @@
     "thread-titles": "node --env-file-if-exists=../.env thread-titles/run.ts",
     "test-signal": "node --env-file-if-exists=../.env test-signal/run.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vp test run --config ../vite.config.ts --dir ."
+    "test": "vp test run --config ../vite.config.ts --dir .",
+    "context-summaries": "node --env-file-if-exists=../.env context-summaries/run.ts"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",

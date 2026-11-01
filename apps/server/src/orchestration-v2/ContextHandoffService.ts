@@ -18,6 +18,7 @@ import {
   handoffTokenCapConfig,
   handoffCoverage,
   historicalMessage,
+  historySinceCustomCompaction,
   renderHistory,
   selectHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
@@ -372,9 +373,13 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           ),
         );
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
-      const coverage = handoffCoverage(input);
+      const items =
+        input.runs === undefined
+          ? input.items
+          : historySinceCustomCompaction(input.items, input.runs);
+      const coverage = handoffCoverage({ ...input, items });
       const selected = selectHistory({
-        messages: input.items.flatMap((item) => {
+        messages: items.flatMap((item) => {
           const message = historicalMessage(item);
           return message === null
             ? []

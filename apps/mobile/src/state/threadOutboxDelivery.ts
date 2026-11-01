@@ -874,6 +874,7 @@ export function createThreadOutboxDelivery(): {
         message: {
           messageId: queuedMessage.messageId,
           role: "user",
+          ...(queuedMessage.allowUncachedRead ? { allowUncachedRead: true } : {}),
           ...serializeComposerMessageForServer(
             queuedMessage.text,
             uploadedComposerContext(

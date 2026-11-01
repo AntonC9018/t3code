@@ -621,6 +621,35 @@ describe("handoff delivery", () => {
     }),
   );
 
+  it.effect("never marks custom compaction delivered when its summary cannot fit", () =>
+    Effect.gen(function* () {
+      let persisted = false;
+      const { history: _history, ...withoutHistory } = handoff;
+      const result = yield* deliverContextHandoffs({
+        handoffs: [
+          {
+            ...withoutHistory,
+            strategy: "manual_context",
+            summaryText: "Keep this objective. ".repeat(1000),
+            compactionModelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5.4",
+            },
+          },
+        ],
+        providerThread,
+        budget: 2500,
+        alreadyDeliveredItemIds: new Set(),
+        persist: () =>
+          Effect.sync(() => {
+            persisted = true;
+          }),
+      }).pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      assert.equal(persisted, false);
+    }),
+  );
+
   it.effect("fails before delivery when even the coverage marker cannot fit", () =>
     Effect.gen(function* () {
       let calls = 0;

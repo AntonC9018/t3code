@@ -26,6 +26,7 @@ const makeStubTextGeneration = (
     generateBranchName: () => Effect.die("generateBranchName stub not configured for this test"),
     generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
     generateReviewGuide: () => Effect.die("generateReviewGuide stub not configured for this test"),
+    generateContextSummary: () => Effect.die("unused"),
     generateTranscriptionPostProcessing: () =>
       Effect.die("generateTranscriptionPostProcessing stub not configured for this test"),
     ...overrides,
@@ -69,6 +70,48 @@ const makeStubRegistry = (
 };
 
 describe("TextGeneration.make", () => {
+  it.effect("summarizes with the selected model without consulting quota fallback", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("selected-instance");
+      const selection = createModelSelection(instanceId, "selected-model");
+      const transcript = "User: Preserve the pending migration. Assistant: Tests failed.";
+      const instance = makeStubInstance(
+        instanceId,
+        makeStubTextGeneration({
+          generateContextSummary: (input) => {
+            expect(input.modelSelection).toEqual(selection);
+            expect(input.transcript).toBe(transcript);
+            return Effect.succeed({ summary: "Migration pending; tests failed." });
+          },
+        }),
+      );
+      const registry = makeStubRegistry([instance]);
+      const generation = yield* TextGeneration.make.pipe(
+        Effect.provideService(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+          ...registry,
+          listInstances: Effect.die(
+            "Compaction must not inspect other providers or select fallback",
+          ),
+        }),
+        Effect.provide(
+          Layer.mergeAll(
+            ServerSettings.layerTest(),
+            Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+              resolveLink: () => Effect.die("unused"),
+            }),
+          ),
+        ),
+      );
+      expect(
+        yield* generation.generateContextSummary({
+          cwd: "/workspace",
+          transcript,
+          modelSelection: selection,
+        }),
+      ).toEqual({ summary: "Migration pending; tests failed." });
+    }),
+  );
+
   it.effect("retains supplied subject context in the provider prompt", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("codex");

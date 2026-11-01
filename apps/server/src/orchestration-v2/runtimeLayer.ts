@@ -1,3 +1,4 @@
+import * as CustomCompactionService from "./CustomCompactionService.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -310,6 +311,18 @@ const layerProviderContinuationWorkerProvided = ProviderContinuationService.laye
     ),
   ),
 );
+const layerCustomCompactionProvided = CustomCompactionService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerThreadManagementProvided,
+      ProjectStore.layer,
+      TextGeneration.layer,
+      ThreadCommandExecutor.layer,
+      layerEventSink,
+      IdAllocator.layer,
+    ),
+  ),
+);
 const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(layerThreadManagementProvided, ProjectStore.layer, TextGeneration.layer),
@@ -360,6 +373,7 @@ export const layer = Layer.mergeAll(
   layerOrchestratorProvided,
   layerMcpAppRequestsProvided,
   layerThreadManagementProvided,
+  layerCustomCompactionProvided,
   layerEffectWorkerProvided,
   layerProviderSessionManagerProvided,
   layerProviderAuthServiceProvided,

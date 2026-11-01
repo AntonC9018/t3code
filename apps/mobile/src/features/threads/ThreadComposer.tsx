@@ -1,3 +1,4 @@
+import { PromptCacheIndicator } from "./PromptCacheIndicator";
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
@@ -81,6 +82,7 @@ import { GlassSurface } from "../../components/ui/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { fileRoutePathSegments } from "../files/filePath";
 import { ComposerActionButton, ComposerToolbarRow } from "../../components/ComposerToolbar";
+import { ThreadCompactionMenu } from "./ThreadCompactionMenu";
 import { ComposerModelControl } from "../../components/ComposerModelControl";
 import {
   composerStripAttachments,
@@ -206,6 +208,7 @@ export interface ThreadComposerProps {
   readonly selectedThread: EnvironmentThreadShell;
   readonly reportedModelSelection?: ModelSelection | null;
   readonly hasCompactableConversation: boolean;
+  readonly cacheReadRequiresAcknowledgement?: boolean;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
@@ -807,6 +810,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           Platform.OS === "android" ? themeColorWithAlpha(composerPanel, 1) : undefined,
       }}
     >
+      <PromptCacheIndicator cache={props.selectedThread.promptCache} />
       {/* Use a plain View: Reanimated Animated.View drops experimental_backgroundImage on Android. */}
       <View
         className={
@@ -936,6 +940,22 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 }
               >
                 {modelControl}
+                {!props.isDraft && props.hasCompactableConversation && props.serverConfig ? (
+                  <ThreadCompactionMenu
+                    environmentId={props.environmentId}
+                    thread={props.selectedThread}
+                    config={props.serverConfig}
+                    disabled={
+                      isSubmissionLocked ||
+                      props.activeThreadBusy ||
+                      !props.canOperateThread ||
+                      props.connectionState !== "connected"
+                    }
+                    cacheReadRequiresAcknowledgement={
+                      props.cacheReadRequiresAcknowledgement ?? false
+                    }
+                  />
+                ) : null}
                 <ComposerDictationStartAction
                   size={usesLargeControls ? "large" : "regular"}
                   state={voiceInput.state}

@@ -44,7 +44,12 @@ export function resolvePendingHandoff(
 export function resolveHandoffEndpoints(
   item: Pick<
     Extract<OrchestrationV2TurnItem, { type: "handoff" }>,
-    "runId" | "fromModelSelections" | "fromProviderInstanceIds" | "toModel" | "toProviderInstanceId"
+    | "runId"
+    | "fromModelSelections"
+    | "fromProviderInstanceIds"
+    | "toModel"
+    | "toProviderInstanceId"
+    | "compactionModelSelection"
   >,
   runs: ReadonlyArray<HandoffTimelineRun>,
 ) {
@@ -64,7 +69,11 @@ export function resolveHandoffEndpoints(
           instanceId,
           model: latestRunModelBefore(runs, instanceId, handoffRun?.ordinal),
         }));
-  return { from: fromEndpoints, to: { instanceId: item.toProviderInstanceId, model: toModel } };
+  return {
+    from: fromEndpoints,
+    to: { instanceId: item.toProviderInstanceId, model: toModel },
+    ...(item.compactionModelSelection ? { via: item.compactionModelSelection } : {}),
+  };
 }
 
 function latestRunModelBefore(

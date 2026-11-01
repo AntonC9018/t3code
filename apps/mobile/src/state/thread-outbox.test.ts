@@ -322,6 +322,7 @@ describe("thread outbox", () => {
     });
     const selectedMessage = {
       ...legacyMessage,
+      allowUncachedRead: true,
       modelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.4",

@@ -1,3 +1,7 @@
+import {
+  deriveThreadPromptCacheStatus,
+  promptCacheNeedsAcknowledgement,
+} from "@t3tools/shared/promptCache";
 import { useComposerAttachmentActions } from "./use-composer-attachment-actions";
 import * as Dialog from "../components/ui/Dialog";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -603,6 +607,36 @@ export function useThreadComposerState() {
       return null;
     }
 
+    const projection = selectedThreadProjection?.projection;
+    const cacheStatus = projection
+      ? deriveThreadPromptCacheStatus({
+          providerThread:
+            projection.providerThreads.find(
+              (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+            ) ?? null,
+          providerTurns: projection.providerTurns,
+          attempts: projection.attempts,
+          runs: projection.runs,
+          modelSelection,
+          nowMs: Date.now(),
+        })
+      : null;
+    const allowUncachedRead = cacheStatus !== null && promptCacheNeedsAcknowledgement(cacheStatus);
+    if (allowUncachedRead) {
+      const acknowledged = await new Promise<boolean>((resolve) =>
+        Dialog.confirm({
+          title: "Claude cache may be cold",
+          message:
+            "Compact with another model from the context menu, or send this message with an uncached read.",
+          confirmText: "Send anyway once",
+          onConfirm: () => resolve(true),
+          onCancel: () => resolve(false),
+        }),
+      );
+      const current = getComposerDraftSnapshot(threadKey);
+      if (!acknowledged || current !== draft) return null;
+    }
+
     if (beforeDispatch !== undefined) {
       const response = await beforeDispatch(
         text,
@@ -661,6 +695,7 @@ export function useThreadComposerState() {
       attachments,
       context: draft.context,
       modelSelection,
+      ...(allowUncachedRead ? { allowUncachedRead: true } : {}),
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: resolveProviderInteractionMode(
         provider,

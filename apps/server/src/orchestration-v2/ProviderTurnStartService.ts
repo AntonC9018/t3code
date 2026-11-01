@@ -1,4 +1,8 @@
 import { providerUsageLimitResetAt } from "@t3tools/shared/usageLimits";
+import {
+  deriveThreadPromptCacheStatus,
+  promptCacheNeedsAcknowledgement,
+} from "@t3tools/shared/promptCache";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -341,6 +345,7 @@ export const layer: Layer.Layer<
         (handoff) =>
           (handoff.transferId == null || !subagentResultTransfers.has(handoff.transferId)) &&
           handoff.status === "ready" &&
+          handoff.toProviderThreadId === run.providerThreadId &&
           (handoff.targetRunId === run.id ||
             (handoff.toProviderThreadId === run.providerThreadId &&
               projection.runs.some(
@@ -398,6 +403,7 @@ export const layer: Layer.Layer<
                 "type" | "title" | "input" | "output" | "exitCode"
               >;
           readonly providerThreadUpdate?: OrchestrationV2ProviderThread;
+          readonly markSessionFailed?: boolean;
         }) {
           const { now, status } = input;
           const started = input.startedAt === undefined ? {} : { startedAt: input.startedAt };
@@ -424,7 +430,7 @@ export const layer: Layer.Layer<
             ...input.item,
           };
           const failedSession =
-            status === "failed" && input.item.type === "error"
+            status === "failed" && input.item.type === "error" && input.markSessionFailed !== false
               ? projection.providerSessions.find(
                   (session) =>
                     session.id === providerThread.providerSessionId &&
@@ -516,6 +522,48 @@ export const layer: Layer.Layer<
               }),
             },
           });
+        },
+      );
+      const promptCacheAllowsStart = Effect.fn("ProviderTurnStartService.checkPromptCache")(
+        function* (destination: OrchestrationV2ProviderThread) {
+          if (
+            message.allowUncachedRead === true &&
+            message.runId === run.id &&
+            attempt.attemptOrdinal === 1
+          )
+            return true;
+          const now = yield* DateTime.now;
+          const status = deriveThreadPromptCacheStatus({
+            providerThread: destination,
+            providerTurns: projection.providerTurns,
+            attempts: projection.attempts,
+            runs: projection.runs,
+            modelSelection: run.modelSelection,
+            nowMs: DateTime.toEpochMillis(now),
+          });
+          if (!promptCacheNeedsAcknowledgement(status)) return true;
+          yield* settleRunBeforeStart({
+            signal: "prompt-cache-protection",
+            status: "failed",
+            now,
+            providerInstanceId: run.providerInstanceId,
+            itemProviderThreadId: destination.id,
+            markSessionFailed: false,
+            item: {
+              type: "error",
+              title: "Prompt cache needs confirmation",
+              failure: makeProviderFailure({
+                class: "validation_error",
+                code: status.state === "expired" ? "prompt_cache_expired" : "prompt_cache_unknown",
+                retryable: false,
+                message:
+                  status.state === "expired"
+                    ? "Claude's prompt cache has expired. Compact with another model or explicitly send anyway once to allow an uncached read."
+                    : "Claude's prompt cache status is unknown. Compact with another model or explicitly send anyway once to allow an uncached read.",
+              }),
+            },
+          });
+          return false;
         },
       );
       if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
@@ -860,6 +908,7 @@ export const layer: Layer.Layer<
         });
         return;
       }
+      if (!(yield* promptCacheAllowsStart(providerThread))) return;
       const sessionResult = yield* Effect.result(
         providerSessions.open({
           threadId: projection.thread.id,
@@ -1400,6 +1449,7 @@ export const layer: Layer.Layer<
         budget,
       } = handoffContext;
       const retryHandoff = resumedRetryHandoff ?? (yield* prepareRetryHandoff(handoffContext));
+      if (!(yield* promptCacheAllowsStart(loadedProviderThread))) return;
       const runningProviderThread: OrchestrationV2ProviderThread = {
         ...loadedProviderThread,
         contextUsage: handoffUsage,

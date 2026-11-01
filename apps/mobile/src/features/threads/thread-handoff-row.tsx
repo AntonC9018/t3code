@@ -65,7 +65,7 @@ export function ThreadHandoffRow(props: {
       endpoints={endpoints}
       iconColor={color}
       surfaceColor={props.surfaceColor}
-      label="Context handoff"
+      label={endpoints.via ? "Context compacted" : "Context handoff"}
       failed={item.status === "failed"}
     />
   );
@@ -121,6 +121,12 @@ export function ThreadHandoffDivider(props: {
         ))}
         {endpoints.from.length > 0 ? (
           <SymbolView name="arrow.right" size={12} tintColor={props.iconColor} />
+        ) : null}
+        {endpoints.via ? (
+          <>
+            <HandoffEndpoint {...endpoints.via} {...endpointProps} />
+            <SymbolView name="arrow.right" size={12} tintColor={props.iconColor} />
+          </>
         ) : null}
         <HandoffEndpoint {...endpoints.to} {...endpointProps} />
       </View>

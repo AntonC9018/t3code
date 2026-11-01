@@ -17,7 +17,10 @@ import * as Schema from "effect/Schema";
 import { createMuseSdkHost, createMuseSdkHostEffect, type MuseSdkHost } from "./sdk.ts";
 import { museModelCapabilities, resolveMuseReasoningEffort } from "./modelCatalog.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
-import { investigationUnsupported } from "@t3tools/provider-core/server/textGenerationOperations";
+import {
+  investigationUnsupported,
+  fromRunner,
+} from "@t3tools/provider-core/server/textGenerationOperations";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -294,6 +297,9 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     );
   });
 
+  const generateContextSummary = fromRunner("MuseTextGeneration", (request) =>
+    runMuseJson(request),
+  ).generateContextSummary;
   const generateCommitMessage: ProviderTextGeneration["generateCommitMessage"] = Effect.fn(
     "MuseTextGeneration.generateCommitMessage",
   )(function* (input) {
@@ -352,6 +358,7 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
       });
     });
   return {
+    generateContextSummary,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,

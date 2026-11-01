@@ -1,3 +1,4 @@
+import { historySinceCustomCompaction } from "@t3tools/provider-core/server/handoffBudget";
 import type {
   GuestShareId,
   OrchestrationV2SearchThreadInput,
@@ -964,6 +965,7 @@ function rootProviderThreadsForProvider(
     .filter(
       (providerThread) =>
         providerThread.providerInstanceId === providerInstanceId &&
+        providerThread.compactionSuperseded !== true &&
         providerThread.appThreadId === projection.thread.id &&
         providerThread.ownerNodeId === null,
     )
@@ -1171,11 +1173,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     projectionStore
       .getThreadRecords(
         threadId,
-        ["turnItems"],
+        ["turnItems", "runs"],
         runIds === undefined ? undefined : { turnItemRunIds: runIds },
       )
       .pipe(
-        Effect.map((records) => records.turnItems),
+        Effect.map((records) => historySinceCustomCompaction(records.turnItems, records.runs)),
         Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
       );
 
@@ -1956,6 +1958,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(queuedMessage.senderThreadId === undefined
             ? {}
             : { senderThreadId: queuedMessage.senderThreadId }),
+          ...(queuedMessage.allowUncachedRead === undefined
+            ? {}
+            : { allowUncachedRead: queuedMessage.allowUncachedRead }),
           ...(queuedMessage.idleCompaction === undefined
             ? {}
             : { idleCompaction: queuedMessage.idleCompaction }),
@@ -4463,6 +4468,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly scheduledTaskId?: OrchestrationV2ConversationMessage["scheduledTaskId"];
     readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
     readonly idleCompaction?: OrchestrationV2ConversationMessage["idleCompaction"];
+    readonly allowUncachedRead?: boolean;
     readonly delegatedCompletion?: OrchestrationV2ConversationMessage["delegatedCompletion"];
     readonly forceRestart: boolean;
   }) {
@@ -4620,6 +4626,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? {}
             : { scheduledTaskId: input.scheduledTaskId }),
           ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
+          ...(input.allowUncachedRead === undefined
+            ? {}
+            : { allowUncachedRead: input.allowUncachedRead }),
           ...(input.idleCompaction === undefined ? {} : { idleCompaction: input.idleCompaction }),
           id: input.messageId,
           threadId: input.command.threadId,
@@ -4640,6 +4649,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? {}
             : { scheduledTaskId: input.scheduledTaskId }),
           ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
+          ...(input.allowUncachedRead === undefined
+            ? {}
+            : { allowUncachedRead: input.allowUncachedRead }),
           ...(input.idleCompaction === undefined ? {} : { idleCompaction: input.idleCompaction }),
           id: idAllocator.derive.userTurnItem({ messageId: input.messageId }),
           threadId: input.command.threadId,
@@ -5608,6 +5620,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { scheduledTaskId: command.scheduledTaskId }),
         ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
+        ...(command.allowUncachedRead === undefined
+          ? {}
+          : { allowUncachedRead: command.allowUncachedRead }),
         ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
         forceRestart: dispatchMode.type === "restart_active",
       });
@@ -5843,6 +5858,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { scheduledTaskId: command.scheduledTaskId }),
         ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
+        ...(command.allowUncachedRead === undefined
+          ? {}
+          : { allowUncachedRead: command.allowUncachedRead }),
         ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
         id: command.messageId,
         threadId: command.threadId,
@@ -6190,6 +6208,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { scheduledTaskId: command.scheduledTaskId }),
         ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
+        ...(command.allowUncachedRead === undefined
+          ? {}
+          : { allowUncachedRead: command.allowUncachedRead }),
         ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
         id: command.messageId,
         threadId: command.threadId,
@@ -6212,6 +6233,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { scheduledTaskId: command.scheduledTaskId }),
         ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
+        ...(command.allowUncachedRead === undefined
+          ? {}
+          : { allowUncachedRead: command.allowUncachedRead }),
         ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
         id: idAllocator.derive.userTurnItem({ messageId: command.messageId }),
         threadId: command.threadId,
@@ -6879,6 +6903,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? {}
         : { scheduledTaskId: command.scheduledTaskId }),
       ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
+      ...(command.allowUncachedRead === undefined
+        ? {}
+        : { allowUncachedRead: command.allowUncachedRead }),
       ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
       id: command.messageId,
       threadId: command.threadId,
@@ -6901,6 +6928,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? {}
         : { scheduledTaskId: command.scheduledTaskId }),
       ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
+      ...(command.allowUncachedRead === undefined
+        ? {}
+        : { allowUncachedRead: command.allowUncachedRead }),
       ...(command.idleCompaction === undefined ? {} : { idleCompaction: command.idleCompaction }),
       id: idAllocator.derive.userTurnItem({ messageId: command.messageId }),
       threadId: command.threadId,
@@ -9253,6 +9283,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(queuedMessage.senderThreadId === undefined
         ? {}
         : { senderThreadId: queuedMessage.senderThreadId }),
+      ...(queuedMessage.allowUncachedRead === undefined
+        ? {}
+        : { allowUncachedRead: queuedMessage.allowUncachedRead }),
       ...(queuedMessage.idleCompaction === undefined
         ? {}
         : { idleCompaction: queuedMessage.idleCompaction }),

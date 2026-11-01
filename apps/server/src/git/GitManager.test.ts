@@ -287,6 +287,7 @@ function createTextGeneration(
       Effect.succeed({
         title: "Update workflow",
       }),
+    generateContextSummary: () => Effect.succeed({ summary: "summary" }),
     generateTranscriptionPostProcessing: () =>
       Effect.succeed({ transcription: "processed transcript" }),
     generateReviewGuide: () => Effect.succeed({ stops: [] }),
@@ -335,6 +336,17 @@ function createTextGeneration(
               operation: "generateThreadTitle",
               detail: "fake text generation failed",
               ...(cause !== undefined ? { cause } : {}),
+            }),
+        ),
+      ),
+    generateContextSummary: (input) =>
+      implementation.generateContextSummary(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "generateContextSummary",
+              detail: "fake text generation failed",
+              cause,
             }),
         ),
       ),

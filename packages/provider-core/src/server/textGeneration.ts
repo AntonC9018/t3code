@@ -92,6 +92,16 @@ export interface ReviewGuideGenerationInput {
   modelSelection: ModelSelection;
 }
 
+export interface ContextSummaryGenerationInput {
+  cwd: string;
+  transcript: string;
+  modelSelection: ModelSelection;
+}
+
+export interface ContextSummaryGenerationResult {
+  summary: string;
+}
+
 export interface TranscriptionPostProcessingInput {
   cwd: string;
   prompt: string;
@@ -109,6 +119,10 @@ export type ReviewGuideGenerationResult = Omit<
 >;
 
 export interface ProviderTextGeneration {
+  readonly generateContextSummary: (
+    input: ContextSummaryGenerationInput,
+  ) => Effect.Effect<ContextSummaryGenerationResult, TextGenerationError>;
+
   readonly generateCommitMessage: (
     input: CommitMessageGenerationInput,
   ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;

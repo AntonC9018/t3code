@@ -729,6 +729,40 @@ describe("ClaudeAdapterV2 device instructions", () => {
 });
 
 describe("ClaudeAdapterV2 context usage", () => {
+  it("carries a known lifetime only after a proven read and chooses the shorter mixed lifetime", () => {
+    const requestedAt = DateTime.makeUnsafe("2026-08-29T00:00:00.000Z");
+    const usage = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 100 };
+    const inherited = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+      usage,
+      CLAUDE_TEST_MODEL_SELECTION,
+      "2026-08-29T00:03:00.000Z",
+      "",
+      requestedAt,
+      3_600_000,
+    );
+    assert.strictEqual(inherited.promptCacheExpiresAt, "2026-08-29T01:00:00.000Z");
+    const unread = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+      { ...usage, cache_read_input_tokens: 0 },
+      CLAUDE_TEST_MODEL_SELECTION,
+      "2026-08-29T00:03:00.000Z",
+      "",
+      requestedAt,
+      3_600_000,
+    );
+    assert.strictEqual(unread.promptCacheTtlMs, undefined);
+    const mixed = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+      {
+        ...usage,
+        cache_creation: { ephemeral_1h_input_tokens: 100, ephemeral_5m_input_tokens: 10 },
+      },
+      CLAUDE_TEST_MODEL_SELECTION,
+      "2026-08-29T00:03:00.000Z",
+      "",
+      requestedAt,
+      3_600_000,
+    );
+    assert.strictEqual(mixed.promptCacheExpiresAt, "2026-08-29T00:05:00.000Z");
+  });
   it("dates cache expiry from the request start, not the response end", () => {
     const usage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
       {
@@ -6029,6 +6063,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         output_tokens: 1,
         cache_creation_input_tokens: 200,
         cache_read_input_tokens: 1_000,
+        cache_creation: { ephemeral_1h_input_tokens: 200, ephemeral_5m_input_tokens: 0 },
       };
       const frames = [
         usageStreamFrame({
@@ -6052,6 +6087,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           },
         }),
         usageSnapshotFrame("msg_native", "00000000-0000-4000-8000-000000000681", startUsage),
+        usageStreamFrame({
+          type: "message_start",
+          message: {
+            id: "msg_cached",
+            usage: {
+              input_tokens: 25,
+              output_tokens: 50,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 1_000,
+              cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 },
+            },
+          },
+        }),
         claudeSdkFrame({
           type: "system",
           subtype: "compact_boundary",
@@ -6059,7 +6107,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "00000000-0000-4000-8000-000000000682",
           session_id: WAKE_NATIVE_SESSION,
         }),
-        usageSnapshotFrame("msg_native", "00000000-0000-4000-8000-000000000684", startUsage),
+        usageSnapshotFrame("msg_cached", "00000000-0000-4000-8000-000000000684", startUsage),
         usageStreamFrame({
           type: "message_delta",
           delta: { stop_reason: "end_turn", stop_sequence: null },
@@ -6070,14 +6118,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
       const terminal = yield* Queue.take(harness.terminalReceipts);
       assert.equal(terminal.status, "completed");
-      assert.deepEqual(reportedContextTokens(harness.events), [1_211, 1_230, 1_075, 400]);
+      assert.deepEqual(reportedContextTokens(harness.events), [1_211, 1_230, 1_075, 1_075, 400]);
+      const reportedUsages = harness.events.flatMap((event) =>
+        event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+          ? [event.providerTurn.tokenUsage]
+          : [],
+      );
+      assert.equal(reportedUsages[3]?.promptCacheTtlMs, 3_600_000);
+      assert.isDefined(reportedUsages[3]?.promptCacheExpiresAt);
+      assert.isUndefined(reportedUsages[4]?.promptCacheExpiresAt);
       assert.deepEqual(
         harness.events.flatMap((event) =>
           event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
             ? [event.providerTurn.tokenUsage.autoCompactThreshold]
             : [],
         ),
-        [150_000, 150_000, 150_000, 150_000],
+        [150_000, 150_000, 150_000, 150_000, 150_000],
       );
     }).pipe(
       Effect.provide(

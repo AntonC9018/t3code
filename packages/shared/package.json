@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./promptCache": {
+      "types": "./src/promptCache.ts",
+      "import": "./src/promptCache.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"

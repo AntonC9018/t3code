@@ -135,6 +135,7 @@ function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolea
 }
 
 export interface EnvironmentThreadShell {
+  readonly promptCache?: OrchestrationV2ThreadShell["promptCache"];
   readonly environmentId: EnvironmentId;
   readonly id: ThreadId;
   readonly projectId: ProjectId;
@@ -322,6 +323,7 @@ export function presentThreadShell(
     pendingGuestMessageCount: thread.pendingGuestMessageCount ?? 0,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
+    ...(thread.promptCache === undefined ? {} : { promptCache: thread.promptCache }),
     providerInstanceHistory: thread.providerInstanceHistory ?? [],
     goal: thread.goal ?? null,
     itemCount: thread.itemCount,

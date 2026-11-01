@@ -452,7 +452,11 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     onOpenThread: onOpenRelatedThreadStable,
   });
 
-  const sendStandaloneCommand = async (text: string, failureMessage: string) => {
+  const sendStandaloneCommand = async (
+    text: string,
+    failureMessage: string,
+    allowUncachedRead = false,
+  ) => {
     if (!activeThread || !clientSettingsHydrated || sendInFlightRef.current) return;
     const context = composerRef.current?.getSendContext();
     if (!context?.providerAvailable) return;
@@ -491,7 +495,13 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
             environmentId,
             input: {
               threadId,
-              message: { messageId, role: "user", text, attachments: [] },
+              message: {
+                messageId,
+                role: "user",
+                text,
+                attachments: [],
+                ...(allowUncachedRead ? { allowUncachedRead: true } : {}),
+              },
               modelSelection: context.selectedModelSelection,
               runtimeMode,
               interactionMode: context.interactionMode,

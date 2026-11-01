@@ -1,3 +1,4 @@
+import { CustomCompactionControls } from "./CustomCompactionControls";
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useDictationShortcut } from "../../speech/useDictationShortcut";
 import {
@@ -440,7 +441,9 @@ export interface ChatComposerProps {
   activeProjectId: ProjectId | null;
 
   activeContextWindow: ContextWindowSnapshot | null;
+  cacheIndicator?: React.ReactNode;
   compactThreadUnavailable: boolean;
+  customCompactionUnavailable?: boolean;
   compactDisabled: boolean;
   compactDisabledReason: string | null;
 
@@ -3598,6 +3601,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     canOperateThread={canOperateThread}
                     activeContextWindow={
                       settings.contextWindowMeterEnabled ? activeContextWindow : null
+                    }
+                    cacheIndicator={props.cacheIndicator}
+                    customCompaction={
+                      activeThreadId && routeKind !== "draft" ? (
+                        <CustomCompactionControls
+                          environmentId={environmentId}
+                          threadId={activeThreadId}
+                          projectId={props.activeProjectId}
+                          disabled={props.customCompactionUnavailable ?? compactThreadUnavailable}
+                        />
+                      ) : undefined
                     }
                     reserveContextWindowMeter={reserveContextWindowMeter}
                     activeThreadModelDisplayName={activeThreadModelDisplayName}

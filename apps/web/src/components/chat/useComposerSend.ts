@@ -1,3 +1,5 @@
+import { deriveThreadPromptCacheStatus, type PromptCacheStatus } from "@t3tools/shared/promptCache";
+import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import {
   mergeDirectPreviewAnnotation,
   resolveBackgroundDraftWorkspaceOptions,
@@ -202,6 +204,7 @@ interface ComposerSendInput {
   readonly panelAnimationsActive: boolean;
   readonly panelAnimationDurationMs: number;
   readonly keepFullHistory: boolean;
+  readonly cacheProjection?: ThreadStructure | null;
   readonly resumeCompactionTokens: number | null;
   readonly showPlanFollowUpPrompt: boolean;
   readonly usageLimitsKey: string | null;
@@ -253,6 +256,25 @@ interface ComposerSendInput {
  * thread, a feedback upload, and resuming an interrupted run. Each path restores the draft
  * when it fails.
  */
+/** Reads the clock at send time; kept outside the hook so render stays pure. */
+function readSendPromptCacheStatus(
+  projection: ThreadStructure | null | undefined,
+  modelSelection: ModelSelection,
+): PromptCacheStatus {
+  if (!projection) return { state: "fresh" };
+  return deriveThreadPromptCacheStatus({
+    providerThread:
+      projection.providerThreads.find(
+        (thread) => thread.id === projection.thread.activeProviderThreadId,
+      ) ?? null,
+    providerTurns: projection.providerTurns,
+    attempts: projection.attempts,
+    runs: projection.runs,
+    modelSelection,
+    nowMs: Date.now(),
+  });
+}
+
 export function useComposerSend(input: ComposerSendInput) {
   const {
     environmentId,
@@ -392,15 +414,15 @@ export function useComposerSend(input: ComposerSendInput) {
     respondingRequestIdsRef.current = respondingRequestIds;
   }, [pendingApprovals, respondingRequestIds]);
 
-  const onSend = async (
-    e?: { preventDefault: () => void },
-    dispatchMode: ComposerDispatchMode = "auto",
-    submissionIntent: ComposerSubmissionIntent = "foreground",
-    directAnnotation?: {
-      annotation: PreviewAnnotationPayload;
-      image: ComposerImageAttachment | null;
-    },
-  ) => {
+  const sendComposer = async (
+    e: { preventDefault: () => void } | undefined,
+    dispatchMode: ComposerDispatchMode,
+    submissionIntent: ComposerSubmissionIntent,
+    directAnnotation:
+      | { annotation: PreviewAnnotationPayload; image: ComposerImageAttachment | null }
+      | undefined,
+    allowUncachedRead: boolean,
+  ): Promise<"cache-cold" | void> => {
     e?.preventDefault();
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
@@ -533,6 +555,14 @@ export function useComposerSend(input: ComposerSendInput) {
       interactionMode: sendInteractionMode,
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
+    const cacheStatus = readSendPromptCacheStatus(input.cacheProjection, ctxSelectedModelSelection);
+    if (
+      !allowUncachedRead &&
+      isServerThread &&
+      (cacheStatus.state === "expired" || cacheStatus.state === "unknown")
+    ) {
+      return "cache-cold";
+    }
     const { images: composerImages, previewAnnotations: composerPreviewAnnotations } =
       mergeDirectPreviewAnnotation({
         images: sendContextImages,
@@ -1231,6 +1261,7 @@ export function useComposerSend(input: ComposerSendInput) {
             text: "/compact",
             attachments: [],
             idleCompaction: "onReturn",
+            ...(allowUncachedRead ? { allowUncachedRead: true } : {}),
           },
           modelSelection: ctxSelectedModelSelection,
           runtimeMode,
@@ -1286,6 +1317,7 @@ export function useComposerSend(input: ComposerSendInput) {
           message: {
             messageId: messageIdForSend,
             role: "user",
+            ...(allowUncachedRead ? { allowUncachedRead: true } : {}),
             attachments: turnAttachmentsResult.value,
             ...withMessageContext({
               text: outgoingMessageText,
@@ -1445,6 +1477,38 @@ export function useComposerSend(input: ComposerSendInput) {
       );
       if (!sendQueuesBehindSetup) resetLocalDispatch();
     }
+  };
+
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    dispatchMode: ComposerDispatchMode = "auto",
+    submissionIntent: ComposerSubmissionIntent = "foreground",
+    directAnnotation?: {
+      annotation: PreviewAnnotationPayload;
+      image: ComposerImageAttachment | null;
+    },
+  ) => {
+    const threadKeyAtSend = routeThreadKey;
+    const draftAtSend = promptRef.current;
+    const result = await sendComposer(e, dispatchMode, submissionIntent, directAnnotation, false);
+    if (result !== "cache-cold") return;
+    toastManager.add({
+      type: "warning",
+      title: "Message not sent: Claude cache may be cold",
+      description:
+        "Compact with another model from the context menu, or explicitly send with an uncached read.",
+      actionProps: {
+        children: "Send anyway once",
+        onClick: () => {
+          if (
+            currentRouteThreadKeyRef.current !== threadKeyAtSend ||
+            promptRef.current !== draftAtSend
+          )
+            return;
+          void sendComposer(undefined, dispatchMode, submissionIntent, directAnnotation, true);
+        },
+      },
+    });
   };
 
   return { onSend };

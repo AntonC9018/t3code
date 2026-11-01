@@ -47,6 +47,24 @@ describe("handoff endpoints shared by web and mobile", () => {
     });
   });
 
+  it("retains a custom compaction route even when its destination has not run yet", () => {
+    const compactionModelSelection = { instanceId: from, model: "summary-model" };
+    const original = { instanceId: to, model: "original-model" };
+    expect(
+      resolveHandoffEndpoints(
+        {
+          ...item,
+          runId: null,
+          fromProviderInstanceIds: [to],
+          fromModelSelections: [original],
+          toModel: original.model,
+          compactionModelSelection,
+        },
+        [],
+      ),
+    ).toEqual({ from: [original], via: compactionModelSelection, to: original });
+  });
+
   it("recovers legacy models from the handoff run and latest earlier source run", () => {
     const runs = [
       run("later", 4, from, "wrong-later-model"),

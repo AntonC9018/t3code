@@ -196,6 +196,34 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
+  it.effect("isolates summary generation from project instructions and native sessions", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            summary: "Unicode case pending; migration 007 must remain unapplied.",
+          },
+        }),
+        cwdMustNotBe: process.cwd(),
+        argsMustContain: "--safe-mode --no-session-persistence --system-prompt",
+        argsMustNotContain: "--resume",
+        stdinMustContain: "migration 007",
+      },
+      (generation) =>
+        Effect.gen(function* () {
+          const result = yield* generation.generateContextSummary({
+            cwd: process.cwd(),
+            transcript: "User: Fix Unicode, do not apply migration 007.",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            ),
+          });
+          expect(result.summary).toBe("Unicode case pending; migration 007 must remain unapplied.");
+        }),
+    ),
+  );
+
   it.effect(
     "keeps canonical built-in capabilities when a custom model collides with its alias",
     () =>

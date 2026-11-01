@@ -1,3 +1,4 @@
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
@@ -220,8 +221,8 @@ function claudePromptCacheTtlMs(
   cacheCreation: ClaudeCacheCreation | null | undefined,
 ): number | undefined {
   if (!cacheCreation) return undefined;
-  if (cacheCreation.ephemeral_1h_input_tokens > 0) return 60 * 60_000;
   if (cacheCreation.ephemeral_5m_input_tokens > 0) return 5 * 60_000;
+  if (cacheCreation.ephemeral_1h_input_tokens > 0) return 60 * 60_000;
   return undefined;
 }
 
@@ -257,10 +258,13 @@ export function claudeProviderTurnTokenUsage(
   updatedAt: string,
   autoCompactWindow = "",
   requestedAt?: DateTime.Utc,
+  knownPromptCacheTtlMs?: number,
 ) {
   const inputTokens = claudeMessageInputTokens(usage);
   const outputTokens = usage.output_tokens;
-  const promptCacheTtlMs = claudePromptCacheTtlMs(usage.cache_creation);
+  const promptCacheTtlMs =
+    claudePromptCacheTtlMs(usage.cache_creation) ??
+    ((usage.cache_read_input_tokens ?? 0) > 0 ? knownPromptCacheTtlMs : undefined);
   const maxTokens = claudeContextWindow(modelSelection);
   // The cache lifetime starts with the request, not when its response ends.
   const promptCacheExpiresAt =
@@ -3980,6 +3984,8 @@ interface ClaudeLiveQueryContext {
   receivedInit: boolean;
   permissionMode: PermissionMode;
   stopping: boolean;
+  promptCacheTtlMs?: number | undefined;
+  promptCacheSelection?: ModelSelection;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
 }
 
@@ -4919,14 +4925,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // Only message_start marks the request start; an assistant snapshot
           // arrives after generation, so it leaves the cache expiry unknown.
           if (requestStarted && context.streamUsage !== null) context.streamUsage.requestedAt = now;
+          const liveQuery = yield* Ref.get(queryContext);
+          const sameCache =
+            liveQuery?.nativeThreadId === context.nativeThreadId &&
+            liveQuery.promptCacheSelection !== undefined &&
+            modelSelectionsEqual(liveQuery.promptCacheSelection, context.input.modelSelection);
           const tokenUsage = claudeProviderTurnTokenUsage(
             usage,
             context.input.modelSelection,
             DateTime.formatIso(now),
             adapterOptions.settings.autoCompactWindow,
             context.streamUsage?.requestedAt,
+            sameCache ? liveQuery?.promptCacheTtlMs : undefined,
           );
           if (tokenUsage.inputTokens <= 0) return;
+          if (
+            liveQuery?.nativeThreadId === context.nativeThreadId &&
+            context.streamUsage?.requestedAt !== undefined
+          ) {
+            liveQuery.promptCacheTtlMs = tokenUsage.promptCacheTtlMs;
+            liveQuery.promptCacheSelection = context.input.modelSelection;
+          }
           yield* emitProviderEvent({
             type: "provider_turn.updated",
             driver: CLAUDE_PROVIDER,
@@ -8409,6 +8428,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
 
+          if (message.type === "system" && message.subtype === "compact_boundary") {
+            liveQuery.promptCacheTtlMs = undefined;
+          }
           if (
             message.type === "system" &&
             (message.subtype === "compact_boundary" ||
