@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 import { beforeEach, vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({
@@ -72,6 +73,7 @@ import * as DesktopState from "./DesktopState.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
+import { createInitialDesktopUpdateState } from "../updates/updateMachine.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
@@ -179,6 +181,7 @@ const makeStartupHarness = (scenario: StartupScenario, hydrateShellEnvironment: 
         whenReady: Deferred.succeed(signals.electronReady, undefined).pipe(Effect.asVoid),
         quit: Effect.void,
         setPath: () => Effect.void,
+        on: () => Effect.void,
         removeCommandLineSwitch: (switchName) => recordSwitchCall(`remove:${switchName}`),
         appendCommandLineSwitch: (switchName, value) =>
           recordSwitchCall(`append:${switchName}:${value ?? ""}`),
@@ -197,7 +200,17 @@ const makeStartupHarness = (scenario: StartupScenario, hydrateShellEnvironment: 
       Layer.mock(DesktopLifecycle.DesktopLifecycle, { register: Effect.void }),
       Layer.mock(DesktopLinuxUrlHandler.DesktopLinuxUrlHandler, { register: Effect.void }),
       Layer.mock(DesktopClerk.DesktopClerk, { configure: Effect.void }),
-      Layer.mock(DesktopUpdates.DesktopUpdates, { configure: Effect.void }),
+      Layer.mock(DesktopUpdates.DesktopUpdates, {
+        configure: Effect.void,
+        subscribe: Effect.succeed({
+          latest: createInitialDesktopUpdateState(
+            "0.0.0",
+            { hostArch: "x64", appArch: "x64", runningUnderArm64Translation: false },
+            "latest",
+          ),
+          changes: Stream.empty,
+        }),
+      }),
       Layer.mock(ElectronSafeStorage.ElectronSafeStorage, {
         selectedStorageBackend: Effect.succeedNone,
       }),
