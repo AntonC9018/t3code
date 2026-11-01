@@ -60,7 +60,7 @@ const runPostProcess = (
   postProcessTranscript({
     ...input,
     settings: input.settings ?? DEFAULT_SERVER_SETTINGS,
-    options: { ...DEFAULT_CLIENT_SETTINGS, ...input.options },
+    options: { ...DEFAULT_CLIENT_SETTINGS, speechPostProcessingEnabled: true, ...input.options },
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -120,10 +120,7 @@ describe("postProcessTranscript", () => {
           >[0],
         ) => Effect.succeed({ transcription: "  Clean text.  " }),
       );
-      const settings = {
-        ...DEFAULT_SERVER_SETTINGS,
-        speechPostProcessingEnabled: true,
-      };
+      const settings = DEFAULT_SERVER_SETTINGS;
 
       expect(
         yield* runPostProcess(
@@ -160,7 +157,6 @@ describe("postProcessTranscript", () => {
           transcript: "clean text",
           cwd: "C:/neutral",
           options: {
-            ...DEFAULT_CLIENT_SETTINGS,
             speechPostProcessingPrompt: {
               mode: "custom",
               customInstructions: "Keep technical terms verbatim.",
@@ -189,7 +185,6 @@ describe("postProcessTranscript", () => {
           transcript: "clean text",
           cwd: "C:/neutral",
           options: {
-            ...DEFAULT_CLIENT_SETTINGS,
             speechPostProcessingPrompt: { mode: "custom", customInstructions: "" },
           },
         },
@@ -219,7 +214,7 @@ describe("postProcessTranscript", () => {
   it.effect("adds context-sensitive correction instructions to the prompt", () =>
     Effect.gen(function* () {
       const generate = vi.fn(() => Effect.succeed({ transcription: "I want yellow." }));
-      const options = { ...DEFAULT_CLIENT_SETTINGS, speechCorrectionWord: "err" };
+      const options = { speechCorrectionWord: "err" };
       yield* runPostProcess(
         {
           transcript: "I want orange, err, yellow.",
@@ -273,7 +268,6 @@ describe("postProcessTranscript", () => {
             transcript: "Use MiniMax.",
             cwd: "C:/neutral",
             options: {
-              ...DEFAULT_CLIENT_SETTINGS,
               speechCustomWords: [{ term: "MiniMax", aliases: ["mini max"] }],
             },
           },
