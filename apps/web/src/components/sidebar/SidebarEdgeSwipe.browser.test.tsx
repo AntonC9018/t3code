@@ -9,7 +9,7 @@ import { runSidebarRevealWhenReady } from "./routeReveal";
 import { useStableCallback } from "../../hooks/useStableCallback";
 
 const mobile = vi.hoisted(() => ({ value: true }));
-vi.mock("../../hooks/useMediaQuery", () => ({ useIsMobile: () => mobile.value }));
+vi.mock(import("../../hooks/useMediaQuery"), () => ({ useMediaQuery: () => mobile.value }));
 
 function TestSidebar() {
   return (
