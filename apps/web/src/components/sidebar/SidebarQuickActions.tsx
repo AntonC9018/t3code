@@ -34,12 +34,9 @@ function WindscribeControls({ environmentId }: { environmentId: EnvironmentId })
   const toggle = async () => {
     if (pending || !canChange || !canToggle) return;
     setPending(true);
-    try {
-      await setEnabled({ environmentId, input: { enabled: !connected } });
-      refresh();
-    } finally {
-      setPending(false);
-    }
+    await setEnabled({ environmentId, input: { enabled: !connected } })
+      .then(() => refresh())
+      .finally(() => setPending(false));
   };
 
   return (

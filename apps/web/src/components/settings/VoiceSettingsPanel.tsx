@@ -36,7 +36,7 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   useClientSettings,
@@ -45,6 +45,8 @@ import {
 } from "../../hooks/useSettings";
 import { ensureLocalApi } from "../../localApi";
 import { runtime } from "../../lib/runtime";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { useAudioInputDevices } from "../../speech/useAudioInputDevices";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { usePreparedConnection } from "../../state/session";
 import { Badge } from "../ui/badge";
@@ -343,8 +345,17 @@ export function VoiceSettingsPanel() {
     readonly value: EnvironmentSpeechStatus;
   } | null>(null);
   const [models, setModels] = useState<readonly EnvironmentSpeechModel[]>([]);
-  const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
-  const [loadingMicrophones, setLoadingMicrophones] = useState(false);
+  const {
+    devices: microphones,
+    loading: loadingMicrophones,
+    refresh: refreshMicrophones,
+  } = useAudioInputDevices((error) =>
+    toastManager.add({
+      type: "error",
+      title: "Could not list microphones",
+      description: error instanceof Error ? error.message : String(error),
+    }),
+  );
   const [operation, setOperation] = useState<string | null>(null);
   const [failedDownloads, setFailedDownloads] = useState<{
     prepared: NonNullable<typeof prepared>;
@@ -361,24 +372,8 @@ export function VoiceSettingsPanel() {
     readonly code: string;
   } | null>(null);
 
-  const refreshMicrophones = useCallback(async () => {
-    if (!navigator.mediaDevices?.enumerateDevices) return;
-    setLoadingMicrophones(true);
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      setMicrophones(devices.filter((device) => device.kind === "audioinput"));
-    } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Could not list microphones",
-        description: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setLoadingMicrophones(false);
-    }
-  }, []);
-
   const connectionEpoch = useRef<{ prepared: typeof prepared } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- marks the transcription connection that is mounted, so a request that settles after a switch drops its result; cleared on unmount
   useLayoutEffect(() => {
     connectionEpoch.current = { prepared };
     return () => {
@@ -386,7 +381,7 @@ export function VoiceSettingsPanel() {
     };
   }, [prepared]);
 
-  const refreshModels = useCallback(async () => {
+  const refreshModels = useStableCallback(async () => {
     if (!prepared) return;
     const epoch = connectionEpoch.current;
     if (epoch?.prepared !== prepared) return;
@@ -402,23 +397,17 @@ export function VoiceSettingsPanel() {
       if (connectionEpoch.current !== epoch) return;
       throw error;
     }
-  }, [prepared]);
+  });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the speech status and models from the transcription connection and reloads them when that connection changes
   useEffect(() => {
-    void refreshMicrophones();
-    const mediaDevices = navigator.mediaDevices;
-    if (!mediaDevices) return;
-    const handleDeviceChange = () => void refreshMicrophones();
-    mediaDevices.addEventListener("devicechange", handleDeviceChange);
-    return () => mediaDevices.removeEventListener("devicechange", handleDeviceChange);
-  }, [refreshMicrophones]);
-
-  useEffect(() => {
+    if (!prepared) return;
     void refreshModels().catch(() => {
       setStatus(null);
       setModels([]);
     });
-  }, [refreshModels]);
+  }, [prepared, refreshModels]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the model status on a timer while a model operation is in progress
   useEffect(() => {
     if (!operation) return;
     let refreshInFlight = false;

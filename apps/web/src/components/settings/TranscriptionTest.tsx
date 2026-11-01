@@ -4,11 +4,24 @@ import type { SpeechStreamText, SpeechTranscriptionOptions } from "@t3tools/cont
 import { MicIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { useLatestRef } from "../../hooks/useLatestRef";
 import { createBrowserVoiceInputPlatform } from "../../speech/browserVoiceInput";
 import { ComposerSpeechRecordingPill } from "../chat/ComposerSpeechButton";
 import { Button } from "../ui/button";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+
+// The controller reads `uri` after recording, so the getter must stay live.
+function testRecorder(recorder: ReturnType<typeof createBrowserVoiceInputPlatform>["recorder"]) {
+  return {
+    get uri() {
+      return recorder.uri;
+    },
+    prepareToRecordAsync: () => recorder.prepareToRecordAsync(),
+    record: () => recorder.record({ forDuration: 10 }),
+    stop: () => recorder.stop(),
+  };
+}
 
 export function TranscriptionTest({
   prepared,
@@ -31,10 +44,7 @@ export function TranscriptionTest({
   const [level, setLevel] = useState(0);
   const [transcript, setTranscript] = useState<string | null>(null);
   const [preview, setPreview] = useState<SpeechStreamText | null>(null);
-  const optionsRef = useRef(options);
-  useEffect(() => {
-    optionsRef.current = options;
-  }, [options]);
+  const optionsRef = useLatestRef(options);
   const controller = useRef<VoiceInputController<true> | null>(null);
   const [connection, setConnection] = useState(prepared);
   if (connection !== prepared) {
@@ -44,6 +54,7 @@ export function TranscriptionTest({
     setPreview(null);
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the voice controller and its platform for this connection, and disposes them when it changes or unmounts
   useEffect(() => {
     if (!prepared) return;
     let disposed = false;
@@ -63,14 +74,7 @@ export function TranscriptionTest({
       },
     });
     const instance = new VoiceInputController<true>({
-      recorder: {
-        get uri() {
-          return platform.recorder.uri;
-        },
-        prepareToRecordAsync: () => platform.recorder.prepareToRecordAsync(),
-        record: () => platform.recorder.record({ forDuration: 10 }),
-        stop: () => platform.recorder.stop(),
-      },
+      recorder: testRecorder(platform.recorder),
       getTranscriber: () => platform.transcriber,
       requestPermission: async () => ({ granted: true, canAskAgain: true }),
       configureRecording: async () => {},
@@ -98,7 +102,7 @@ export function TranscriptionTest({
       controller.current = null;
       instance.dispose();
     };
-  }, [prepared, microphoneId]);
+  }, [microphoneId, optionsRef, prepared]);
 
   const showPill = state.phase !== "idle";
   return (

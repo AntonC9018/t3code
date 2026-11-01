@@ -3,6 +3,7 @@ import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useEffect, useRef, type RefObject } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
+import { useLatestRef } from "../hooks/useLatestRef";
 import { useClientSettings } from "../hooks/useSettings";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
@@ -62,10 +63,7 @@ export function useDictationShortcut(input: ShortcutInput) {
   const id = useRef(Symbol("dictation-target"));
   const subscribeKeys = input.subscribeKeys;
   const mode = useClientSettings((settings) => settings.voiceShortcutMode);
-  const current = useRef(input);
-  useEffect(() => {
-    current.current = input;
-  });
+  const current = useLatestRef(input);
   const generation = useRef(0);
   const pressed = useRef<{
     generation: number;
@@ -75,6 +73,7 @@ export function useDictationShortcut(input: ShortcutInput) {
     starting: Promise<void>;
   } | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- adds window keyboard listeners and a shortcut target registry entry until unmount
   useEffect(() => {
     if (typeof window === "undefined") return;
     let disposed = false;
@@ -155,7 +154,7 @@ export function useDictationShortcut(input: ShortcutInput) {
       window.removeEventListener("keyup", finish, true);
       window.removeEventListener("blur", onBlur);
     };
-  }, [mode, subscribeKeys]);
+  }, [current, mode, subscribeKeys]);
 
   return shortcutLabelForCommand(input.keybindings, "composer.dictation", {
     context: { terminalFocus: false, terminalOpen: input.terminalOpen },

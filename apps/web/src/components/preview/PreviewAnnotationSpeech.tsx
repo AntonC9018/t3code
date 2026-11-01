@@ -5,8 +5,9 @@ import type {
 } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { useLatestRef } from "~/hooks/useLatestRef";
 import { useEnvironmentSpeechInput } from "~/speech/useEnvironmentSpeechInput";
 import { useDictationShortcut, type DictationKeyHandlers } from "~/speech/useDictationShortcut";
 import { resolveSpeechPresentation } from "~/components/chat/ComposerSpeechButton";
@@ -37,6 +38,7 @@ export function PreviewAnnotationSpeech({
   const [text, setText] = useState("");
   const keys = useRef<DictationKeyHandlers | null>(null);
   const focused = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- adds window focus listeners that track whether the preview has focus, and removes them on unmount
   useEffect(() => {
     const onFocus = () => {
       focused.current = false;
@@ -64,16 +66,13 @@ export function PreviewAnnotationSpeech({
       void publish({ text: next, cursor: selection.start });
     },
   });
-  const current = useRef(speech);
-  useEffect(() => {
-    current.current = speech;
-  });
-  const subscribeKeys = useCallback((handlers: DictationKeyHandlers) => {
+  const current = useLatestRef(speech);
+  const subscribeKeys = (handlers: DictationKeyHandlers) => {
     keys.current = handlers;
     return () => {
       keys.current = null;
     };
-  }, []);
+  };
   const shortcutLabel = useDictationShortcut({
     keybindings: config.keybindings,
     speech,
@@ -86,49 +85,36 @@ export function PreviewAnnotationSpeech({
   });
   const { available, state, preview, freezesEditor, blocksSubmission, cancel, level, progress } =
     speech;
-  const publish = useCallback(
-    async (nextDraft: { text: string; cursor: number } | null = null) => {
-      try {
-        await previewBridge?.annotationVoice.update({
-          tabId,
-          sessionId: config.sessionId,
-          available: available,
-          phase: state.phase,
-          errorAction: state.errorAction,
-          status: resolveSpeechPresentation(state, progress).status,
-          preview: preview ? preview.committed + preview.tentative : null,
-          level,
-          shortcutLabel,
-          freezesEditor: freezesEditor,
-          blocksSubmission: blocksSubmission,
-          draft: nextDraft,
-        });
-      } catch (error) {
-        cancel();
-        toastManager.add({
-          type: "error",
-          title: "Could not update annotation voice input",
-          description: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-    [
-      tabId,
-      config.sessionId,
-      available,
-      state,
-      preview,
-      freezesEditor,
-      blocksSubmission,
-      cancel,
-      level,
-      shortcutLabel,
-      progress,
-    ],
-  );
+  const publish = async (nextDraft: { text: string; cursor: number } | null = null) => {
+    try {
+      await previewBridge?.annotationVoice.update({
+        tabId,
+        sessionId: config.sessionId,
+        available: available,
+        phase: state.phase,
+        errorAction: state.errorAction,
+        status: resolveSpeechPresentation(state, progress).status,
+        preview: preview ? preview.committed + preview.tentative : null,
+        level,
+        shortcutLabel,
+        freezesEditor: freezesEditor,
+        blocksSubmission: blocksSubmission,
+        draft: nextDraft,
+      });
+    } catch (error) {
+      cancel();
+      toastManager.add({
+        type: "error",
+        title: "Could not update annotation voice input",
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the dictation state to the inspected page's annotation overlay through the desktop bridge whenever it changes
   useEffect(() => {
     void publish();
   }, [publish]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the desktop bridge's annotation voice events for this tab and session until either changes
   useEffect(
     () =>
       previewBridge?.annotationVoice.onEvent(
@@ -177,7 +163,7 @@ export function PreviewAnnotationSpeech({
           }
         },
       ),
-    [tabId, config.sessionId, publish, navigate],
+    [tabId, config.sessionId, publish, navigate, current],
   );
   return (
     <VoiceInputSetup

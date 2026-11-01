@@ -90,6 +90,7 @@ function formatElapsed(seconds: number) {
 function RecordingStatus(props: { level: number; recordingLimitSeconds?: number | undefined }) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs a wall-clock interval that refreshes the elapsed time while the recording status is shown
   useEffect(() => {
     const startedAt = Date.now();
     const timer = window.setInterval(

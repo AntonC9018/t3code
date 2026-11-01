@@ -44,12 +44,11 @@ export function AssistantCitationCommentEditor({
     text: comment,
     textareaRef,
     onTextChange: updateComment,
+    onSetupOpenChange: onVoiceSetupOpenChange,
   });
   const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
-  useEffect(() => {
-    onVoiceSetupOpenChange(speech.setup.open);
-    return () => onVoiceSetupOpenChange(false);
-  }, [onVoiceSetupOpenChange, speech.setup.open]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the chip's voice-setup flag when this editor unmounts with its dialog open, so the comment popover is not left hidden
+  useEffect(() => () => onVoiceSetupOpenChange(false), [onVoiceSetupOpenChange]);
   const submit = () => {
     speech.submitAfterDictation((text) => {
       if (text.length <= ASSISTANT_CITATION_MAX_COMMENT_LENGTH) onSubmit(text);

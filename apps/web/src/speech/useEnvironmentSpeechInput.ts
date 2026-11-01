@@ -81,6 +81,7 @@ type HookInput = {
     text: string,
     selection: { readonly start: number; readonly end: number },
   ) => void;
+  readonly onSetupOpenChange?: ((open: boolean) => void) | undefined;
 };
 
 type SpeechSessionContext = {
@@ -442,7 +443,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     let request = 0;
     const chatOwnerKey = input.ownerKey;
     const refresh = async () => {
-      const currentRequest = ++request;
+      request += 1;
+      const currentRequest = request;
       const normalSession = retainedSessions.get(chatOwnerKey);
       if (normalSession && normalSession.state.phase !== "idle") return;
       const prefix = closedQuestionRecordings.ownerKeyPrefix;
@@ -561,6 +563,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const latestSessionContextRef = useRef(sessionContext);
   const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
   const previousDraftInputRef = useRef({ ownerKey: input.ownerKey, text: input.draftText });
+  const changeSetupOpen = (open: boolean) => {
+    setSetupOpen(open);
+    latestInputRef.current.onSetupOpenChange?.(open);
+  };
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keeps async speech callbacks and the draft revision check in step with the latest editor props.
   useEffect(() => {
@@ -713,8 +719,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     startRequestRef.current += 1;
     setQueuedStart(null);
     if (!retainedKey) sessionRef.current?.controller.ownerChanged();
-    setSetupOpen(false);
-  }, [input.ownerKey, input.disabled, retainedKey]);
+    changeSetupOpen(false);
+  }, [changeSetupOpen, input.ownerKey, input.disabled, retainedKey]);
 
   const submitAfterDictation = (submit: (text: string) => void) => {
     if (latestInputRef.current.disabled || state.phase === "preparing") return;
@@ -791,7 +797,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     setStatus({ prepared, value: latestStatus });
     if (latestStatus.state === "missing-model") {
       setSetupStep(0);
-      setSetupOpen(true);
+      changeSetupOpen(true);
       return;
     }
     if (!stillCurrent()) return;
@@ -804,30 +810,31 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     setupCancelledRef.current = false;
     setSetupDownloading(true);
     setSetupError(null);
-    try {
-      await runtime.runPromise(downloadEnvironmentSpeechModel(prepared, currentStatus.modelId));
-      if (setupCancelledRef.current) return;
-      const next = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
-      setStatus({ prepared, value: next });
-      if (!next.supported || next.state === "missing-model") {
-        setSetupError("The model is not ready. Try downloading it again.");
-        return;
-      }
-      setSetupStep(1);
-    } catch {
-      if (!setupCancelledRef.current)
-        setSetupError(
-          "Could not download the model. Check this environment's connection and try again.",
-        );
-    } finally {
-      setSetupDownloading(false);
-    }
+    await runtime
+      .runPromise(downloadEnvironmentSpeechModel(prepared, currentStatus.modelId))
+      .then(async () => {
+        if (setupCancelledRef.current) return;
+        const next = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
+        setStatus({ prepared, value: next });
+        if (!next.supported || next.state === "missing-model") {
+          setSetupError("The model is not ready. Try downloading it again.");
+          return;
+        }
+        setSetupStep(1);
+      })
+      .catch(() => {
+        if (!setupCancelledRef.current)
+          setSetupError(
+            "Could not download the model. Check this environment's connection and try again.",
+          );
+      })
+      .finally(() => setSetupDownloading(false));
   };
 
   const cancelSetupDownload = async () => {
     if (!prepared || !currentStatus?.supported) return;
     setupCancelledRef.current = true;
-    setSetupOpen(false);
+    changeSetupOpen(false);
     try {
       await runtime.runPromise(
         cancelEnvironmentSpeechModelDownload(prepared, currentStatus.modelId),
@@ -838,7 +845,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   };
 
   const startAfterSetup = async () => {
-    setSetupOpen(false);
+    changeSetupOpen(false);
     await start();
   };
 
@@ -856,7 +863,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       model: setupModel,
       downloading: setupDownloading,
       error: setupError,
-      setOpen: setSetupOpen,
+      setOpen: changeSetupOpen,
       download: downloadSetupModel,
       cancelDownload: cancelSetupDownload,
       startRecording: startAfterSetup,

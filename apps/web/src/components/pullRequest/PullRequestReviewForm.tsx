@@ -86,6 +86,7 @@ export function PullRequestReviewForm({
   });
   const { cancel } = speech;
   const closeSetup = speech.setup.setOpen;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stops an in-progress voice recording, which holds the microphone, when this form becomes inactive
   useEffect(() => {
     if (!active) {
       cancel();

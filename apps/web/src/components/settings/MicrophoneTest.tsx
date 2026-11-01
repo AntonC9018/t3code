@@ -2,7 +2,7 @@ import {
   isMicrophonePermissionError,
   MICROPHONE_PERMISSION_ERROR,
 } from "@t3tools/client-runtime/voice-input";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MicIcon, CheckIcon, XIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
@@ -37,7 +37,7 @@ export function MicrophoneTest({
   } | null>(null);
   const url = useRef<string | null>(null);
 
-  const releaseCapture = useCallback(() => {
+  const releaseCapture = () => {
     const current = session.current;
     if (!current) return;
     session.current = null;
@@ -46,7 +46,7 @@ export function MicrophoneTest({
     if (current.recorder && current.recorder.state !== "inactive") current.recorder.stop();
     current.stream?.getTracks().forEach((track) => track.stop());
     void current.context?.close().catch(() => {});
-  }, []);
+  };
 
   function discard() {
     if (url.current) URL.revokeObjectURL(url.current);
@@ -55,6 +55,7 @@ export function MicrophoneTest({
     setPhase("idle");
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the microphone stream, recorder and audio context, and revokes the recording URL, when this control unmounts
   useEffect(() => {
     return () => {
       releaseCapture();
@@ -71,12 +72,27 @@ export function MicrophoneTest({
     setPhase("starting");
     const current: NonNullable<typeof session.current> = {};
     session.current = current;
-    try {
-      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-        throw new Error(
+    const failStart = (cause: unknown) => {
+      if (session.current !== current) return;
+      releaseCapture();
+      setPhase("idle");
+      setError(
+        isMicrophonePermissionError(cause)
+          ? MICROPHONE_PERMISSION_ERROR
+          : cause instanceof Error
+            ? cause.message
+            : "Could not access the microphone.",
+      );
+    };
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      failStart(
+        new Error(
           "Microphone testing is unavailable in this browser. Use HTTPS or the desktop app.",
-        );
-      }
+        ),
+      );
+      return;
+    }
+    try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: microphoneId ? { deviceId: { exact: microphoneId } } : true,
       });
@@ -150,16 +166,7 @@ export function MicrophoneTest({
         if (recorder.state !== "inactive") recorder.stop();
       }, 10_000);
     } catch (cause) {
-      if (session.current !== current) return;
-      releaseCapture();
-      setPhase("idle");
-      setError(
-        isMicrophonePermissionError(cause)
-          ? MICROPHONE_PERMISSION_ERROR
-          : cause instanceof Error
-            ? cause.message
-            : "Could not access the microphone.",
-      );
+      failStart(cause);
     }
   }
 

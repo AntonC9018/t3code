@@ -6,7 +6,7 @@ import { primaryServerKeybindingsAtom } from "~/state/server";
 import { PreviewAnnotationSpeech } from "./PreviewAnnotationSpeech";
 import type { DesktopPreviewAnnotationVoiceConfig } from "@t3tools/contracts";
 
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { previewStreamDownloadUrl } from "@t3tools/client-runtime/preview/server-browser-stream";
 import {
@@ -155,13 +155,6 @@ export function PreviewView({
 }: Props) {
   const urlInputRef = useRef<HTMLInputElement | null>(null);
   const [pickActive, setPickActive] = useState(false);
-  const isMountedRef = useRef(false);
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
   const [annotationVoice, setAnnotationVoice] =
     useState<DesktopPreviewAnnotationVoiceConfig | null>(null);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -743,7 +736,7 @@ export function PreviewView({
         pickActiveRef.current = null;
         setPickActive(false);
       }
-      if ((isCurrentPick || submitted) && isMountedRef.current) setAnnotationVoice(null);
+      if (isCurrentPick || submitted) setAnnotationVoice(null);
       if (
         (isCurrentPick || submitted) &&
         previouslyFocused &&
@@ -829,10 +822,8 @@ export function PreviewView({
       if (previewBridge && runtimeTabId) {
         void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
       }
-      if (isMountedRef.current) {
-        setPickActive(false);
-        setAnnotationVoice(null);
-      }
+      setPickActive(false);
+      setAnnotationVoice(null);
     };
   }, [runtimeTabId]);
 

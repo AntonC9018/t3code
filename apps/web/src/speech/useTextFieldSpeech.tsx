@@ -1,7 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 
+import { useLatestRef } from "~/hooks/useLatestRef";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useDictationShortcut } from "./useDictationShortcut";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
@@ -19,12 +20,10 @@ export function useTextFieldSpeech(input: {
   text: string;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   onTextChange(text: string): void;
+  onSetupOpenChange?(open: boolean): void;
   disabled?: boolean;
 }) {
-  const latest = useRef(input);
-  useEffect(() => {
-    latest.current = input;
-  });
+  const latest = useLatestRef(input);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const speech = useEnvironmentSpeechInput({
     environmentId: input.environmentId,
@@ -32,6 +31,7 @@ export function useTextFieldSpeech(input: {
     ownerKey: input.ownerKey,
     draftText: input.text,
     disabled: input.disabled,
+    onSetupOpenChange: input.onSetupOpenChange,
     readDraft: () => {
       const field = latest.current.textareaRef.current;
       const cursor = field?.selectionStart ?? latest.current.text.length;

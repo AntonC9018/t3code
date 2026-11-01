@@ -16,6 +16,7 @@ export function useFileScrollRestoration(
   ) {
     setVisit(fileScrollVisit(identity, revealToken, revealLine));
   }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches scroll and resize listeners to the file viewport DOM node and removes them on change or unmount
   useLayoutEffect(
     () => (root ? installFileScrollRestoration(root, visit) : undefined),
     [root, visit],
