@@ -7,13 +7,21 @@ import type {
   OrchestrationV2RunAttempt,
 } from "@t3tools/contracts";
 import { DateTime } from "effect";
-import { modelSelectionsEqual } from "./model.ts";
+import { draftModelPickMatchesThread } from "./model.ts";
 
 export type PromptCacheStatus = {
   readonly state: "fresh" | "warm" | "expiring" | "expired" | "unknown" | "unsupported";
   readonly expiresAtMs?: number;
   readonly remainingMs?: number;
 };
+
+/**
+ * Whether two selections share a Claude prompt cache. Clients differ on whether they send
+ * `fastMode: false` or omit it, so off counts as unset, as it does for composer drafts.
+ */
+export function samePromptCacheSelection(left: ModelSelection, right: ModelSelection): boolean {
+  return draftModelPickMatchesThread(left, right);
+}
 
 export function derivePromptCacheStatus(input: {
   readonly driver: string | undefined;
@@ -76,7 +84,9 @@ export function deriveThreadPromptCacheStatus(input: {
     // A reused provider-thread row must not revive the previous native conversation's cache.
     if (attempt.nativeThreadId !== nativeId) continue;
     const run = runs.get(attempt.runId);
-    if (run === undefined || !turn.tokenUsage) continue;
+    // Native compaction and fully cached replies report usage without an expiry. They do not
+    // invalidate the shared prefix, so the last expiry the provider reported still applies.
+    if (run === undefined || turn.tokenUsage?.promptCacheExpiresAt === undefined) continue;
     if (
       latest?.tokenUsage &&
       Date.parse(latest.tokenUsage.updatedAt) > Date.parse(turn.tokenUsage.updatedAt)
@@ -98,7 +108,7 @@ export function deriveThreadPromptCacheStatus(input: {
         (attempt.nativeThreadId === undefined || attempt.nativeThreadId === nativeId),
     );
   const sameSelection =
-    latestRun && modelSelectionsEqual(latestRun.modelSelection, input.modelSelection);
+    latestRun && samePromptCacheSelection(latestRun.modelSelection, input.modelSelection);
   return derivePromptCacheStatus({
     driver: thread.driver,
     usage: sameSelection ? latest?.tokenUsage : undefined,

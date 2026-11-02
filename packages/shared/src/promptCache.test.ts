@@ -101,10 +101,36 @@ describe("prompt cache protection", () => {
       nowMs: epoch,
     };
     expect(deriveThreadPromptCacheStatus(input).state).toBe("warm");
+    // Delegated runs omit fast mode that later sends spell out as off.
+    expect(
+      deriveThreadPromptCacheStatus({
+        ...input,
+        modelSelection: { ...modelSelection, options: [{ id: "fastMode", value: false }] },
+      }).state,
+    ).toBe("warm");
+    // A native compaction boundary reports context size without a cache expiry.
+    expect(
+      deriveThreadPromptCacheStatus({
+        ...input,
+        providerTurns: [
+          ...input.providerTurns,
+          {
+            ...input.providerTurns[0]!,
+            tokenUsage: { usedTokens: 200, updatedAt: "2026-11-01T00:05:00Z" },
+          },
+        ],
+      }).state,
+    ).toBe("warm");
     expect(
       deriveThreadPromptCacheStatus({
         ...input,
         modelSelection: { ...modelSelection, model: "sonnet" },
+      }).state,
+    ).toBe("unknown");
+    expect(
+      deriveThreadPromptCacheStatus({
+        ...input,
+        modelSelection: { ...modelSelection, options: [{ id: "fastMode", value: true }] },
       }).state,
     ).toBe("unknown");
     const newNative = {

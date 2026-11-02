@@ -1,4 +1,4 @@
-import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { samePromptCacheSelection } from "@t3tools/shared/promptCache";
 import { pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
@@ -1466,13 +1466,13 @@ export function threadShellFromProjection(
   });
   const cacheTurn = cacheTurns
     .toSorted((left, right) => right.ordinal - left.ordinal)
-    .find((turn) => turn.tokenUsage !== undefined);
+    .find((turn) => turn.tokenUsage?.promptCacheExpiresAt !== undefined);
   const cacheAttempt =
     cacheTurn?.runAttemptId == null ? undefined : cacheAttempts.get(cacheTurn.runAttemptId);
   const cacheRun = cacheAttempt === undefined ? undefined : cacheRuns.get(cacheAttempt.runId);
   const promptCache = promptCacheSummary(
     cacheThread,
-    cacheRun && modelSelectionsEqual(cacheRun.modelSelection, projection.thread.modelSelection)
+    cacheRun && samePromptCacheSelection(cacheRun.modelSelection, projection.thread.modelSelection)
       ? cacheTurn?.tokenUsage
       : undefined,
   );
@@ -5881,7 +5881,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND cache_thread.driver = 'claudeAgent'
                   AND json_extract(cache_attempt.payload_json, '$.nativeThreadId') = json_extract(cache_thread.payload_json, '$.nativeThreadRef.nativeId')
                   AND cache_turn.node_id = json_extract(cache_attempt.payload_json, '$.rootNodeId')
-                  AND json_extract(cache_turn.payload_json, '$.tokenUsage') IS NOT NULL
+                  AND json_extract(cache_turn.payload_json, '$.tokenUsage.promptCacheExpiresAt') IS NOT NULL
                 ORDER BY cache_turn.ordinal DESC
                 LIMIT 1
               ) AS prompt_cache_payload_json,
@@ -6469,7 +6469,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           providerThreadsByThreadId
             .get(thread.id)
             ?.find((candidate) => candidate.id === thread.activeProviderThreadId),
-          cache && modelSelectionsEqual(cache.modelSelection, thread.modelSelection)
+          cache && samePromptCacheSelection(cache.modelSelection, thread.modelSelection)
             ? cache.usage
             : undefined,
         );
