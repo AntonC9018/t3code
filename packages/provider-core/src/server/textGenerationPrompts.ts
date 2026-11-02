@@ -506,5 +506,17 @@ export function buildContextSummaryPrompt(transcript: string) {
     outputSchema: Schema.Struct({
       summary: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16_000)),
     }),
+    plainTextReply: contextSummaryFromMarkdown,
   };
+}
+
+/**
+ * Text-only models often return the Markdown handoff itself instead of wrapping it in JSON.
+ * Accept that only when it is structured Markdown, so refusals and stray prose still fail.
+ */
+function contextSummaryFromMarkdown(text: string): { summary: string } | undefined {
+  const fenced = /^```(?:markdown|md)?\n([\s\S]*?)\n```$/.exec(text.trim());
+  const summary = (fenced?.[1] ?? text).trim();
+  if (summary.startsWith("{") || summary.length < 200 || summary.length > 16_000) return undefined;
+  return /^(?:#{1,6} |[-*] |\d+\. )/m.test(summary) ? { summary } : undefined;
 }

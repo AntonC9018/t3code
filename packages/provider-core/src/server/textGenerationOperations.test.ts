@@ -10,20 +10,36 @@ const modelSelection = { instanceId: ProviderInstanceId.make("test"), model: "su
 
 describe("context summary output validation", () => {
   it.effect(
-    "accepts a bounded summary and rejects invalid or oversized output without truncation",
+    "accepts bounded JSON or Markdown summaries and rejects invalid or oversized output",
     () =>
       Effect.gen(function* () {
-        for (const [output, accepted] of [
+        const markdown = [
+          "## Objective",
+          "Keep `src/config.ts` stable while fixing the failing parser test.",
+          "",
+          "## Remaining work",
+          "- Fix `foo.test.ts > handles tabs` without changing the public API.",
+          "- Run `pnpm test` again.",
+          "- Report the result and any remaining failures to the user.",
+        ].join("\n");
+        const valid = (summary: string) => JSON.stringify({ summary });
+        for (const [output, expected] of [
           [
-            JSON.stringify({ summary: "  Preserve src/config.ts and the pending failing test.  " }),
-            true,
+            valid("  Preserve src/config.ts and the pending failing test.  "),
+            "Preserve src/config.ts and the pending failing test.",
           ],
-          [JSON.stringify({ summary: " " }), false],
-          [JSON.stringify({ summary: "a".repeat(16_001) }), false],
-          [JSON.stringify({ summary: "界".repeat(6_000) }), false],
-          [JSON.stringify({ summary: "界".repeat(5_000) }), true],
-          [JSON.stringify({ title: "Not a summary" }), false],
-          ["not json", false],
+          [valid(" "), null],
+          [valid("a".repeat(16_001)), null],
+          [valid("界".repeat(6_000)), null],
+          [valid("界".repeat(5_000)), "界".repeat(5_000)],
+          [JSON.stringify({ title: "Not a summary" }), null],
+          ["not json", null],
+          // Literal newlines inside the string are repaired rather than rejected.
+          [`{"summary": "Line one\n\tLine two"}`, "Line one\n\tLine two"],
+          // A structured Markdown reply without the JSON wrapper is accepted as is.
+          [markdown, markdown],
+          ["```markdown\n" + markdown + "\n```", markdown],
+          ["I cannot summarize this conversation.", null],
         ] as const) {
           const generation = fromRunner("fixture", (request) =>
             decodeJsonReply(request, "fixture", output),
@@ -35,10 +51,8 @@ describe("context summary output validation", () => {
               modelSelection,
             })
             .pipe(Effect.result);
-          expect(Result.isSuccess(result)).toBe(accepted);
-          if (Result.isSuccess(result)) {
-            expect(result.success.summary).toBe(JSON.parse(output).summary.trim());
-          } else {
+          expect(Result.isSuccess(result) ? result.success.summary : null).toBe(expected);
+          if (Result.isFailure(result)) {
             expect(result.failure.operation).toBe("generateContextSummary");
           }
         }

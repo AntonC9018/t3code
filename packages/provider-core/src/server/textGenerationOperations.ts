@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 
 import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@t3tools/contracts";
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
-import { extractJsonObject } from "@t3tools/shared/schemaJson";
+import { escapeJsonStringControlCharacters, extractJsonObject } from "@t3tools/shared/schemaJson";
 
 import type { ProviderTextGeneration } from "./textGeneration.ts";
 import {
@@ -31,6 +31,8 @@ export interface Request<S extends Schema.Top> {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
   /** Investigate cwd with read-only tools across turns; fail if the runner cannot guarantee read-only access. */
   readonly investigate?: { readonly timeoutMs: number } | undefined;
+  /** Accepts a reply that ignored the JSON format; runners without native schemas use it. */
+  readonly plainTextReply?: ((text: string) => S["Type"] | undefined) | undefined;
 }
 
 const INVESTIGATION_TIMEOUT_MS = 15 * 60_000;
@@ -53,19 +55,26 @@ export const withoutInvestigation =
       : run(request);
 
 export const decodeJsonReply = <S extends Schema.Top>(
-  request: Pick<Request<S>, "operation" | "outputSchema">,
+  request: Pick<Request<S>, "operation" | "outputSchema" | "plainTextReply">,
   provider: string,
   text: string,
 ) => {
   const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(request.outputSchema));
-  return decodeOutput(extractJsonObject(text)).pipe(
-    Effect.mapError(
-      (cause) =>
-        new TextGenerationError({
-          operation: request.operation,
-          detail: `${provider} returned invalid structured output.`,
-          cause,
+  const json = extractJsonObject(text);
+  const invalid = (cause: unknown) =>
+    new TextGenerationError({
+      operation: request.operation,
+      detail: `${provider} returned invalid structured output.`,
+      cause,
+    });
+  return decodeOutput(json).pipe(
+    Effect.catch((strictCause) =>
+      decodeOutput(escapeJsonStringControlCharacters(json)).pipe(
+        Effect.catch(() => {
+          const plain = request.plainTextReply?.(text);
+          return plain === undefined ? Effect.fail(invalid(strictCause)) : Effect.succeed(plain);
         }),
+      ),
     ),
   );
 };

@@ -96,6 +96,44 @@ export function extractJsonObject(raw: string): string {
   return trimmed.slice(start);
 }
 
+/**
+ * Escapes raw control characters inside JSON string literals. Models that write JSON as plain text
+ * often put literal newlines or tabs in long strings, which `JSON.parse` rejects.
+ */
+export function escapeJsonStringControlCharacters(json: string): string {
+  let result = "";
+  let inString = false;
+  let escaping = false;
+  for (const char of json) {
+    if (!inString) {
+      if (char === '"') inString = true;
+      result += char;
+      continue;
+    }
+    if (escaping) {
+      escaping = false;
+      result += char;
+      continue;
+    }
+    if (char === "\\") escaping = true;
+    else if (char === '"') inString = false;
+    const code = char.charCodeAt(0);
+    if (code >= 0x20) {
+      result += char;
+      continue;
+    }
+    result +=
+      char === "\n"
+        ? "\\n"
+        : char === "\r"
+          ? "\\r"
+          : char === "\t"
+            ? "\\t"
+            : `\\u${code.toString(16).padStart(4, "0")}`;
+  }
+  return result;
+}
+
 export const fromJsonStringPretty = <S extends Schema.Top>(schema: S) =>
   Schema.fromJsonString(schema).pipe(
     Schema.encode({
