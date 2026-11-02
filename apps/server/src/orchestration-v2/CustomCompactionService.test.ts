@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Stream from "effect/Stream";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -371,16 +372,25 @@ describe("custom model compaction", () => {
   });
 
   it.effect("preserves native context when summary generation fails", () => {
+    let attempts = 0;
     const harness = makeHarness(() =>
-      Effect.fail(
-        new TextGenerationError({ operation: "generateContextSummary", detail: "fixture failure" }),
-      ),
+      Effect.suspend(() => {
+        attempts++;
+        return Effect.fail(
+          new TextGenerationError({
+            operation: "generateContextSummary",
+            detail: "fixture failure",
+          }),
+        );
+      }),
     );
     return Effect.gen(function* () {
       const original = yield* seed;
       const service = yield* CustomCompaction.CustomCompactionService;
       const result = yield* service.compact(request).pipe(Effect.result);
       assert.equal(result._tag, "Failure");
+      // A failing part is retried once before the compaction gives up.
+      assert.equal(attempts, 2);
       const threads = yield* ThreadManagement.ThreadManagementService;
       const after = yield* threads.getThreadProjection(threadId);
       assert.equal(after.thread.activeProviderThreadId, original.thread.activeProviderThreadId);
@@ -455,6 +465,62 @@ describe("custom model compaction", () => {
         // The slot is released, so a later compaction can start.
         yield* service.compact({ ...request, commandId: CommandId.make("compact:again") });
         assert.equal(harness.generateContextSummary.mock.calls.length, 2);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("retries a part whose summary failed once", () => {
+    let attempts = 0;
+    const harness = makeHarness(() =>
+      Effect.suspend(() =>
+        ++attempts === 1
+          ? Effect.fail(
+              new TextGenerationError({ operation: "generateContextSummary", detail: "malformed" }),
+            )
+          : Effect.succeed({ summary: "Retried summary" }),
+      ),
+    );
+    return Effect.gen(function* () {
+      yield* seed;
+      const service = yield* CustomCompaction.CustomCompactionService;
+      yield* service.compact(request);
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const after = yield* threads.getThreadProjection(threadId);
+      assert.equal(after.contextHandoffs[0]?.summaryText, "Retried summary");
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("reports progress and cancels without touching the context", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const harness = makeHarness(() =>
+        Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+      );
+      yield* Effect.gen(function* () {
+        const original = yield* seed;
+        const service = yield* CustomCompaction.CustomCompactionService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const caller = yield* service.compact(request).pipe(Effect.result, Effect.forkChild);
+        yield* Deferred.await(started);
+        const current = yield* service.subscribe({ threadId }).pipe(Stream.runHead);
+        assert.deepEqual(current._tag === "Some" ? current.value : null, {
+          commandId: request.commandId,
+          modelSelection: summarizer,
+          pass: 1,
+          completedParts: 0,
+          totalParts: 1,
+        });
+        // A cancel aimed at another compaction is ignored.
+        yield* service.cancel({ threadId, commandId: CommandId.make("compact:other") });
+        yield* service.cancel({ threadId, commandId: request.commandId });
+        const result = yield* Fiber.join(caller);
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") assert.equal(result.failure.reason, "cancelled");
+        const idle = yield* service.subscribe({ threadId }).pipe(Stream.runHead);
+        assert.deepEqual(idle._tag === "Some" ? idle.value : undefined, null);
+        const after = yield* threads.getThreadProjection(threadId);
+        assert.equal(after.thread.activeProviderThreadId, original.thread.activeProviderThreadId);
+        assert.isEmpty(after.contextHandoffs);
       }).pipe(Effect.provide(harness.layer));
     }),
   );

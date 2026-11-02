@@ -1,5 +1,6 @@
 import type {
   ModelSelection,
+  OrchestrationV2CompactionProgress,
   OrchestrationV2Run,
   OrchestrationV2TurnItem,
   ProviderInstanceId,
@@ -98,20 +99,32 @@ function latestRunModelBefore(
 export function describeCustomCompactionFailure(cause: unknown): {
   readonly message: string;
   readonly connectionLost: boolean;
+  readonly cancelled: boolean;
 } {
   const tag =
     typeof cause === "object" && cause !== null && "_tag" in cause ? String(cause._tag) : "";
   const message = cause instanceof Error ? cause.message : "";
+  const cancelled =
+    tag === "OrchestrationV2CompactContextError" &&
+    (cause as { readonly reason?: unknown }).reason === "cancelled";
   if (
     message.length > 0 &&
     !isTransportConnectionErrorMessage(`${tag} ${message}`) &&
     !isTransportConnectionErrorMessage(message)
   ) {
-    return { message, connectionLost: false };
+    return { message, connectionLost: false, cancelled };
   }
   return {
     message:
       "Lost the connection while waiting. The compaction may still finish; check the timeline.",
     connectionLost: true,
+    cancelled: false,
   };
+}
+
+export function describeCompactionProgress(progress: OrchestrationV2CompactionProgress): string {
+  if (progress.totalParts === 0) return "Reading the conversation…";
+  const part = Math.min(progress.completedParts + 1, progress.totalParts);
+  const step = `part ${part} of ${progress.totalParts}`;
+  return progress.pass === 1 ? `Summarizing ${step}…` : `Merging summaries, ${step}…`;
 }

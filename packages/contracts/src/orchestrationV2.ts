@@ -3556,6 +3556,8 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   stopWorkflow: "orchestration.stopWorkflow",
   forceStopThread: "orchestration.forceStopThread",
   compactContext: "orchestration.compactContext",
+  cancelCompaction: "orchestration.cancelCompaction",
+  subscribeCompaction: "orchestration.subscribeCompaction",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
   subscribeShell: "orchestration.subscribeShell",
@@ -4123,6 +4125,25 @@ export class OrchestrationV2SearchThreadError extends Schema.TaggedError<Orchest
   }
 }
 
+/** A running custom compaction. Unpersisted: it ends with the compaction or a server restart. */
+export const OrchestrationV2CompactionProgress = Schema.Struct({
+  commandId: CommandId,
+  modelSelection: ModelSelection,
+  /** Pass 1 summarizes the transcript; later passes merge the previous pass's summaries. */
+  pass: PositiveInt,
+  completedParts: NonNegativeInt,
+  /** Zero while the transcript is still being read. */
+  totalParts: NonNegativeInt,
+});
+export type OrchestrationV2CompactionProgress = typeof OrchestrationV2CompactionProgress.Type;
+
+export const OrchestrationV2CompactionTarget = Schema.Struct({ threadId: ThreadId });
+
+export const OrchestrationV2CancelCompactionInput = Schema.Struct({
+  threadId: ThreadId,
+  commandId: CommandId,
+});
+
 export class OrchestrationV2CompactContextError extends Schema.TaggedError<OrchestrationV2CompactContextError>()(
   "OrchestrationV2CompactContextError",
   {
@@ -4136,6 +4157,7 @@ export class OrchestrationV2CompactContextError extends Schema.TaggedError<Orche
       "storage",
       "unavailable",
       "too_large",
+      "cancelled",
     ]),
     cause: Schema.optional(Schema.Defect()),
   },
@@ -4158,6 +4180,8 @@ export class OrchestrationV2CompactContextError extends Schema.TaggedError<Orche
         return "The selected compaction model is unavailable for this project.";
       case "too_large":
         return "This conversation is too large to compact with another model.";
+      case "cancelled":
+        return "Compaction was cancelled. Your context is unchanged.";
     }
   }
 }
@@ -4170,6 +4194,14 @@ export const OrchestrationV2RpcSchemas = {
       modelSelection: ModelSelection,
     }),
     output: Schema.Void,
+  },
+  cancelCompaction: {
+    input: OrchestrationV2CancelCompactionInput,
+    output: Schema.Void,
+  },
+  subscribeCompaction: {
+    input: OrchestrationV2CompactionTarget,
+    output: Schema.NullOr(OrchestrationV2CompactionProgress),
   },
   searchThread: {
     input: OrchestrationV2SearchThreadInput,

@@ -1810,6 +1810,25 @@ const WsOrchestrationV2CompactContextRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.
   error: Schema.Union([OrchestrationV2CompactContextError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2CancelCompactionRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.cancelCompaction,
+  {
+    payload: OrchestrationV2RpcSchemas.cancelCompaction.input,
+    success: OrchestrationV2RpcSchemas.cancelCompaction.output,
+    error: EnvironmentAuthorizationError,
+  },
+);
+
+const WsOrchestrationV2SubscribeCompactionRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.subscribeCompaction,
+  {
+    payload: OrchestrationV2RpcSchemas.subscribeCompaction.input,
+    success: OrchestrationV2RpcSchemas.subscribeCompaction.output,
+    error: EnvironmentAuthorizationError,
+    stream: true,
+  },
+);
+
 const WsOrchestrationV2GetWorkflowScriptRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
   {
@@ -2167,6 +2186,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2StopWorkflowRpc,
   WsOrchestrationV2ForceStopThreadRpc,
   WsOrchestrationV2CompactContextRpc,
+  WsOrchestrationV2CancelCompactionRpc,
+  WsOrchestrationV2SubscribeCompactionRpc,
   WsOrchestrationV2GetTurnItemRpc,
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,

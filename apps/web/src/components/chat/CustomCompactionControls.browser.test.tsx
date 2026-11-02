@@ -52,7 +52,10 @@ vi.mock(import("~/state/server"), async (original) => ({
   serverEnvironment: { providersValueAtom: () => Atom.make([provider]) } as never,
 }));
 vi.mock(import("~/state/orchestration"), () => ({
-  orchestrationEnvironment: { compactContext: { permissionAtom: () => Atom.make(true) } } as never,
+  orchestrationEnvironment: {
+    compactContext: { permissionAtom: () => Atom.make(true) },
+    compaction: () => Atom.make(AsyncResult.success(null)),
+  } as never,
 }));
 vi.mock(import("~/state/use-orchestration-command"), () => ({
   useOrchestrationCommand: () => state.run,
@@ -96,12 +99,12 @@ it("keeps custom compaction available beside disabled native compaction and reco
   await page.getByRole("button", { name: "Compaction model", exact: true }).click();
   await page.getByRole("option", { name: "Sol", exact: false }).click();
   await page.getByRole("button", { name: "Compact with selected model" }).click();
-  await expect.element(page.getByRole("button", { name: "Compacting…" })).toBeDisabled();
+  await expect.element(page.getByRole("status")).toHaveTextContent("Compacting…");
   // The request outlives the popover, so reopening it still shows the running compaction.
   await userEvent.keyboard("{Escape}");
-  await expect.element(page.getByRole("button", { name: "Compacting…" })).not.toBeInTheDocument();
+  await expect.element(page.getByRole("status")).not.toBeInTheDocument();
   await screen.getByRole("button", { name: "Compact context", exact: true }).click();
-  await expect.element(page.getByRole("button", { name: "Compacting…" })).toBeDisabled();
+  await expect.element(page.getByRole("status")).toHaveTextContent("Compacting…");
   expect(native).not.toHaveBeenCalled();
   expect(state.run).toHaveBeenCalledWith(
     expect.objectContaining({

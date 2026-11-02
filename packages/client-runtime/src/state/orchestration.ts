@@ -111,6 +111,16 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:compact-context",
       tag: ORCHESTRATION_V2_WS_METHODS.compactContext,
     }),
+    cancelCompaction: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:cancel-compaction",
+      tag: ORCHESTRATION_V2_WS_METHODS.cancelCompaction,
+    }),
+    // Mounted only while a compaction control is visible.
+    compaction: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:orchestration:compaction",
+      tag: ORCHESTRATION_V2_WS_METHODS.subscribeCompaction,
+      idleTtlMs: 0,
+    }),
     forceStopThread: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:orchestration:force-stop-thread",
       tag: ORCHESTRATION_V2_WS_METHODS.forceStopThread,

@@ -3,7 +3,10 @@ import { randomUUID } from "~/lib/utils";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { describeCustomCompactionFailure } from "@t3tools/client-runtime/handoff";
+import {
+  describeCompactionProgress,
+  describeCustomCompactionFailure,
+} from "@t3tools/client-runtime/handoff";
 import {
   CommandId,
   type EnvironmentId,
@@ -15,6 +18,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "~/hooks/useSettings";
 import { orchestrationEnvironment } from "~/state/orchestration";
+import { useEnvironmentQuery } from "~/state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "~/state/server";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { getCustomModelOptionsByInstance, resolveAppModelSelectionState } from "~/modelSelection";
@@ -72,14 +76,24 @@ export function CustomCompactionControls(props: {
     orchestrationEnvironment.compactContext.permissionAtom(props.environmentId),
   );
   const compact = useOrchestrationCommand(orchestrationEnvironment.compactContext);
+  const cancelCompaction = useOrchestrationCommand(orchestrationEnvironment.cancelCompaction);
+  // Server-side state, so a compaction started elsewhere or before a reload still shows.
+  const running =
+    useEnvironmentQuery(
+      orchestrationEnvironment.compaction({
+        environmentId: props.environmentId,
+        input: { threadId: props.threadId },
+      }),
+    ).data ?? null;
   const registry = useContext(RegistryContext);
   const requestAtom = compactionRequestAtom(
     scopedThreadKey({ environmentId: props.environmentId, threadId: props.threadId }),
   );
   const { pending, error } = useAtomValue(requestAtom);
+  const busy = pending || running !== null;
   const disabled =
     props.disabled ||
-    pending ||
+    busy ||
     !canCompact ||
     !entry?.enabled ||
     !entry.isAvailable ||
@@ -107,14 +121,30 @@ export function CustomCompactionControls(props: {
     }
     registry.set(requestAtom, {
       pending: false,
-      error: failure?.message ?? null,
+      error: failure === null || failure.cancelled ? null : failure.message,
       retryCommandId: failure?.connectionLost ? commandId : null,
     });
     toastManager.add(
       failure === null
         ? { type: "success", title: "Context compacted" }
-        : { type: "error", title: "Could not compact context", description: failure.message },
+        : failure.cancelled
+          ? { type: "info", title: "Compaction cancelled", description: failure.message }
+          : { type: "error", title: "Could not compact context", description: failure.message },
     );
+  };
+  const cancel = async () => {
+    if (running === null) return;
+    const result = await cancelCompaction({
+      environmentId: props.environmentId,
+      input: { threadId: props.threadId, commandId: running.commandId },
+    });
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: "Could not cancel compaction",
+        description: describeCustomCompactionFailure(squashAtomCommandFailure(result)).message,
+      });
+    }
   };
   return (
     <>
@@ -129,7 +159,7 @@ export function CustomCompactionControls(props: {
           instanceEntries={entries}
           modelOptionsByInstance={modelOptions}
           triggerAriaLabel="Compaction model"
-          disabled={pending}
+          disabled={busy}
           onInstanceModelChange={(instanceId, model) =>
             saveSelection(createModelSelection(instanceId, model))
           }
@@ -148,9 +178,22 @@ export function CustomCompactionControls(props: {
           />
         ) : null}
       </div>
-      <Button size="xs" variant="outline" disabled={disabled} onClick={() => void run()}>
-        {pending ? "Compacting…" : "Compact with selected model"}
-      </Button>
+      {busy ? (
+        <div className="flex items-center gap-1.5">
+          <div role="status" className="min-w-0 flex-1 text-xs text-muted-foreground">
+            {running ? describeCompactionProgress(running) : "Compacting…"}
+          </div>
+          {running && canCompact ? (
+            <Button size="xs" variant="outline" onClick={() => void cancel()}>
+              Cancel
+            </Button>
+          ) : null}
+        </div>
+      ) : (
+        <Button size="xs" variant="outline" disabled={disabled} onClick={() => void run()}>
+          Compact with selected model
+        </Button>
+      )}
       {error ? (
         <div role="alert" className="text-xs text-destructive">
           {error}

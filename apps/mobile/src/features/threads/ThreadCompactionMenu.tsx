@@ -5,7 +5,10 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { describeCustomCompactionFailure } from "@t3tools/client-runtime/handoff";
+import {
+  describeCompactionProgress,
+  describeCustomCompactionFailure,
+} from "@t3tools/client-runtime/handoff";
 import {
   CommandId,
   MessageId,
@@ -28,6 +31,7 @@ import { orchestrationEnvironment } from "../../state/orchestration";
 import { serverEnvironment } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useEnvironmentQuery } from "../../state/query";
 
 /** Reads the clock at choice time; kept outside the component so render stays pure. */
 function shellCacheNeedsAcknowledgement(promptCache: EnvironmentThreadShell["promptCache"]) {
@@ -55,6 +59,16 @@ export function ThreadCompactionMenu(props: {
     serverEnvironment.updateSettings.permissionAtom(props.environmentId),
   );
   const compact = useAtomCommand(orchestrationEnvironment.compactContext, { reportFailure: false });
+  const cancelCompaction = useAtomCommand(orchestrationEnvironment.cancelCompaction, {
+    reportFailure: false,
+  });
+  const running =
+    useEnvironmentQuery(
+      orchestrationEnvironment.compaction({
+        environmentId: props.environmentId,
+        input: { threadId: props.thread.id },
+      }),
+    ).data ?? null;
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const saveSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const [compacting, setCompacting] = useState<string | null>(null);
@@ -81,13 +95,14 @@ export function ThreadCompactionMenu(props: {
     props.config.providers
       .find((provider) => provider.instanceId === props.thread.modelSelection.instanceId)
       ?.slashCommands.some((command) => command.name === "compact") === true;
-  const disabled = props.disabled || compacting !== null || !permitted;
+  const disabled = props.disabled || compacting !== null || running !== null || !permitted;
 
   const reportError = (
     selection: ModelSelection | null,
     failure: { cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"] },
   ) => {
     const error = squashAtomCommandFailure(failure);
+    if (selection !== null && describeCustomCompactionFailure(error).cancelled) return;
     Dialog.alert(
       "Could not compact context",
       selection !== null
@@ -155,7 +170,23 @@ export function ThreadCompactionMenu(props: {
     pending.current = false;
     setCompacting(null);
   };
+  const cancel = async () => {
+    if (running === null) return;
+    const result = await cancelCompaction({
+      environmentId: props.environmentId,
+      input: { threadId: props.thread.id, commandId: running.commandId },
+    });
+    if (result._tag === "Failure")
+      Dialog.alert(
+        "Could not cancel compaction",
+        describeCustomCompactionFailure(squashAtomCommandFailure(result)).message,
+      );
+  };
   const choose = (id: string) => {
+    if (id === "cancel") {
+      void cancel();
+      return;
+    }
     if (id === "native") {
       if (
         props.cacheReadRequiresAcknowledgement ||
@@ -183,6 +214,9 @@ export function ThreadCompactionMenu(props: {
         accessibilityLabel="Compact context"
         title="Compact context"
         actions={[
+          ...(running !== null && permitted
+            ? [{ id: "cancel", title: "Cancel compaction", attributes: { destructive: true } }]
+            : []),
           {
             id: "native-section",
             title: "Native compaction",
@@ -234,14 +268,14 @@ export function ThreadCompactionMenu(props: {
       >
         <ComposerInlineControl
           icon="arrow.down.right.and.arrow.up.left"
-          label={compacting ? "Compacting…" : "Compact context"}
+          label={compacting || running ? "Compacting…" : "Compact context"}
           iconOnly
-          disabled={disabled}
+          disabled={props.disabled || !permitted}
         />
       </Menu>
-      {compacting ? (
+      {running || compacting ? (
         <Text accessibilityLiveRegion="polite" className="text-xs text-foreground-muted">
-          {compacting}…
+          {running ? describeCompactionProgress(running) : `${compacting}…`}
         </Text>
       ) : null}
     </View>

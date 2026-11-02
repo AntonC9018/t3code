@@ -64,6 +64,10 @@ Compaction runs on the server. Closing the menu, switching threads, or losing th
 not cancel it; the summary appears in the timeline when it finishes. Only one compaction can run
 per thread at a time, from any device.
 
+Long conversations are summarized in parts, so the menu shows which part is in progress.
+Cancel stops the compaction at any point before the summary is saved, and your context stays
+unchanged. A part that fails is retried once before the compaction gives up.
+
 Claude threads show an estimated prompt-cache lifetime. Expired or unknown cache state blocks a new
 turn unless you explicitly allow an uncached read for that message. You can compact with another model
 instead. The estimate cannot guarantee a cache hit: model or prompt changes may invalidate the cache

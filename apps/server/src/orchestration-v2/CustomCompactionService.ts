@@ -3,6 +3,7 @@ import {
   OrchestrationV2CompactContextError,
   ProviderThreadId,
   TurnItemId,
+  type OrchestrationV2CompactionProgress,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2RpcSchemas,
@@ -15,6 +16,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Ref from "effect/Ref";
 import * as Deferred from "effect/Deferred";
+import * as Cause from "effect/Cause";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import {
   historicalMessage,
@@ -31,13 +37,21 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 type Input = typeof OrchestrationV2RpcSchemas.compactContext.input.Type;
+type CancelInput = typeof OrchestrationV2RpcSchemas.cancelCompaction.input.Type;
+type Target = typeof OrchestrationV2RpcSchemas.subscribeCompaction.input.Type;
 type EventBody<E = OrchestrationV2DomainEvent> = E extends OrchestrationV2DomainEvent
   ? Omit<E, "id" | "threadId" | "occurredAt">
   : never;
 
 export class CustomCompactionService extends Context.Service<
   CustomCompactionService,
-  { readonly compact: (input: Input) => Effect.Effect<void, OrchestrationV2CompactContextError> }
+  {
+    readonly compact: (input: Input) => Effect.Effect<void, OrchestrationV2CompactContextError>;
+    /** Stops a running compaction; nothing is written until its summary is committed. */
+    readonly cancel: (input: CancelInput) => Effect.Effect<void>;
+    /** The thread's running compaction, or null when none is running. */
+    readonly subscribe: (input: Target) => Stream.Stream<OrchestrationV2CompactionProgress | null>;
+  }
 >()("t3/orchestration-v2/CustomCompactionService") {}
 
 const encodeSnapshot = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -172,9 +186,32 @@ export const layer = Layer.effect(
         {
           readonly commandId: Input["commandId"];
           readonly done: Deferred.Deferred<void, CompactError>;
+          readonly fiber: Fiber.Fiber<void, CompactError> | null;
         }
       >(),
     );
+    // Untouched entries keep their identity, so subscribers can skip unrelated updates.
+    const progress = yield* SubscriptionRef.make<
+      ReadonlyMap<Input["threadId"], OrchestrationV2CompactionProgress>
+    >(new Map());
+    const reportProgress = (
+      input: Input,
+      step: Pick<OrchestrationV2CompactionProgress, "pass" | "completedParts" | "totalParts">,
+    ) =>
+      SubscriptionRef.update(progress, (map) =>
+        new Map(map).set(input.threadId, {
+          commandId: input.commandId,
+          modelSelection: input.modelSelection,
+          ...step,
+        }),
+      );
+    const clearProgress = (input: Input) =>
+      SubscriptionRef.update(progress, (map) => {
+        if (map.get(input.threadId)?.commandId !== input.commandId) return map;
+        const next = new Map(map);
+        next.delete(input.threadId);
+        return next;
+      });
 
     /** Validates the idle thread under the command lock and returns the snapshot to summarize. */
     const readCompactableThread = Effect.fn("CustomCompactionService.readCompactableThread")(
@@ -215,19 +252,23 @@ export const layer = Layer.effect(
     ) {
       let pending = splitCompactionTranscript(transcript);
       for (let pass = 0; pass < 8; pass++) {
+        const totalParts = pending.length;
         const summaries = yield* Effect.forEach(
           pending,
-          (part) =>
-            textGeneration
-              .generateContextSummary({
-                cwd,
-                modelSelection: input.modelSelection,
-                transcript: part,
-              })
-              .pipe(
-                Effect.map((result) => result.summary),
-                Effect.mapError((cause) => compactError(input, "generation", cause)),
+          (part, completedParts) =>
+            reportProgress(input, { pass: pass + 1, completedParts, totalParts }).pipe(
+              Effect.andThen(
+                textGeneration.generateContextSummary({
+                  cwd,
+                  modelSelection: input.modelSelection,
+                  transcript: part,
+                }),
               ),
+              // One malformed or slow answer should not discard the parts already summarized.
+              Effect.retry({ times: 1 }),
+              Effect.map((result) => result.summary),
+              Effect.mapError((cause) => compactError(input, "generation", cause)),
+            ),
           { concurrency: 1 },
         );
         const only = summaries.length === 1 ? summaries[0]! : null;
@@ -418,8 +459,20 @@ export const layer = Layer.effect(
         original.thread.worktreePath ?? project.value.workspaceRoot,
         transcript,
       );
-      yield* commitCompaction(input, original, summary);
+      yield* Effect.uninterruptible(commitCompaction(input, original, summary));
     });
+
+    /** A cancel that lands during the commit cannot undo it, so the receipt decides the outcome. */
+    const settle = (input: Input, exit: Exit.Exit<void, CompactError>) =>
+      Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)
+        ? threads
+            .hasReceipt(input.commandId)
+            .pipe(
+              Effect.map((committed) =>
+                committed ? Exit.void : Exit.fail(compactError(input, "cancelled")),
+              ),
+            )
+        : Effect.succeed(exit);
 
     const compact = Effect.fn("CustomCompactionService.compact")(function* (input: Input) {
       const done = yield* Deferred.make<void, CompactError>();
@@ -432,21 +485,32 @@ export const layer = Layer.effect(
               return [current.commandId === input.commandId ? current.done : null, map] as const;
             return [
               undefined,
-              new Map(map).set(input.threadId, { commandId: input.commandId, done }),
+              new Map(map).set(input.threadId, { commandId: input.commandId, done, fiber: null }),
             ] as const;
           });
           if (active !== undefined) return active;
-          yield* runCompaction(input).pipe(
+          yield* reportProgress(input, { pass: 1, completedParts: 0, totalParts: 0 });
+          const fiber = yield* runCompaction(input).pipe(
             Effect.onExit((exit) =>
               Ref.update(running, (map) => {
                 if (map.get(input.threadId)?.done !== done) return map;
                 const next = new Map(map);
                 next.delete(input.threadId);
                 return next;
-              }).pipe(Effect.andThen(Deferred.done(done, exit))),
+              }).pipe(
+                Effect.andThen(clearProgress(input)),
+                Effect.andThen(settle(input, exit)),
+                Effect.flatMap((result) => Deferred.done(done, result)),
+              ),
             ),
             Effect.forkIn(scope),
           );
+          yield* Ref.update(running, (map) => {
+            const current = map.get(input.threadId);
+            return current?.done === done
+              ? new Map(map).set(input.threadId, { ...current, fiber })
+              : map;
+          });
           return done;
         }),
       );
@@ -454,6 +518,18 @@ export const layer = Layer.effect(
       yield* Deferred.await(joined);
     });
 
-    return CustomCompactionService.of({ compact });
+    const cancel = Effect.fn("CustomCompactionService.cancel")(function* (input: CancelInput) {
+      const current = (yield* Ref.get(running)).get(input.threadId);
+      if (current?.commandId !== input.commandId || current.fiber === null) return;
+      yield* Fiber.interrupt(current.fiber);
+    });
+
+    const subscribe = (input: Target) =>
+      SubscriptionRef.changes(progress).pipe(
+        Stream.map((map) => map.get(input.threadId) ?? null),
+        Stream.changesWith((left, right) => left === right),
+      );
+
+    return CustomCompactionService.of({ compact, cancel, subscribe });
   }),
 );

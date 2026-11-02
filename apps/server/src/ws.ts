@@ -1921,6 +1921,9 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) => threadManagement.stopWorkflow(input),
         [ORCHESTRATION_V2_WS_METHODS.compactContext]: (input) => customCompaction.compact(input),
+        [ORCHESTRATION_V2_WS_METHODS.cancelCompaction]: (input) => customCompaction.cancel(input),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeCompaction]: (input) =>
+          customCompaction.subscribe(input),
         [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: (input) =>
           threadManagement.forceStopThread(input),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
