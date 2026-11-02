@@ -27,6 +27,7 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as EventSink from "./EventSink.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 type Input = typeof OrchestrationV2RpcSchemas.compactContext.input.Type;
@@ -41,14 +42,26 @@ export class CustomCompactionService extends Context.Service<
 
 const encodeSnapshot = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
+/** What the summary was built from; read tracking, pins and PR snapshots must not void it. */
 function snapshotIdentity(projection: OrchestrationV2ThreadProjection): string {
+  const { thread } = projection;
   return encodeSnapshot({
-    thread: projection.thread,
-    runs: projection.runs,
-    providerThreads: projection.providerThreads,
-    runtimeRequests: projection.runtimeRequests,
-    subagents: projection.subagents,
-    contextTransfers: projection.contextTransfers,
+    thread: [
+      thread.activeProviderThreadId,
+      thread.providerInstanceId,
+      thread.modelSelection,
+      thread.archivedAt,
+      thread.deletedAt,
+    ],
+    runs: projection.runs.map((run) => [run.id, run.status]),
+    providerThreads: projection.providerThreads.map((providerThread) => [
+      providerThread.id,
+      providerThread.nativeThreadRef,
+      providerThread.nativeConversationHeadRef,
+      providerThread.compactionSuperseded,
+    ]),
+    contextTransfers: projection.contextTransfers.map((transfer) => [transfer.id, transfer.status]),
+    contextHandoffs: projection.contextHandoffs.map((handoff) => [handoff.id, handoff.status]),
     turnItems: projection.visibleTurnItems.map(({ item }) => [
       item.id,
       item.status,
@@ -149,6 +162,7 @@ export const layer = Layer.effect(
     const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const sink = yield* EventSink.EventSinkV2;
     const ids = yield* IdAllocator.IdAllocatorV2;
+    const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
     const scope = yield* Effect.scope;
     // At most one compaction per thread. It runs in the service scope, so a client that closes the
     // menu, navigates away or disconnects does not cancel it; callers only wait for its result.
@@ -235,10 +249,9 @@ export const layer = Layer.effect(
       summary: string,
     ) {
       const storage = (cause: unknown) => compactError(input, "storage", cause);
-      const currentProvider = original.providerThreads.find(
-        (candidate) => candidate.id === original.thread.activeProviderThreadId,
-      )!;
-      const latestRun = original.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0]!;
+      const { driver } = yield* adapters
+        .get(original.thread.providerInstanceId)
+        .pipe(Effect.mapError((cause) => compactError(input, "unavailable", cause)));
       yield* executor.withLock(
         input.threadId,
         Effect.gen(function* () {
@@ -248,6 +261,10 @@ export const layer = Layer.effect(
             .pipe(Effect.mapError(storage));
           if (isBusy(fresh) || snapshotIdentity(fresh) !== snapshotIdentity(original))
             return yield* compactError(input, "changed");
+          const currentProvider = fresh.providerThreads.find(
+            (candidate) => candidate.id === fresh.thread.activeProviderThreadId,
+          )!;
+          const latestRun = fresh.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0]!;
           const now = yield* DateTime.now;
           const nextRunId = ids.derive.run({
             threadId: input.threadId,
@@ -268,7 +285,7 @@ export const layer = Layer.effect(
             });
           });
           const effects: PendingOrchestrationEffectV2[] = [];
-          for (const previous of original.providerThreads.filter(
+          for (const previous of fresh.providerThreads.filter(
             (thread) => thread.ownerNodeId === null && thread.compactionSuperseded !== true,
           )) {
             yield* event({
@@ -276,7 +293,7 @@ export const layer = Layer.effect(
               payload: { ...previous, compactionSuperseded: true, updatedAt: now },
             });
           }
-          for (const session of original.providerSessions.filter(
+          for (const session of fresh.providerSessions.filter(
             (session) => session.status !== "stopped" && session.status !== "error",
           )) {
             yield* event({
@@ -298,8 +315,8 @@ export const layer = Layer.effect(
             type: "provider-thread.updated",
             payload: {
               id: providerThreadId,
-              driver: currentProvider.driver,
-              providerInstanceId: original.thread.providerInstanceId,
+              driver,
+              providerInstanceId: fresh.thread.providerInstanceId,
               providerSessionId: null,
               appThreadId: input.threadId,
               ownerNodeId: null,
@@ -348,7 +365,7 @@ export const layer = Layer.effect(
               providerTurnId: null,
               nativeItemRef: null,
               parentItemId: null,
-              ordinal: original.turnItems.reduce((max, item) => Math.max(max, item.ordinal), 0) + 1,
+              ordinal: fresh.turnItems.reduce((max, item) => Math.max(max, item.ordinal), 0) + 1,
               status: "completed",
               title: null,
               startedAt: now,
@@ -358,10 +375,11 @@ export const layer = Layer.effect(
               contextHandoffId: handoffId,
               fromProviderThreadIds,
               toProviderThreadId: providerThreadId,
-              fromProviderInstanceIds: [original.thread.providerInstanceId],
-              toProviderInstanceId: original.thread.providerInstanceId,
-              fromModelSelections: [original.thread.modelSelection],
-              toModel: original.thread.modelSelection.model,
+              fromProviderInstanceIds: [currentProvider.providerInstanceId],
+              toProviderInstanceId: fresh.thread.providerInstanceId,
+              // The history was produced by the last run, even if the thread switched models since.
+              fromModelSelections: [latestRun.modelSelection],
+              toModel: fresh.thread.modelSelection.model,
               compactionModelSelection: input.modelSelection,
               strategy: "manual_context",
               summary,

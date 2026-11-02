@@ -70,7 +70,13 @@ export const layer = Layer.effect(
             })
             .pipe(
               Effect.mapError((error: OrchestrationV2CompactContextError) =>
-                cold(`Compacting it first failed: ${error.message}`),
+                cold(
+                  error.reason === "busy"
+                    ? "Compaction cannot start while the thread has active or background work. Retry after it finishes, or ask the user to send the message."
+                    : error.reason === "in_progress"
+                      ? "The thread is already being compacted. Retry after that compaction finishes."
+                      : `Compacting it first failed: ${error.message}`,
+                ),
               ),
             );
           return yield* threads.sendToThread(input);

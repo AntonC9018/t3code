@@ -62,9 +62,10 @@ function makeHarness(
         openSession: () => Effect.die("compaction must not open the original provider"),
       }) as ProviderAdapter.ProviderAdapterV2["Service"],
   );
+  const registry = ProviderAdapterRegistry.layerFromAdapters(adapters);
   const orchestration = ProviderReplayHarness.layerWithRegistry(
     { name: "custom-compaction" },
-    ProviderAdapterRegistry.layerFromAdapters(adapters),
+    registry,
     { databaseLayer: database, runEffectWorker: false },
   );
   const threads = ThreadManagement.layer.pipe(
@@ -81,6 +82,7 @@ function makeHarness(
         threads,
         orchestration,
         IdAllocator.layer,
+        registry,
         ThreadCommandExecutor.layer,
         Layer.mock(TextGeneration.TextGeneration)({ generateContextSummary }),
         Layer.mock(ProjectStore.ProjectStoreV2)({
@@ -408,12 +410,7 @@ describe("custom model compaction", () => {
           .pipe(Effect.result);
         assert.equal(duplicate._tag, "Failure");
         if (duplicate._tag === "Failure") assert.equal(duplicate.failure.reason, "in_progress");
-        yield* threads.dispatch({
-          type: "thread.metadata.update",
-          commandId: CommandId.make("rename"),
-          threadId,
-          title: "Changed concurrently",
-        });
+        yield* completeTurn(threadId, "concurrent", "A message sent during compaction");
         yield* Deferred.succeed(release, undefined);
         const result = yield* Fiber.join(fiber);
         assert.equal(result._tag, "Failure");
@@ -442,6 +439,13 @@ describe("custom model compaction", () => {
         yield* Deferred.await(started);
         // Closing the menu or dropping the socket interrupts the request, not the compaction.
         yield* Fiber.interrupt(caller);
+        // Opening the thread meanwhile records a visit; it does not change the summarized context.
+        yield* threads.dispatch({
+          type: "thread.visit",
+          commandId: CommandId.make("visit-during-compaction"),
+          threadId,
+          visitedAt: "2026-06-20T00:10:00.000Z",
+        });
         const rejoined = yield* service.compact(request).pipe(Effect.forkChild);
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(rejoined);

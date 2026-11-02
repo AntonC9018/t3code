@@ -292,6 +292,7 @@ const layerCustomCompactionProvided = CustomCompactionService.layer.pipe(
       ThreadCommandExecutor.layer,
       layerEventSink,
       IdAllocator.layer,
+      ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
     ),
   ),
 );

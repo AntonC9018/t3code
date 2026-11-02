@@ -59,6 +59,8 @@ export function ThreadCompactionMenu(props: {
   const saveSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const [compacting, setCompacting] = useState<string | null>(null);
   const pending = useRef(false);
+  // After a lost connection, retrying rejoins the compaction still running on the server.
+  const retryCommandId = useRef<CommandId | null>(null);
   const remembered = props.config.settings.customCompactionModelSelection;
   const providers = props.config.providers.filter(isProviderTextGenerationCapable);
   const options = buildModelOptions(
@@ -89,11 +91,24 @@ export function ThreadCompactionMenu(props: {
     Dialog.alert(
       "Could not compact context",
       selection !== null
-        ? describeCustomCompactionFailure(error)
+        ? describeCustomCompactionFailure(error).message
         : error instanceof Error
           ? error.message
           : "Try again after the current work finishes.",
     );
+  };
+  const compactWithModel = async (selection: ModelSelection) => {
+    const commandId = retryCommandId.current ?? CommandId.make(uuidv4());
+    const result = await compact({
+      environmentId: props.environmentId,
+      input: { threadId: props.thread.id, commandId, modelSelection: selection },
+    });
+    retryCommandId.current =
+      result._tag === "Failure" &&
+      describeCustomCompactionFailure(squashAtomCommandFailure(result)).connectionLost
+        ? commandId
+        : null;
+    return result;
   };
   const dispatch = async (selection: ModelSelection | null, allowUncachedRead: boolean) => {
     const result =
@@ -113,14 +128,7 @@ export function ThreadCompactionMenu(props: {
               interactionMode: props.thread.interactionMode,
             },
           })
-        : await compact({
-            environmentId: props.environmentId,
-            input: {
-              threadId: props.thread.id,
-              commandId: CommandId.make(uuidv4()),
-              modelSelection: selection,
-            },
-          });
+        : await compactWithModel(selection);
     if (result._tag === "Failure") {
       reportError(selection, result);
     } else if (selection !== null && canSaveSettings) {

@@ -40,6 +40,9 @@ describe("context summary output validation", () => {
           [markdown, markdown],
           ["```markdown\n" + markdown + "\n```", markdown],
           ["I cannot summarize this conversation.", null],
+          // Broken JSON and prose before the handoff are not accepted as Markdown.
+          ["```json\n" + `{"summary": "${markdown}\nKeep "quoted" text."}` + "\n```", null],
+          [`Here is the summary you asked for.\n\n${markdown}`, null],
         ] as const) {
           const generation = fromRunner("fixture", (request) =>
             decodeJsonReply(request, "fixture", output),

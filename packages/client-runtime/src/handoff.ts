@@ -6,6 +6,7 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 
+import { isTransportConnectionErrorMessage } from "./errors/transport.ts";
 import type { ThreadStructure } from "./state/models.ts";
 
 export type HandoffTimelineRun = Pick<
@@ -91,18 +92,26 @@ function latestRunModelBefore(
 }
 
 /**
- * Compaction runs on the server even when the waiting client disconnects, so a transport failure
- * does not mean the compaction failed.
+ * Compaction runs on the server even when the waiting client disconnects, so a lost connection
+ * does not mean it failed; retrying with the same command id rejoins the running compaction.
  */
-export function describeCustomCompactionFailure(cause: unknown): string {
+export function describeCustomCompactionFailure(cause: unknown): {
+  readonly message: string;
+  readonly connectionLost: boolean;
+} {
+  const tag =
+    typeof cause === "object" && cause !== null && "_tag" in cause ? String(cause._tag) : "";
+  const message = cause instanceof Error ? cause.message : "";
   if (
-    typeof cause === "object" &&
-    cause !== null &&
-    "_tag" in cause &&
-    cause._tag === "OrchestrationV2CompactContextError" &&
-    cause instanceof Error
+    message.length > 0 &&
+    !isTransportConnectionErrorMessage(`${tag} ${message}`) &&
+    !isTransportConnectionErrorMessage(message)
   ) {
-    return cause.message;
+    return { message, connectionLost: false };
   }
-  return "Lost the connection while waiting. The compaction may still finish; check the timeline.";
+  return {
+    message:
+      "Lost the connection while waiting. The compaction may still finish; check the timeline.",
+    connectionLost: true,
+  };
 }

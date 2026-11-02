@@ -28,6 +28,8 @@ import { TraitsPicker } from "./TraitsPicker";
 interface CompactionRequestState {
   readonly pending: boolean;
   readonly error: string | null;
+  /** Set after a lost connection, so retrying rejoins that compaction instead of conflicting. */
+  readonly retryCommandId: CommandId | null;
 }
 
 /**
@@ -35,7 +37,7 @@ interface CompactionRequestState {
  * server, so reopening the menu must still show it and its result.
  */
 const compactionRequestAtom = Atom.family((threadKey: string) =>
-  Atom.make<CompactionRequestState>({ pending: false, error: null }).pipe(
+  Atom.make<CompactionRequestState>({ pending: false, error: null, retryCommandId: null }).pipe(
     Atom.keepAlive,
     Atom.withLabel(`custom-compaction:${threadKey}`),
   ),
@@ -87,17 +89,15 @@ export function CustomCompactionControls(props: {
     updateSettings({ customCompactionModelSelection: next });
   };
   const run = async () => {
-    if (disabled || registry.get(requestAtom).pending) return;
-    registry.set(requestAtom, { pending: true, error: null });
-    let failure: string | null = null;
+    const current = registry.get(requestAtom);
+    if (disabled || current.pending) return;
+    const commandId = current.retryCommandId ?? CommandId.make(randomUUID());
+    registry.set(requestAtom, { ...current, pending: true, error: null });
+    let failure: ReturnType<typeof describeCustomCompactionFailure> | null = null;
     try {
       const result = await compact({
         environmentId: props.environmentId,
-        input: {
-          threadId: props.threadId,
-          commandId: CommandId.make(randomUUID()),
-          modelSelection: selection,
-        },
+        input: { threadId: props.threadId, commandId, modelSelection: selection },
       });
       if (result._tag === "Failure") {
         failure = describeCustomCompactionFailure(squashAtomCommandFailure(result));
@@ -105,11 +105,15 @@ export function CustomCompactionControls(props: {
     } catch (cause) {
       failure = describeCustomCompactionFailure(cause);
     }
-    registry.set(requestAtom, { pending: false, error: failure });
+    registry.set(requestAtom, {
+      pending: false,
+      error: failure?.message ?? null,
+      retryCommandId: failure?.connectionLost ? commandId : null,
+    });
     toastManager.add(
       failure === null
         ? { type: "success", title: "Context compacted" }
-        : { type: "error", title: "Could not compact context", description: failure },
+        : { type: "error", title: "Could not compact context", description: failure.message },
     );
   };
   return (
