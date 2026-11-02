@@ -4129,6 +4129,7 @@ export class OrchestrationV2CompactContextError extends Schema.TaggedError<Orche
     threadId: ThreadId,
     reason: Schema.Literals([
       "busy",
+      "in_progress",
       "changed",
       "empty",
       "generation",
@@ -4143,6 +4144,8 @@ export class OrchestrationV2CompactContextError extends Schema.TaggedError<Orche
     switch (this.reason) {
       case "busy":
         return "Stop active and background work before compacting with another model.";
+      case "in_progress":
+        return "Another compaction is already running for this thread. Its result appears in the timeline when it finishes.";
       case "changed":
         return "The conversation changed during compaction. Try again.";
       case "empty":

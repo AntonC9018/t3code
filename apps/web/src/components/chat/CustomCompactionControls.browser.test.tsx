@@ -2,6 +2,7 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { RegistryProvider } from "@effect/atom-react";
 import {
   EnvironmentId,
+  OrchestrationV2CompactContextError,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
@@ -10,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { it, expect, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { act, render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({ run: vi.fn(), update: vi.fn() }));
@@ -96,6 +97,11 @@ it("keeps custom compaction available beside disabled native compaction and reco
   await page.getByRole("option", { name: "Sol", exact: false }).click();
   await page.getByRole("button", { name: "Compact with selected model" }).click();
   await expect.element(page.getByRole("button", { name: "Compacting…" })).toBeDisabled();
+  // The request outlives the popover, so reopening it still shows the running compaction.
+  await userEvent.keyboard("{Escape}");
+  await expect.element(page.getByRole("button", { name: "Compacting…" })).not.toBeInTheDocument();
+  await screen.getByRole("button", { name: "Compact context", exact: true }).click();
+  await expect.element(page.getByRole("button", { name: "Compacting…" })).toBeDisabled();
   expect(native).not.toHaveBeenCalled();
   expect(state.run).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -105,8 +111,12 @@ it("keeps custom compaction available beside disabled native compaction and reco
       }),
     }),
   );
-  await act(() => fail(AsyncResult.fail(new Error("Summary generation failed"))));
-  await expect.element(page.getByRole("alert")).toHaveTextContent("Summary generation failed");
+  const failure = new OrchestrationV2CompactContextError({
+    threadId: ThreadId.make("thread"),
+    reason: "generation",
+  });
+  await act(() => fail(AsyncResult.fail(failure)));
+  await expect.element(page.getByRole("alert")).toHaveTextContent(failure.message);
   await expect
     .element(page.getByRole("button", { name: "Compact with selected model" }))
     .toBeEnabled();

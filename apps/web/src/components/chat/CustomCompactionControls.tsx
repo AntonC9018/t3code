@@ -1,6 +1,9 @@
-import { useRef, useState } from "react";
+import { useContext, useState } from "react";
 import { randomUUID } from "~/lib/utils";
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { describeCustomCompactionFailure } from "@t3tools/client-runtime/handoff";
 import {
   CommandId,
   type EnvironmentId,
@@ -17,9 +20,26 @@ import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { getCustomModelOptionsByInstance, resolveAppModelSelectionState } from "~/modelSelection";
 import { providerInstanceEntriesFor } from "~/providerInstances";
 import { Button } from "../ui/button";
+import { toastManager } from "../ui/toast";
 import { Separator } from "../ui/separator";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { TraitsPicker } from "./TraitsPicker";
+
+interface CompactionRequestState {
+  readonly pending: boolean;
+  readonly error: string | null;
+}
+
+/**
+ * Kept outside the popover, which unmounts when it closes: the request keeps running on the
+ * server, so reopening the menu must still show it and its result.
+ */
+const compactionRequestAtom = Atom.family((threadKey: string) =>
+  Atom.make<CompactionRequestState>({ pending: false, error: null }).pipe(
+    Atom.keepAlive,
+    Atom.withLabel(`custom-compaction:${threadKey}`),
+  ),
+);
 
 export function CustomCompactionControls(props: {
   environmentId: EnvironmentId;
@@ -50,9 +70,11 @@ export function CustomCompactionControls(props: {
     orchestrationEnvironment.compactContext.permissionAtom(props.environmentId),
   );
   const compact = useOrchestrationCommand(orchestrationEnvironment.compactContext);
-  const requestInFlight = useRef(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const registry = useContext(RegistryContext);
+  const requestAtom = compactionRequestAtom(
+    scopedThreadKey({ environmentId: props.environmentId, threadId: props.threadId }),
+  );
+  const { pending, error } = useAtomValue(requestAtom);
   const disabled =
     props.disabled ||
     pending ||
@@ -65,10 +87,9 @@ export function CustomCompactionControls(props: {
     updateSettings({ customCompactionModelSelection: next });
   };
   const run = async () => {
-    if (disabled || requestInFlight.current) return;
-    requestInFlight.current = true;
-    setPending(true);
-    setError(null);
+    if (disabled || registry.get(requestAtom).pending) return;
+    registry.set(requestAtom, { pending: true, error: null });
+    let failure: string | null = null;
     try {
       const result = await compact({
         environmentId: props.environmentId,
@@ -79,14 +100,17 @@ export function CustomCompactionControls(props: {
         },
       });
       if (result._tag === "Failure") {
-        const cause = squashAtomCommandFailure(result);
-        setError(cause instanceof Error ? cause.message : "Could not compact context.");
+        failure = describeCustomCompactionFailure(squashAtomCommandFailure(result));
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not compact context.");
+      failure = describeCustomCompactionFailure(cause);
     }
-    requestInFlight.current = false;
-    setPending(false);
+    registry.set(requestAtom, { pending: false, error: failure });
+    toastManager.add(
+      failure === null
+        ? { type: "success", title: "Context compacted" }
+        : { type: "error", title: "Could not compact context", description: failure },
+    );
   };
   return (
     <>

@@ -5,6 +5,7 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { describeCustomCompactionFailure } from "@t3tools/client-runtime/handoff";
 import {
   CommandId,
   MessageId,
@@ -14,6 +15,7 @@ import {
   type ServerConfig,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import * as Cause from "effect/Cause";
 import { useRef, useState } from "react";
 import { View } from "react-native";
 import { ComposerInlineControl } from "../../components/ComposerToolbar";
@@ -79,13 +81,18 @@ export function ThreadCompactionMenu(props: {
       ?.slashCommands.some((command) => command.name === "compact") === true;
   const disabled = props.disabled || compacting !== null || !permitted;
 
-  const reportError = (failure: {
-    cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"];
-  }) => {
+  const reportError = (
+    selection: ModelSelection | null,
+    failure: { cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"] },
+  ) => {
     const error = squashAtomCommandFailure(failure);
     Dialog.alert(
       "Could not compact context",
-      error instanceof Error ? error.message : "Try again after the current work finishes.",
+      selection !== null
+        ? describeCustomCompactionFailure(error)
+        : error instanceof Error
+          ? error.message
+          : "Try again after the current work finishes.",
     );
   };
   const dispatch = async (selection: ModelSelection | null, allowUncachedRead: boolean) => {
@@ -115,7 +122,7 @@ export function ThreadCompactionMenu(props: {
             },
           });
     if (result._tag === "Failure") {
-      reportError(result);
+      reportError(selection, result);
     } else if (selection !== null && canSaveSettings) {
       const saved = await saveSettings({
         environmentId: props.environmentId,
@@ -135,10 +142,7 @@ export function ThreadCompactionMenu(props: {
           selection.model);
     setCompacting(label);
     await dispatch(selection, allowUncachedRead).catch((cause: unknown) =>
-      Dialog.alert(
-        "Could not compact context",
-        cause instanceof Error ? cause.message : "Try again after the current work finishes.",
-      ),
+      reportError(selection, { cause: Cause.die(cause) }),
     );
     pending.current = false;
     setCompacting(null);

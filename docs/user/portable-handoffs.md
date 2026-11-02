@@ -60,6 +60,10 @@ Long histories are summarized in parts. Attachments, hidden reasoning, and nativ
 transferred; check the summary or retrieve earlier history when exact details matter. If generation
 fails or the conversation changes while it runs, the previous context remains intact.
 
+Compaction runs on the server. Closing the menu, switching threads, or losing the connection does
+not cancel it; the summary appears in the timeline when it finishes. Only one compaction can run
+per thread at a time, from any device.
+
 Claude threads show an estimated prompt-cache lifetime. Expired or unknown cache state blocks a new
 turn unless you explicitly allow an uncached read for that message. You can compact with another model
 instead. The estimate cannot guarantee a cache hit: model or prompt changes may invalidate the cache

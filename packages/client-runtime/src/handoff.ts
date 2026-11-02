@@ -89,3 +89,20 @@ function latestRunModelBefore(
   }
   return latest?.modelSelection.model;
 }
+
+/**
+ * Compaction runs on the server even when the waiting client disconnects, so a transport failure
+ * does not mean the compaction failed.
+ */
+export function describeCustomCompactionFailure(cause: unknown): string {
+  if (
+    typeof cause === "object" &&
+    cause !== null &&
+    "_tag" in cause &&
+    cause._tag === "OrchestrationV2CompactContextError" &&
+    cause instanceof Error
+  ) {
+    return cause.message;
+  }
+  return "Lost the connection while waiting. The compaction may still finish; check the timeline.";
+}

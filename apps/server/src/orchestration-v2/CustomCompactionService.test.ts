@@ -407,6 +407,7 @@ describe("custom model compaction", () => {
           .compact({ ...request, commandId: CommandId.make("compact:different") })
           .pipe(Effect.result);
         assert.equal(duplicate._tag, "Failure");
+        if (duplicate._tag === "Failure") assert.equal(duplicate.failure.reason, "in_progress");
         yield* threads.dispatch({
           type: "thread.metadata.update",
           commandId: CommandId.make("rename"),
@@ -423,37 +424,35 @@ describe("custom model compaction", () => {
     }),
   );
 
-  it.effect(
-    "cancels summary generation without replacing context and releases the compaction slot",
-    () =>
-      Effect.gen(function* () {
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        const harness = makeHarness(() =>
-          Deferred.succeed(started, undefined).pipe(
-            Effect.andThen(Deferred.await(release)),
-            Effect.as({ summary: "Retry summary" }),
-          ),
-        );
-        yield* Effect.gen(function* () {
-          const original = yield* seed;
-          const service = yield* CustomCompaction.CustomCompactionService;
-          const threads = yield* ThreadManagement.ThreadManagementService;
-          const fiber = yield* service.compact(request).pipe(Effect.forkChild);
-          yield* Deferred.await(started);
-          yield* Fiber.interrupt(fiber);
-          const afterCancel = yield* threads.getThreadProjection(threadId);
-          assert.equal(
-            afterCancel.thread.activeProviderThreadId,
-            original.thread.activeProviderThreadId,
-          );
-          assert.isEmpty(afterCancel.contextHandoffs);
-          yield* Deferred.succeed(release, undefined);
-          yield* service.compact({ ...request, commandId: CommandId.make("compact:after-cancel") });
-          const afterRetry = yield* threads.getThreadProjection(threadId);
-          assert.equal(afterRetry.contextHandoffs[0]?.summaryText, "Retry summary");
-        }).pipe(Effect.provide(harness.layer));
-      }),
+  it.effect("keeps compacting after the requesting client stops waiting", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const harness = makeHarness(() =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as({ summary: "Detached summary" }),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        yield* seed;
+        const service = yield* CustomCompaction.CustomCompactionService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const caller = yield* service.compact(request).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        // Closing the menu or dropping the socket interrupts the request, not the compaction.
+        yield* Fiber.interrupt(caller);
+        const rejoined = yield* service.compact(request).pipe(Effect.forkChild);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(rejoined);
+        const after = yield* threads.getThreadProjection(threadId);
+        assert.equal(after.contextHandoffs[0]?.summaryText, "Detached summary");
+        assert.equal(harness.generateContextSummary.mock.calls.length, 1);
+        // The slot is released, so a later compaction can start.
+        yield* service.compact({ ...request, commandId: CommandId.make("compact:again") });
+        assert.equal(harness.generateContextSummary.mock.calls.length, 2);
+      }).pipe(Effect.provide(harness.layer));
+    }),
   );
 
   it("splits Unicode transcripts without losing text or exceeding the byte budget", () => {
