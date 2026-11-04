@@ -14,13 +14,20 @@ const POLL_INTERVAL = Duration.seconds(2);
 /** A poll this late means the machine slept; sockets opened before suspend are suspect. */
 const RESUME_GAP_MS = 15_000;
 
-/** Addresses a provider's outbound connection could be bound to, in a stable order. */
+/** Local container and VM bridges; they come and go without touching outbound routes. */
+const VIRTUAL_INTERFACE = /^(docker|br-|veth|virbr|vnet|vmnet|vboxnet|cni|flannel|podman)/;
+
+/**
+ * IPv4 addresses a provider's outbound connection could use, in a stable order. IPv6 is
+ * left out because temporary addresses rotate on their own while connections stay healthy.
+ */
 export function interfaceSignature(interfaces: NetworkInterfacesMap): string {
   return Object.entries(interfaces)
+    .filter(([name]) => !VIRTUAL_INTERFACE.test(name))
     .flatMap(([name, addresses]) =>
       (addresses ?? [])
-        .filter((address) => !address.internal)
-        .map((address) => `${name}/${address.family}/${address.address}`),
+        .filter((address) => !address.internal && address.family === "IPv4")
+        .map((address) => `${name}/${address.address}`),
     )
     .toSorted()
     .join(",");

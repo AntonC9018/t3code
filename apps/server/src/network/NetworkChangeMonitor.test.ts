@@ -21,12 +21,16 @@ const address = (value: string, internal = false) =>
   }) as const;
 
 describe("NetworkChangeMonitor", () => {
-  it("ignores loopback and interface order", () => {
-    const loopback = { lo: [address("127.0.0.1", true)] };
+  it("ignores loopback, IPv6, local bridges, and interface order", () => {
     assert.strictEqual(
       NetworkChangeMonitor.interfaceSignature({
-        ...loopback,
-        wlan0: [address("192.168.1.2")],
+        lo: [address("127.0.0.1", true)],
+        wlan0: [
+          address("192.168.1.2"),
+          { ...address("2001:db8::1234"), family: "IPv6", scopeid: 0 },
+        ],
+        docker0: [address("172.17.0.1")],
+        "br-1a2b": [address("172.18.0.1")],
         tun0: [address("10.0.0.2")],
       }),
       NetworkChangeMonitor.interfaceSignature({

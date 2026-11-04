@@ -23,15 +23,22 @@ export const NETWORK_STALL_REASON =
 const CONTINUE_TEXT =
   "The connection to the model was lost after a network change. Continue where you left off.";
 
-/** Active items that only the model stream advances; anything else is local work to keep. */
+/**
+ * Active items that only the model stream advances. Anything else, on any run of the thread,
+ * is local work an interrupt would kill (Codex stops a provider thread's background commands).
+ * Compaction stays excluded: resuming would replace an explicit /compact with a new turn.
+ */
 const STREAM_ONLY_ITEM_TYPES: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
   "assistant_message",
   "reasoning",
+  "proposed_plan",
   "todo_list",
   "notification",
   "system_notice",
   "user_message",
 ]);
+
+export type RecoverRunOutcome = "skipped" | "interrupted" | "resumed";
 
 export const makeRecoverRun = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -40,22 +47,41 @@ export const makeRecoverRun = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly runId: RunId;
     readonly changeAtMs: number;
+    /** Rechecked last, so a run that resumed streaming during recovery is kept. */
+    readonly stillSilent: Effect.Effect<boolean>;
   }) {
-    const records = yield* threads.getThreadRecords(input.threadId, ["runs", "turnItems"], {
-      turnItemRunIds: [input.runId],
-      turnItemStatuses: ["pending", "running", "waiting"],
-    });
-    const run = records.runs.find((candidate) => candidate.id === input.runId);
-    if (run?.status !== "running") return "skipped" as const;
-    const localWork = records.turnItems.find((item) => !STREAM_ONLY_ITEM_TYPES.has(item.type));
-    if (localWork !== undefined) {
-      yield* Effect.logInfo("orchestration-v2.network-stall.local-work", {
+    const skip = (why: string, detail?: Record<string, unknown>) =>
+      Effect.logInfo("orchestration-v2.network-stall.skipped", {
         threadId: input.threadId,
         runId: input.runId,
-        itemType: localWork.type,
-      });
-      return "skipped" as const;
+        why,
+        ...detail,
+      }).pipe(Effect.as<RecoverRunOutcome>("skipped"));
+
+    const records = yield* threads.getThreadRecords(
+      input.threadId,
+      ["runs", "turnItems", "subagents"],
+      { turnItemStatuses: ["pending", "running", "waiting"] },
+    );
+    const run = records.runs.find((candidate) => candidate.id === input.runId);
+    if (run?.status !== "running") return yield* skip("not-running");
+    const localWork = records.turnItems.find((item) => !STREAM_ONLY_ITEM_TYPES.has(item.type));
+    if (localWork !== undefined) return yield* skip("local-work", { itemType: localWork.type });
+    // Interrupting disposes delegated-completion cohorts and the tasks this run launched.
+    const { messages } = yield* threads.getThreadRecords(input.threadId, ["messages"], {
+      messageIds: [run.userMessageId],
+    });
+    if (
+      run.delegatedCompletion !== undefined ||
+      messages.some((message) => message.delegatedCompletion !== undefined) ||
+      records.subagents.some(
+        (subagent) => subagent.origin === "app_owned" && subagent.runId === run.id,
+      )
+    ) {
+      return yield* skip("delegated-work");
     }
+    if (!(yield* input.stillSilent)) return yield* skip("resumed-streaming");
+
     const identity = `${input.runId}:${input.changeAtMs}`;
     yield* threads.dispatch({
       type: "run.interrupt",
@@ -65,7 +91,8 @@ export const makeRecoverRun = Effect.gen(function* () {
       reason: NETWORK_STALL_REASON,
     });
     // A message the user already queued resumes the thread on its own.
-    if (records.runs.some((candidate) => candidate.status === "queued")) {
+    const after = yield* threads.getThreadRecords(input.threadId, ["runs"]);
+    if (after.runs.some((candidate) => candidate.status === "queued")) {
       return "interrupted" as const;
     }
     yield* threads.dispatch({
@@ -105,7 +132,12 @@ export const layer = Layer.effectDiscard(
       yield* Effect.forEach(
         silent,
         (entry) =>
-          recoverRun({ threadId: entry.threadId, runId: entry.runId, changeAtMs }).pipe(
+          recoverRun({
+            threadId: entry.threadId,
+            runId: entry.runId,
+            changeAtMs,
+            stillSilent: liveness.isSilentSince(entry.runId, changeAtMs),
+          }).pipe(
             Effect.tap((outcome) =>
               Effect.logInfo("orchestration-v2.network-stall.recovered", {
                 threadId: entry.threadId,

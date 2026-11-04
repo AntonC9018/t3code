@@ -25,6 +25,8 @@ export interface RunLivenessShape {
   }) => Effect.Effect<RunLivenessHandle>;
   /** Tracked runs whose last provider event predates `cutoffMs`. */
   readonly silentSince: (cutoffMs: number) => Effect.Effect<ReadonlyArray<RunLivenessEntry>>;
+  /** False once the run has ended or heard from its provider at or after `cutoffMs`. */
+  readonly isSilentSince: (runId: RunId, cutoffMs: number) => Effect.Effect<boolean>;
 }
 
 const untracked: RunLivenessHandle = { touch: Effect.void, end: Effect.void };
@@ -39,6 +41,7 @@ export class RunLiveness extends Context.Reference<RunLivenessShape>(
     defaultValue: () => ({
       begin: () => Effect.succeed(untracked),
       silentSince: () => Effect.succeed([]),
+      isSilentSince: () => Effect.succeed(false),
     }),
   },
 ) {}
@@ -65,14 +68,14 @@ export const make = Effect.gen(function* () {
     } satisfies RunLivenessHandle;
   });
 
+  const silent = (cutoffMs: number) =>
+    [...entries.values()].filter((entry) => entry.lastEventAtMs < cutoffMs);
+
   return {
     begin,
-    silentSince: (cutoffMs) =>
-      Effect.sync(() =>
-        [...entries.values()]
-          .filter((entry) => entry.lastEventAtMs < cutoffMs)
-          .map((entry) => ({ ...entry })),
-      ),
+    silentSince: (cutoffMs) => Effect.sync(() => silent(cutoffMs).map((entry) => ({ ...entry }))),
+    isSilentSince: (runId, cutoffMs) =>
+      Effect.sync(() => silent(cutoffMs).some((entry) => entry.runId === runId)),
   } satisfies RunLivenessShape;
 });
 
