@@ -40,6 +40,7 @@ import * as Stream from "effect/Stream";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
+import * as RunLiveness from "./RunLiveness.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
@@ -609,6 +610,7 @@ export const layer: Layer.Layer<
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
     const previewAgentActivity = yield* PreviewAgentActivity.PreviewAgentActivity;
+    const runLiveness = yield* RunLiveness.RunLiveness;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
 
@@ -1286,6 +1288,10 @@ export const layer: Layer.Layer<
         // Ends once the root turn and the children it drives settle. Background commands such
         // as a dev server keep this consumer alive afterwards and must not pin preview focus.
         const endPreviewActivity = yield* previewAgentActivity.begin(input.run.threadId);
+        const liveness = yield* runLiveness.begin({
+          threadId: input.run.threadId,
+          runId: input.run.id,
+        });
         const providerEventFiber = yield* eventSubscription.events.pipe(
           Stream.mapEffect((event) =>
             Effect.gen(function* () {
@@ -1365,6 +1371,7 @@ export const layer: Layer.Layer<
           Stream.tap(({ event, accepted }) =>
             Effect.gen(function* () {
               if (!accepted) return;
+              yield* liveness.touch;
               if (
                 event.type === "provider_turn.updated" &&
                 event.providerTurn.runAttemptId === input.attempt.id &&
@@ -1475,7 +1482,10 @@ export const layer: Layer.Layer<
           // Also after events this run does not accept, such as a child handed to another run.
           Stream.tap(() =>
             Effect.gen(function* () {
-              if (yield* agentTurnsSettled) yield* endPreviewActivity;
+              if (yield* agentTurnsSettled) {
+                yield* endPreviewActivity;
+                yield* liveness.end;
+              }
             }),
           ),
           Stream.takeUntilEffect(() => shouldStopProviderEventIngestion),
@@ -1611,6 +1621,7 @@ export const layer: Layer.Layer<
               }),
           ),
           Effect.ensuring(endPreviewActivity),
+          Effect.ensuring(liveness.end),
           Effect.ensuring(eventSubscription.close),
           Effect.forkDetach,
         );
