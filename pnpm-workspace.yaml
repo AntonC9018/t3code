@@ -324,7 +324,7 @@ overrides:
   # stays pinned on its own.
   "@opencode/protocol>effect": "catalog:"
   "@opencode/schema>effect": "catalog:"
-  node-abi: 4.33.0
+  node-abi: 4.40.0
   # The desktop app installs these without a lockfile when it packages them, so
   # pin the native passkey code that runs in its main process.
   "electron-webauthn>@electron-webauthn/macos": "catalog:"
