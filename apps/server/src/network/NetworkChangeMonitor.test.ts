@@ -62,4 +62,31 @@ describe("NetworkChangeMonitor", () => {
       assert.deepStrictEqual(yield* Fiber.join(fiber), [8_000, 12_000]);
     }),
   );
+
+  it.effect("reports suspend, not an event loop that stalled with both clocks running", () =>
+    Effect.gen(function* () {
+      const interfaces: Interfaces = { wlan0: [address("192.168.1.2")] };
+      // The monotonic clock follows the test clock, minus time spent suspended.
+      let suspendedMs = 0;
+      const clock = yield* TestClock.testClockWith(Effect.succeed);
+      const monitor = NetworkChangeMonitor.make({
+        readInterfaces: () => interfaces,
+        pollInterval: "2 seconds",
+        monotonicMillis: () => clock.currentTimeMillisUnsafe() - suspendedMs,
+      });
+      const fiber = yield* monitor.changes.pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      // A 30 s stall: both clocks advance, so polls are merely late.
+      yield* TestClock.adjust("30 seconds");
+      // A 60 s suspend: wall time jumps while the monotonic clock does not.
+      suspendedMs = 60_000;
+      yield* TestClock.adjust("2 seconds");
+
+      assert.deepStrictEqual(yield* Fiber.join(fiber), [32_000]);
+    }),
+  );
 });

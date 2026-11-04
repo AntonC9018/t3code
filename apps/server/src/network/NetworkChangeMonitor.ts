@@ -11,8 +11,11 @@ type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
 /** Polling is cheap (no syscalls beyond getifaddrs) and works on Linux and macOS alike. */
 const POLL_INTERVAL = Duration.seconds(2);
-/** A poll this late means the machine slept; sockets opened before suspend are suspect. */
-const RESUME_GAP_MS = 15_000;
+/**
+ * Wall time that passed while the monotonic clock stood still means the machine slept;
+ * sockets opened before suspend are suspect. A blocked event loop delays both clocks alike.
+ */
+const SUSPEND_GAP_MS = 15_000;
 
 /** Local container and VM bridges; they come and go without touching outbound routes. */
 const VIRTUAL_INTERFACE = /^(docker|br-|veth|virbr|vnet|vmnet|vboxnet|cni|flannel|podman)/;
@@ -36,6 +39,8 @@ export function interfaceSignature(interfaces: NetworkInterfacesMap): string {
 export interface NetworkChangeMonitorOptions {
   readonly readInterfaces?: () => NetworkInterfacesMap;
   readonly pollInterval?: Duration.Input;
+  /** Milliseconds on a clock that stops during suspend, as `performance.now` does. */
+  readonly monotonicMillis?: () => number;
 }
 
 /**
@@ -53,10 +58,11 @@ export class NetworkChangeMonitor extends Context.Service<
 export const make = (options: NetworkChangeMonitorOptions = {}) => {
   const readInterfaces = options.readInterfaces ?? NodeOS.networkInterfaces;
   const pollInterval = Duration.fromInputUnsafe(options.pollInterval ?? POLL_INTERVAL);
-  const resumeGapMs = Duration.toMillis(pollInterval) + RESUME_GAP_MS;
+  const monotonicMillis = options.monotonicMillis ?? (() => performance.now());
   const sample = Effect.all({
     signature: Effect.sync(() => interfaceSignature(readInterfaces())),
     atMs: Clock.currentTimeMillis,
+    monotonicMs: Effect.sync(monotonicMillis),
   });
 
   const changes = Stream.unwrap(
@@ -65,8 +71,9 @@ export const make = (options: NetworkChangeMonitorOptions = {}) => {
       return Stream.tick(pollInterval).pipe(
         Stream.mapEffect(() => sample),
         Stream.filter((current) => {
-          const changed =
-            current.signature !== previous.signature || current.atMs - previous.atMs > resumeGapMs;
+          const suspendedMs =
+            current.atMs - previous.atMs - (current.monotonicMs - previous.monotonicMs);
+          const changed = current.signature !== previous.signature || suspendedMs > SUSPEND_GAP_MS;
           previous = current;
           return changed;
         }),
