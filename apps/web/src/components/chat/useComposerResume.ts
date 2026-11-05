@@ -5,6 +5,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -17,6 +18,7 @@ import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import type { makeThreadErrorSetter } from "../ChatView.logic";
 import { draftSendState } from "./chatViewSend";
+import { sendNeedsPromptCacheAcknowledgement, showColdPromptCacheToast } from "./promptCacheSend";
 import type { useTimelineFollow } from "./useTimelineFollow";
 import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
 
@@ -25,6 +27,7 @@ interface ComposerResumeInput {
   readonly routeThreadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
   readonly activeThread: EnvironmentThreadShell | undefined;
+  readonly cacheProjection: ThreadStructure | null | undefined;
   readonly resumableRunId: RunId | null;
   readonly hasHeldQueuedRuns: boolean;
   readonly isSendBusy: boolean;
@@ -57,6 +60,7 @@ export function useComposerResume(input: ComposerResumeInput) {
     routeThreadKey,
     currentRouteThreadKeyRef,
     activeThread,
+    cacheProjection,
     resumableRunId,
     hasHeldQueuedRuns,
     isSendBusy,
@@ -84,7 +88,7 @@ export function useComposerResume(input: ComposerResumeInput) {
   const isResuming = resumingThreadKeys.has(routeThreadKey);
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
 
-  const onResume = async () => {
+  const resumeRun = async (allowUncachedRead: boolean) => {
     if (
       !activeThread ||
       (resumableRunId === null && !hasHeldQueuedRuns) ||
@@ -99,6 +103,17 @@ export function useComposerResume(input: ComposerResumeInput) {
     }
     const context = composerRef.current?.getSendContext();
     if (resumableRunId !== null && !context?.providerAvailable) return;
+    if (
+      resumableRunId !== null &&
+      !allowUncachedRead &&
+      context &&
+      sendNeedsPromptCacheAcknowledgement(cacheProjection, context.selectedModelSelection)
+    ) {
+      showColdPromptCacheToast(() => {
+        if (currentRouteThreadKeyRef.current === routeThreadKey) void resumeRun(true);
+      });
+      return;
+    }
     const threadId = activeThread.id;
     sendInFlightRef.current = true;
     setResumingThreadKeys((current) => new Set(current).add(routeThreadKey));
@@ -131,6 +146,7 @@ export function useComposerResume(input: ComposerResumeInput) {
             role: "user",
             text: "Continue where you left off.",
             attachments: [],
+            ...(allowUncachedRead ? { allowUncachedRead: true } : {}),
           },
           runtimeMode,
           interactionMode,
@@ -161,6 +177,8 @@ export function useComposerResume(input: ComposerResumeInput) {
       return next;
     });
   };
+
+  const onResume = () => resumeRun(false);
 
   return { onResume, isResuming };
 }

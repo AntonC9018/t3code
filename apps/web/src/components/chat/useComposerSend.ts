@@ -1,4 +1,4 @@
-import { deriveSendPromptCacheStatus, type PromptCacheStatus } from "@t3tools/shared/promptCache";
+import { sendNeedsPromptCacheAcknowledgement, showColdPromptCacheToast } from "./promptCacheSend";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import {
   mergeDirectPreviewAnnotation,
@@ -256,23 +256,6 @@ interface ComposerSendInput {
  * thread, a feedback upload, and resuming an interrupted run. Each path restores the draft
  * when it fails.
  */
-/** Reads the clock at send time; kept outside the hook so render stays pure. */
-function readSendPromptCacheStatus(
-  projection: ThreadStructure | null | undefined,
-  modelSelection: ModelSelection,
-): PromptCacheStatus {
-  if (!projection) return { state: "fresh" };
-  return deriveSendPromptCacheStatus({
-    thread: projection.thread,
-    providerThreads: projection.providerThreads,
-    providerTurns: projection.providerTurns,
-    attempts: projection.attempts,
-    runs: projection.runs,
-    modelSelection,
-    nowMs: Date.now(),
-  });
-}
-
 export function useComposerSend(input: ComposerSendInput) {
   const {
     environmentId,
@@ -553,11 +536,10 @@ export function useComposerSend(input: ComposerSendInput) {
       interactionMode: sendInteractionMode,
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
-    const cacheStatus = readSendPromptCacheStatus(input.cacheProjection, ctxSelectedModelSelection);
     if (
       !allowUncachedRead &&
       isServerThread &&
-      (cacheStatus.state === "expired" || cacheStatus.state === "unknown")
+      sendNeedsPromptCacheAcknowledgement(input.cacheProjection, ctxSelectedModelSelection)
     ) {
       return "cache-cold";
     }
@@ -1490,22 +1472,10 @@ export function useComposerSend(input: ComposerSendInput) {
     const draftAtSend = promptRef.current;
     const result = await sendComposer(e, dispatchMode, submissionIntent, directAnnotation, false);
     if (result !== "cache-cold") return;
-    toastManager.add({
-      type: "warning",
-      title: "Message not sent: Claude cache may be cold",
-      description:
-        "Compact with another model from the context menu, or explicitly send with an uncached read.",
-      actionProps: {
-        children: "Send anyway once",
-        onClick: () => {
-          if (
-            currentRouteThreadKeyRef.current !== threadKeyAtSend ||
-            promptRef.current !== draftAtSend
-          )
-            return;
-          void sendComposer(undefined, dispatchMode, submissionIntent, directAnnotation, true);
-        },
-      },
+    showColdPromptCacheToast(() => {
+      if (currentRouteThreadKeyRef.current !== threadKeyAtSend || promptRef.current !== draftAtSend)
+        return;
+      void sendComposer(undefined, dispatchMode, submissionIntent, directAnnotation, true);
     });
   };
 

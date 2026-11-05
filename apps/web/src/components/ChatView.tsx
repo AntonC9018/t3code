@@ -2839,6 +2839,7 @@ export default function ChatView(props: ChatViewProps) {
     routeThreadKey,
     currentRouteThreadKeyRef,
     activeThread,
+    cacheProjection: serverProjection,
     resumableRunId,
     hasHeldQueuedRuns,
     isSendBusy,
