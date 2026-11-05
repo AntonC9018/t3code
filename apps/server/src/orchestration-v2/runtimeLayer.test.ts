@@ -7275,6 +7275,10 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           )!;
           scheduledResume = limitRecoveryCommand(armed, true, Date.parse(resetAt));
           assert.isNotNull(scheduledResume);
+          assert.equal(
+            scheduledResume.type === "message.dispatch" && scheduledResume.allowUncachedRead,
+            true,
+          );
         }
         const resume = (suffix: string) => ({
           type: "message.dispatch" as const,

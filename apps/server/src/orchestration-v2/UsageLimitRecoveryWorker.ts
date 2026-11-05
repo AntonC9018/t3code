@@ -65,6 +65,8 @@ export function limitRecoveryCommand(
       : { usageLimitRecoveryRequestId: recovery.requestId }),
     text: "Continue where you left off.",
     attachments: [],
+    // Opting into auto-resume accepts that a reset hours away finds Claude's cache cold.
+    allowUncachedRead: true,
     dispatchMode: { type: "start_immediately" },
     createdBy: "user",
     creationSource: "server",
