@@ -56,6 +56,16 @@ interface ComposerPrimaryActionsProps {
   onToggleKeepFullHistory?: () => void;
 }
 
+export function composerShowsCompactChip(input: {
+  readonly compactBeforeSendTokens: number | null;
+  readonly canResume: boolean;
+  readonly hasSendableContent: boolean;
+  readonly isEditingQueuedMessage: boolean;
+}): boolean {
+  const showResume = input.canResume && !input.hasSendableContent && !input.isEditingQueuedMessage;
+  return input.compactBeforeSendTokens !== null && !showResume && !input.isEditingQueuedMessage;
+}
+
 const formatPendingPrimaryActionLabel = (input: {
   compact: boolean;
   isLastQuestion: boolean;
@@ -273,7 +283,13 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const showResume = canResume && !hasSendableContent && !isEditingQueuedMessage;
 
   const compactTokens =
-    compactBeforeSendTokens !== null && !showResume && !isEditingQueuedMessage
+    compactBeforeSendTokens !== null &&
+    composerShowsCompactChip({
+      compactBeforeSendTokens,
+      canResume,
+      hasSendableContent,
+      isEditingQueuedMessage,
+    })
       ? formatContextWindowTokens(compactBeforeSendTokens)
       : null;
   const compactsBeforeSend = compactTokens !== null && !keepFullHistory;

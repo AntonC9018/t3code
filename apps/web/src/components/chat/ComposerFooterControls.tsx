@@ -14,7 +14,8 @@ import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
 import { focusRequestedPermission, useComposerMenuProps } from "./composerEventScope";
-import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ComposerPrimaryActions, composerShowsCompactChip } from "./ComposerPrimaryActions";
+import { cn } from "~/lib/utils";
 import { ContextWindowMeter, ContextWindowMeterPlaceholder } from "./ContextWindowMeter";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import { ProviderModelPicker } from "./ProviderModelPicker";
@@ -304,7 +305,15 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
       ) : props.reserveContextWindowMeter ? (
         <ContextWindowMeterPlaceholder />
       ) : null}
-      {props.cacheIndicator}
+      {/* The chip already says the cache went cold, and both cannot fit on the narrowest phones. */}
+      <span
+        className={cn(
+          "contents",
+          composerShowsCompactChip(props) && "@max-[360px]/composer-surface:hidden",
+        )}
+      >
+        {props.cacheIndicator}
+      </span>
       {props.children}
       <ComposerPrimaryActions
         compact={props.compact}
