@@ -976,6 +976,9 @@ it("keeps retained audio across a dropped connection and retries it on the next 
 
   mocks.voiceCapability = false;
   await screen.rerender(<Probe input={probeInput()} />);
+  await act(() => mocks.voice!.start());
+  expect(mocks.transcriptions).not.toHaveBeenCalled();
+
   mocks.voiceCapability = true;
   mocks.prepared = {} as PreparedConnection;
   await screen.rerender(<Probe input={probeInput()} />);

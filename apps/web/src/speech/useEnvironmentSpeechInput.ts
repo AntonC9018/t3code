@@ -835,7 +835,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     const request = ++startRequestRef.current;
     const expectedController = sessionRef.current?.controller;
     const expectedOwner = latestInputRef.current.ownerKey;
-    if (latestInputRef.current.disabled || !expectedController) return;
+    if (latestInputRef.current.disabled || !expectedController || !prepared) return;
     const stillCurrent = () =>
       request === startRequestRef.current &&
       sessionRef.current?.controller === expectedController &&
@@ -860,7 +860,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       } else await expectedController.start();
       return;
     }
-    if (!prepared) return;
     setQueuedStart(prepared);
     let latestStatus: EnvironmentSpeechStatus;
     try {
@@ -954,6 +953,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       typeof navigator !== "undefined" &&
       Boolean(navigator.mediaDevices?.getUserMedia) &&
       typeof AudioWorkletNode !== "undefined",
+    canStart: prepared !== null,
     status: currentStatus,
     transcriptionEnvironmentId: destination.environmentId,
     transcriptionEnvironmentLabel: destination.label,

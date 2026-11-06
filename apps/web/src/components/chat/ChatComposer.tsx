@@ -3752,7 +3752,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           finishShortcutLabel={dictationShortcutLabel}
                           cancelShortcutLabel="Esc"
                           level={speechInput.level}
-                          disabled={dictationDisabled}
+                          disabled={dictationDisabled || !speechInput.canStart}
                           onStart={() => void speechInput.start()}
                           onStop={() => void speechInput.stop()}
                           onCancel={() => speechInput.cancel()}
