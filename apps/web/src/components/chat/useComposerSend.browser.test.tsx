@@ -50,7 +50,10 @@ function setup() {
   return { promptRef: { current: "" } };
 }
 
-function SendButton(props: { readonly promptRef: { current: string } }) {
+function SendButton(props: {
+  readonly promptRef: { current: string };
+  readonly planFollowUp?: boolean;
+}) {
   const { onSend } = useComposerSend({
     environmentId,
     routeThreadKey,
@@ -60,6 +63,7 @@ function SendButton(props: { readonly promptRef: { current: string } }) {
     activeThread: {
       id: threadId,
       environmentId,
+      title: "Cold thread",
       worktreePath: null,
       createdAt: "2026-11-07T00:00:00.000Z",
       activeProviderThreadId: null,
@@ -71,7 +75,7 @@ function SendButton(props: { readonly promptRef: { current: string } }) {
       environmentId,
       workspaceRoot: "/repo",
     },
-    activeProposedPlan: null,
+    activeProposedPlan: props.planFollowUp ? { id: "plan:cold", planMarkdown: "# Plan" } : null,
     activeProjectDefaultModelSelection: null,
     activeMessageCount: 2,
     isServerThread: true,
@@ -103,7 +107,7 @@ function SendButton(props: { readonly promptRef: { current: string } }) {
           selectedPromptEffort: null,
           selectedModelSelection: modelSelection,
           interactionMode: "default",
-          interactionModeEnabled: false,
+          interactionModeEnabled: props.planFollowUp === true,
         }),
         validateProviderInput: () => true,
         hasPendingAttachments: () => false,
@@ -128,7 +132,7 @@ function SendButton(props: { readonly promptRef: { current: string } }) {
     keepFullHistory: false,
     freshSessionAvailable: true,
     resumeCompactionTokens: null,
-    showPlanFollowUpPrompt: false,
+    showPlanFollowUpPrompt: props.planFollowUp === true,
     usageLimitsKey: null,
     usageLimitsOffered: false,
     openUsageLimits: () => false,
@@ -202,4 +206,21 @@ it("holds a cold send until it is acknowledged, then sends it once", async () =>
     message: { allowUncachedRead: true, text: "Keep going" },
   });
   expect(state.turns[0]).not.toHaveProperty("freshContext");
+});
+
+it("carries the acknowledgement through a cold plan follow-up", async () => {
+  const { promptRef } = setup();
+  await using screen = await render(<SendButton promptRef={promptRef} planFollowUp />);
+
+  promptRef.current = "Refine the plan";
+  await screen.getByRole("button", { name: "Send" }).click();
+  await vi.waitFor(() => expect(state.toastSendAnyway).not.toBeNull());
+  expect(state.turns).toEqual([]);
+
+  state.toastSendAnyway!();
+  await vi.waitFor(() => expect(state.turns).toHaveLength(1));
+  expect(state.turns[0]).toMatchObject({
+    threadId,
+    message: { allowUncachedRead: true },
+  });
 });

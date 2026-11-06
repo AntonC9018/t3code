@@ -107,10 +107,12 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
     text,
     context,
     interactionMode: nextInteractionMode,
+    allowUncachedRead,
   }: {
     text: string;
     context?: ReturnType<typeof buildMessageContext>;
     interactionMode: "default" | "plan";
+    allowUncachedRead: boolean;
   }) {
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
@@ -192,6 +194,7 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
             text: outgoingMessageText,
             ...(context ? { context } : {}),
             attachments: [],
+            ...(allowUncachedRead ? { allowUncachedRead: true } : {}),
           },
           modelSelection: sendCtx.selectedModelSelection,
           titleSeed: activeThread.title,

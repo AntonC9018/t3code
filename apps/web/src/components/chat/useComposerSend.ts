@@ -792,6 +792,7 @@ export function useComposerSend(input: ComposerSendInput) {
           environmentContexts: composerEnvironmentContexts,
         }),
         interactionMode: followUp.interactionMode,
+        allowUncachedRead,
       });
       if (!followUpSent) {
         restorePlanFollowUpComposer({
