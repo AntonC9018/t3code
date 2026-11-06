@@ -5,6 +5,15 @@ import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   startedTurn: null as ReturnType<typeof deferred<unknown>> | null,
+  coldCache: false,
+  sendAnyway: null as (() => void) | null,
+}));
+
+vi.mock("./promptCacheSend", () => ({
+  sendNeedsPromptCacheAcknowledgement: () => state.coldCache,
+  showColdPromptCacheToast: (sendAnyway: () => void) => {
+    state.sendAnyway = sendAnyway;
+  },
 }));
 
 vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) => ({
@@ -30,6 +39,8 @@ function deferred<T>() {
 function setup() {
   const startedTurn = deferred<unknown>();
   state.startedTurn = startedTurn;
+  state.coldCache = false;
+  state.sendAnyway = null;
   return { startedTurn };
 }
 
@@ -90,5 +101,26 @@ it("continues on the resumed thread's model after the composer moves to another 
     threadId: threadA,
     manualContinuationOfRunId: "run:interrupted",
     modelSelection: threadAModel,
+  });
+});
+
+it("asks before an uncached read and sends only after that acknowledgement", async () => {
+  const { startedTurn } = setup();
+  state.coldCache = true;
+  const composerRef: ComposerHandleRef = { current: composerShowing(threadAModel) };
+  await using screen = await render(
+    <ResumeButton
+      composerRef={composerRef}
+      persistSettings={async () => AsyncResult.success(undefined)}
+    />,
+  );
+
+  await screen.getByRole("button", { name: "Resume" }).click();
+  await expect.poll(() => state.sendAnyway).not.toBeNull();
+
+  state.sendAnyway!();
+  expect(await startedTurn.promise).toMatchObject({
+    manualContinuationOfRunId: "run:interrupted",
+    message: { allowUncachedRead: true },
   });
 });
