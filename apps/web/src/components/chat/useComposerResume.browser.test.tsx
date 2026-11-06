@@ -38,7 +38,7 @@ const threadAModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt
 const threadBModel = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus" };
 
 function composerShowing(selectedModelSelection: typeof threadAModel) {
-  return { getSendContext: () => ({ selectedModelSelection }) } as never;
+  return { getSendContext: () => ({ selectedModelSelection, providerAvailable: true }) } as never;
 }
 
 function ResumeButton(props: {

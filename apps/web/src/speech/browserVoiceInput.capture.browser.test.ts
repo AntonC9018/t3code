@@ -17,11 +17,10 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       supportsLanguageDetection: false,
     }),
   getEnvironmentSpeechStreamUrl: () => Effect.succeed("ws://speech.test"),
-  openSpeechStream: () =>
-    Promise.resolve({
-      feed: mocks.feed,
-      finish: async () => "captured speech",
-    }),
+  openSpeechStream: () => ({
+    feed: mocks.feed,
+    finish: async () => "captured speech",
+  }),
 }));
 vi.mock("../lib/runtime", () => ({ runtime: { runPromise: Effect.runPromise } }));
 

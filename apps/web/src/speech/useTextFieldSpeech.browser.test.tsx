@@ -52,7 +52,20 @@ vi.mock("@effect/atom-react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@effect/atom-react")>()),
   useAtomValue: () => DEFAULT_RESOLVED_KEYBINDINGS,
 }));
-vi.mock("~/state/server", () => ({ primaryServerKeybindingsAtom: {} }));
+vi.mock("~/state/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/server")>()),
+  primaryServerKeybindingsAtom: {},
+}));
+vi.mock(import("~/state/pullRequests"), async (original) => ({
+  ...(await original()),
+  usePullRequestFilterOptions: () => ({
+    labels: [],
+    authors: [],
+    references: [],
+    error: null,
+    isPending: false,
+  }),
+}));
 vi.mock("~/hooks/useSettings", () => ({ useClientSettings: () => "toggle" }));
 vi.mock("~/components/chat/VoiceInputSetup", () => ({ VoiceInputSetup: () => null }));
 vi.mock("~/components/chat/ComposerSpeechButton", () => ({
