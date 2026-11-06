@@ -138,7 +138,8 @@ type SpeechSessionContext = {
 /**
  * Microphone audio leaves this device only for the environment the person chose in
  * Voice settings. Nothing is inferred from the primary or the draft's environment, and
- * the recording is abandoned the moment that choice changes or its connection drops.
+ * the recording is abandoned the moment that choice changes. A dropped connection abandons it
+ * too, unless the recording is retained: that audio waits to retry on the next connection.
  */
 export function useVoiceTranscriptionDestination() {
   const hydrated = useClientSettingsHydrated();
@@ -159,7 +160,7 @@ export function useVoiceTranscriptionDestination() {
 type DraftRevision = { ownerKey: string; text: string; revision: number };
 
 type SpeechSession = {
-  readonly prepared: PreparedConnection;
+  readonly connection: { current: PreparedConnection };
   readonly grantId: string;
   context: SpeechSessionContext;
   recoveryAccepted: boolean;
@@ -225,6 +226,7 @@ function createSpeechSession(
   grantId: string,
 ): SpeechSession {
   const hasAudioConsent = bindAudioGrant(grantId);
+  const connection = { current: prepared };
   let session: SpeechSession;
   let controller: VoiceInputController;
   let recordingPreferences:
@@ -235,7 +237,9 @@ function createSpeechSession(
       }
     | undefined;
   const platform = createBrowserVoiceInputPlatform({
-    prepared,
+    get prepared() {
+      return connection.current;
+    },
     hasAudioConsent,
     onRecordingRemoved: (recordingId) => {
       try {
@@ -448,7 +452,7 @@ function createSpeechSession(
     },
   });
   session = {
-    prepared,
+    connection,
     grantId,
     context,
     recoveryAccepted: false,
@@ -693,10 +697,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   useEffect(() => {
     if (typeof navigator === "undefined") return;
     let existing = retainedKey ? retainedSessions.get(retainedKey) : undefined;
-    if (existing && (existing.prepared !== prepared || existing.grantId !== grantId)) {
+    if (existing && existing.grantId !== grantId) {
       disposeRetainedSession(existing);
       existing = undefined;
     }
+    // Consent is unchanged across a reconnect, so unsent audio stays and retries on the new link.
+    if (existing && prepared) existing.connection.current = prepared;
     if (!existing && (!prepared || !grantId)) return;
     const currentInput = latestInputRef.current;
     const session =

@@ -967,6 +967,38 @@ it("clears recovery preparation after the connection changes while storage is pe
   expect(mocks.voice!.state.phase).toBe("idle");
 });
 
+it("keeps retained audio across a dropped connection and retries it on the next one", async () => {
+  using _state = setup();
+  mocks.retainRecording = true;
+  mocks.recoveredOwner = "draft";
+  await using screen = await mountProbe();
+  await vi.waitFor(() => expect(mocks.voice!.state.hasRecording).toBe(true));
+
+  mocks.voiceCapability = false;
+  await screen.rerender(<Probe input={probeInput()} />);
+  mocks.voiceCapability = true;
+  mocks.prepared = {} as PreparedConnection;
+  await screen.rerender(<Probe input={probeInput()} />);
+  expect(mocks.deletedRecordings).not.toHaveBeenCalled();
+  expect(mocks.voice!.state.hasRecording).toBe(true);
+
+  await act(() => mocks.voice!.start());
+  expect(mocks.transcriptions).toHaveBeenCalledOnce();
+  expect(mocks.committed).toHaveBeenCalledWith("Raw transcript", expect.anything());
+});
+
+it("discards retained audio when the transcription consent changes", async () => {
+  using _state = setup();
+  mocks.retainRecording = true;
+  mocks.recoveredOwner = "draft";
+  await using screen = await mountProbe();
+  await vi.waitFor(() => expect(mocks.voice!.state.hasRecording).toBe(true));
+
+  selectTranscriptionEnvironment("another-environment" as EnvironmentId);
+  await screen.rerender(<Probe input={probeInput()} />);
+  expect(mocks.deletedRecordings).toHaveBeenCalledWith("draft");
+});
+
 it("checks for newly recoverable audio before opening the microphone", async () => {
   using _state = setup();
   mocks.retainRecording = true;
