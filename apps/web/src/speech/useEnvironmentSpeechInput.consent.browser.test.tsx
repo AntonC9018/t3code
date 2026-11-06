@@ -62,6 +62,14 @@ vi.mock("../state/environments", () => ({
       ? {
           environmentId,
           serverConfig: {
+            settings: {
+              ...DEFAULT_SERVER_SETTINGS,
+              projectSettingsOverrides: Object.fromEntries(
+                Object.entries(environmentId === THREAD_ENV ? mocks.projectWords : {}).map(
+                  ([projectId, words]) => [projectId, { speechProjectCustomWords: words }],
+                ),
+              ),
+            },
             environment: {
               capabilities: { voiceTranscription: mocks.voiceCapable.has(environmentId) },
             },
@@ -75,18 +83,6 @@ vi.mock("../hooks/useSettings", () => ({
     const settings = { ...DEFAULT_CLIENT_SETTINGS, ...mocks.settings };
     return selector ? selector(settings) : settings;
   },
-  useEnvironmentSettings: (
-    environmentId: string,
-    selector: (settings: Record<string, unknown>) => unknown,
-  ) =>
-    selector({
-      ...DEFAULT_SERVER_SETTINGS,
-      projectSettingsOverrides: Object.fromEntries(
-        Object.entries(environmentId === THREAD_ENV ? mocks.projectWords : {}).map(
-          ([projectId, words]) => [projectId, { speechProjectCustomWords: words }],
-        ),
-      ),
-    }),
 }));
 vi.mock("../lib/runtime", () => ({ runtime: { runPromise: Effect.runPromise } }));
 vi.mock("../components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
@@ -173,7 +169,8 @@ vi.mock("./browserVoiceInput", () => ({
 const THREAD_ENV = "thread-env";
 
 function setup(options: { readonly destination?: string | null } = {}) {
-  mocks.settings = {};
+  // Cleanup needs the preference and the grant; these tests vary only the grant.
+  mocks.settings = { speechPostProcessingEnabled: true };
   setDestination(options.destination ?? null);
   chooseTranscriptCleanup(false);
   mocks.primaryEnvironmentId = "primary-env";
@@ -220,7 +217,10 @@ function Probe(props: {
       text: mocks.draft,
       selection: { start: mocks.draft.length, end: mocks.draft.length },
     }),
-    commitDraft: mocks.committed,
+    commitDraft: (text, selection) => {
+      mocks.draft = text;
+      mocks.committed(text, selection);
+    },
   });
   useLayoutEffect(() => {
     mocks.voice = value;
@@ -393,7 +393,8 @@ it("cleans the transcript only after cleanup is separately enabled", async () =>
   setup({ destination: "env-a" });
   chooseTranscriptCleanup(true);
   const nearby = "x".repeat(1_024);
-  mocks.draft = "unrelated private paragraph " + nearby;
+  const draft = "unrelated private paragraph " + nearby;
+  mocks.draft = draft;
   await using screen = await render(<Probe />);
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
@@ -402,10 +403,7 @@ it("cleans the transcript only after cleanup is separately enabled", async () =>
     text: nearby,
     selection: { start: nearby.length, end: nearby.length },
   });
-  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith(
-    mocks.draft + " Cleaned dictated",
-    expect.anything(),
-  );
+  expect(mocks.committed).toHaveBeenLastCalledWith(draft + " Cleaned dictated", expect.anything());
 
   await act(() => mocks.voice.start());
   chooseTranscriptCleanup(false);
@@ -435,7 +433,7 @@ it.each([
     expect(mocks.recordingOptions.at(-1)?.speechCustomWords).toEqual(mocks.projectWords["proj-1"]);
     expect(mocks.recordingOptions.at(-1)?.speechCorrectionWord).toBeUndefined();
     expect(mocks.transcribeCalls).toEqual(["env-a"]);
-    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
+    expect(mocks.committed).toHaveBeenLastCalledWith("dictated", expect.anything());
   },
 );
 

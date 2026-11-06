@@ -854,7 +854,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       } else await expectedController.start();
       return;
     }
-    if (!prepared || !currentStatus?.supported) return;
+    if (!prepared) return;
     setQueuedStart(prepared);
     let latestStatus: EnvironmentSpeechStatus;
     try {
@@ -944,7 +944,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   return {
     available:
       prepared !== null &&
-      (currentStatus?.supported === true || (retainedKey !== null && state.phase !== "idle")) &&
+      ((status?.prepared === prepared && status.value?.supported !== false) ||
+        (retainedKey !== null && state.phase !== "idle")) &&
       typeof navigator !== "undefined" &&
       Boolean(navigator.mediaDevices?.getUserMedia) &&
       typeof AudioWorkletNode !== "undefined",

@@ -336,6 +336,8 @@ function selectTranscriptionEnvironment(environmentId: EnvironmentId) {
 
 function resetMocks() {
   mocks.voice = null;
+  // The hook caches each connection's status probe, so a shared object would hide requests.
+  mocks.prepared = {} as PreparedConnection;
   resetRetainedSpeechSessionsForTests();
   mocks.retainRecording = false;
   mocks.recoveredPostProcessing = undefined;
@@ -414,16 +416,15 @@ it.each([false, true])(
     };
     await using _screen = await mountProbe();
     await act(() => mocks.voice!.start());
-    expect(mocks.recordingOptions).toMatchObject({
-      projectName: "Annotation project",
-      speechCustomWords: words,
-    });
+    const vocabulary = [{ term: "Annotation project", aliases: [] }, ...words];
+    expect(mocks.recordingOptions).toMatchObject({ speechCustomWords: vocabulary });
     await act(() => mocks.voice!.stop());
     expect(mocks.cleanup).toHaveBeenCalledWith(
       mocks.originPrepared,
       "Raw transcript",
       { text: "", selection: { start: 0, end: 0 } },
-      expect.objectContaining({ speechCustomWords: words }),
+      expect.objectContaining({ speechCustomWords: vocabulary }),
+      expect.any(Function),
     );
   },
 );
@@ -675,6 +676,7 @@ it("transcribes on the selected host and cleans on the thread environment using 
     speechLanguage: "fr",
     speechCorrectionWord: "pardon",
     speechCustomWords: [
+      { term: "pardon", aliases: [] },
       { term: "Effect", aliases: ["a fact"] },
       { term: "T3 Code", aliases: [] },
     ],
@@ -696,6 +698,7 @@ it("transcribes on the selected host and cleans on the thread environment using 
       speechCorrectionWord: "pardon",
       speechCustomWords: mocks.recordingOptions!.speechCustomWords,
     }),
+    expect.any(Function),
   );
   expect(mocks.committed).toHaveBeenCalledWith("Clean transcript", expect.anything());
   expect(mocks.preparedEnvironmentIds).toContain(mocks.transcriptionEnvironmentId);
@@ -939,6 +942,7 @@ it("uses the saved cleanup preference snapshot when retrying audio after reload"
     "Raw transcript",
     expect.anything(),
     mocks.recoveredPostProcessing,
+    expect.any(Function),
   );
   expect(mocks.committed).toHaveBeenCalledWith("Clean transcript", expect.anything());
 });
