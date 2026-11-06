@@ -220,6 +220,8 @@ import {
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
+import { PromptCacheIndicator } from "./PromptCacheIndicator";
+import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
@@ -440,10 +442,9 @@ export interface ChatComposerProps {
   activeProjectId: ProjectId | null;
   projectName?: string | undefined;
 
-  cacheIndicator?: React.ReactNode;
   contextWindowEntries: Parameters<typeof deriveLatestContextWindowSnapshot>[0];
   contextWindowLiveUsage: Parameters<typeof deriveLatestContextWindowSnapshot>[1];
-  contextWindowProviderThread: Parameters<typeof deriveLatestContextWindowSnapshot>[2];
+  contextWindowProviderThread: ThreadStructure["providerThreads"][number] | null | undefined;
   compactThreadUnavailable: boolean;
   customCompactionUnavailable?: boolean;
   compactDisabled: boolean;
@@ -3673,7 +3674,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     activeContextWindow={
                       settings.contextWindowMeterEnabled ? activeContextWindow : null
                     }
-                    cacheIndicator={props.cacheIndicator}
+                    cacheIndicator={
+                      <PromptCacheIndicator
+                        driver={contextWindowProviderThread?.driver}
+                        usage={contextWindowLiveUsage}
+                        hasContext={contextWindowProviderThread?.nativeThreadRef != null}
+                      />
+                    }
                     customCompaction={
                       activeThreadId && routeKind !== "draft" ? (
                         <CustomCompactionControls

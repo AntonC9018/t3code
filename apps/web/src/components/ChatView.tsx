@@ -2,7 +2,6 @@ import {
   deriveThreadPromptCacheStatus,
   promptCacheNeedsAcknowledgement,
 } from "@t3tools/shared/promptCache";
-import { PromptCacheIndicator } from "./chat/PromptCacheIndicator";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
@@ -2916,6 +2915,7 @@ export default function ChatView(props: ChatViewProps) {
       });
     }
   };
+  const persistModelSelectionStable = useStableCallback(persistModelSelectionForNextTurn);
   const {
     getModelDisabledReason,
     handleInteractionModeChange,
@@ -3688,7 +3688,7 @@ export default function ChatView(props: ChatViewProps) {
                                     .requiredWorktreeBootstrap === true
                                 }
                                 onMultipleModelSelectionsChange={setMultipleModelSelectionsStable}
-                                onPersistModelSelection={persistModelSelectionForNextTurn}
+                                onPersistModelSelection={persistModelSelectionStable}
                                 composerRef={composerRef}
                                 composerDraftTarget={composerDraftTarget}
                                 environmentId={environmentId}
@@ -3788,13 +3788,6 @@ export default function ChatView(props: ChatViewProps) {
                                 contextWindowEntries={serverVisibleTurnItems}
                                 contextWindowLiveUsage={activeThreadLiveTokenUsage}
                                 contextWindowProviderThread={activeProviderThread}
-                                cacheIndicator={
-                                  <PromptCacheIndicator
-                                    driver={activeProviderThread?.driver}
-                                    usage={activeThreadLiveTokenUsage}
-                                    hasContext={activeProviderThread?.nativeThreadRef != null}
-                                  />
-                                }
                                 compactThreadUnavailable={compactThreadUnavailable}
                                 customCompactionUnavailable={compactThreadUnavailable}
                                 compactDisabled={compactDisabled}
