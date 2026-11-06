@@ -14,6 +14,7 @@ import {
   type SpeechTranscriptionOptions,
   type SpeechPostProcessingOptions,
   type EnvironmentId,
+  DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
 } from "@t3tools/contracts";
 
 import {
@@ -24,6 +25,7 @@ import { PreviewAnnotationSpeech } from "../components/preview/PreviewAnnotation
 import { ComposerSpeechRecordingPill } from "../components/chat/ComposerSpeechButton";
 import { notifyVoiceRecordingRecoveryChange } from "./recordingRecoveryEvents";
 import { chooseAudioDestination, chooseTranscriptCleanup } from "./voiceConsent";
+import type { SavedVoiceRecording } from "./recordingStorage";
 
 const mocks = vi.hoisted(() => ({
   voice: null as ReturnType<typeof useEnvironmentSpeechInput> | null,
@@ -37,7 +39,11 @@ const mocks = vi.hoisted(() => ({
   savedQuestionOwners: [] as string[],
   deliveredRecording: null as string | null,
   deletedRecordings: vi.fn(),
-  recovery: null as Promise<null> | null,
+  recovery: null as Promise<SavedVoiceRecording | null> | null,
+  restoring: null as Promise<void> | null,
+  restoreStarted: vi.fn(),
+  exclusiveRecording: false,
+  recordingLockHolder: null as object | null,
   transcriptions: vi.fn(),
   backgroundCommitted: vi.fn(),
   voiceCapability: true as boolean | undefined,
@@ -197,6 +203,10 @@ vi.mock("./browserVoiceInput", () => ({
       return mocks.recoveredPostProcessing;
     },
     findRecording: async () => {
+      if (mocks.exclusiveRecording) {
+        if (mocks.recordingLockHolder && mocks.recordingLockHolder !== input) return null;
+        mocks.recordingLockHolder = input;
+      }
       const { recordingStorage } = await import("./recordingStorage");
       const saved = await (mocks.recovery ?? recordingStorage.find(input.retainedDraft!.ownerKey));
       return (
@@ -213,17 +223,21 @@ vi.mock("./browserVoiceInput", () => ({
       notifyVoiceRecordingRecoveryChange();
     },
     saveTranscript: async (text: string) => text,
-    restoreRecording: async () => ({
-      uri: "recording",
-      transcription: {
-        locale: "en",
-        transcribe: async () => {
-          mocks.transcriptions();
-          mocks.transcribedThrough = input.prepared;
-          return mocks.transcript ?? "Raw transcript";
+    restoreRecording: async () => {
+      mocks.restoreStarted();
+      await mocks.restoring;
+      return {
+        uri: "recording",
+        transcription: {
+          locale: "en",
+          transcribe: async () => {
+            mocks.transcriptions();
+            mocks.transcribedThrough = input.prepared;
+            return mocks.transcript ?? "Raw transcript";
+          },
         },
-      },
-    }),
+      };
+    },
     recorder: {
       uri: "recording",
       prepareToRecordAsync: async () => {
@@ -354,12 +368,16 @@ function resetMocks() {
   mocks.recoveredPostProcessing = undefined;
   mocks.recoveredOwner = null;
   mocks.savedGrant = null;
+  mocks.restoring = null;
+  mocks.exclusiveRecording = false;
+  mocks.recordingLockHolder = null;
   mocks.transcribedThrough = null;
   mocks.closedQuestionPrefix = undefined;
   mocks.questionAvailable = true;
   mocks.savedQuestionOwners = [];
   mocks.deliveredRecording = null;
   mocks.deletedRecordings.mockClear();
+  mocks.restoreStarted.mockClear();
   mocks.recovery = null;
   mocks.transcriptions.mockClear();
   mocks.backgroundCommitted.mockClear();
@@ -729,6 +747,24 @@ it("preserves the original transcript without cleanup when the client disables i
   expect(mocks.committed).toHaveBeenCalledWith("Raw transcript", expect.anything());
 });
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+function savedDraftRecording(): SavedVoiceRecording {
+  return {
+    id: "saved-audio",
+    ownerKey: "draft",
+    options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+    locale: "en",
+    draft: { ownerKey: "draft", text: "", selection: { start: 0, end: 0 }, revision: 7 },
+  };
+}
+
 function deferredTranscript() {
   let resolve!: (text: string) => void;
   let reject!: (error: Error) => void;
@@ -1047,6 +1083,40 @@ it.each([
   await vi.waitFor(() => expect(mocks.deletedRecordings).toHaveBeenCalledWith("draft"));
   expect(mocks.voice!.state.hasRecording).not.toBe(true);
   expect(mocks.transcriptions).not.toHaveBeenCalled();
+});
+
+it("discards saved audio when consent changes while storage finds it", async () => {
+  using _state = setup();
+  mocks.retainRecording = true;
+  mocks.exclusiveRecording = true;
+  const found = deferred<SavedVoiceRecording | null>();
+  mocks.recovery = found.promise;
+  await using screen = await mountProbe();
+
+  selectTranscriptionEnvironment("another-environment" as EnvironmentId);
+  await screen.rerender(<Probe input={probeInput()} />);
+  found.resolve(savedDraftRecording());
+
+  await vi.waitFor(() => expect(mocks.deletedRecordings).toHaveBeenCalledWith("draft"));
+  expect(mocks.voice!.state.hasRecording).not.toBe(true);
+});
+
+it("discards saved audio when consent changes while storage reads it", async () => {
+  using _state = setup();
+  mocks.retainRecording = true;
+  mocks.exclusiveRecording = true;
+  mocks.recoveredOwner = "draft";
+  const restored = deferred<void>();
+  mocks.restoring = restored.promise;
+  await using screen = await mountProbe();
+  await vi.waitFor(() => expect(mocks.restoreStarted).toHaveBeenCalledOnce());
+
+  selectTranscriptionEnvironment("another-environment" as EnvironmentId);
+  await screen.rerender(<Probe input={probeInput()} />);
+  restored.resolve();
+
+  await vi.waitFor(() => expect(mocks.deletedRecordings).toHaveBeenCalledWith("draft"));
+  expect(mocks.voice!.state.hasRecording).not.toBe(true);
 });
 
 it("checks for newly recoverable audio before opening the microphone", async () => {

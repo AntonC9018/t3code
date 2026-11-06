@@ -164,6 +164,7 @@ type SpeechSession = {
   readonly grantId: string;
   context: SpeechSessionContext;
   recoveryAccepted: boolean;
+  consentWithdrawn: boolean;
   revision: DraftRevision;
   attachment: {
     disabled: boolean | undefined;
@@ -190,10 +191,19 @@ function releaseUnusedSession(session: SpeechSession) {
   }
 }
 
-function disposeRetainedSession(session: SpeechSession) {
+function withdrawSessionConsent(session: SpeechSession) {
+  session.consentWithdrawn = true;
   if (retainedSessions.get(session.context.ownerKey) === session)
     retainedSessions.delete(session.context.ownerKey);
   session.controller.dispose();
+}
+
+function notifySavedDictationDiscarded() {
+  toastManager.add({
+    type: "warning",
+    title: "Saved dictation discarded",
+    description: "It was recorded for a different transcription destination.",
+  });
 }
 
 function readSessionDraft(session: SpeechSession): VoiceDraftSnapshot | null {
@@ -457,6 +467,7 @@ function createSpeechSession(
     grantId,
     context,
     recoveryAccepted: false,
+    consentWithdrawn: false,
     revision,
     attachment: null,
     controller,
@@ -475,13 +486,9 @@ function createSpeechSession(
         .then(async (saved) => {
           if (!saved) return;
           // Saved audio only ever goes to the destination it was recorded for.
-          if (saved.grantId !== session.grantId) {
+          if (saved.grantId !== session.grantId || session.consentWithdrawn) {
             await platform.discardSavedRecording();
-            toastManager.add({
-              type: "warning",
-              title: "Saved dictation discarded",
-              description: "It was recorded for a different transcription destination.",
-            });
+            notifySavedDictationDiscarded();
             return;
           }
           if (session.context.retainedDraft?.hasDelivered?.(saved.id)) {
@@ -508,6 +515,11 @@ function createSpeechSession(
           if (controller.currentState.phase === "error" && !controller.currentState.hasRecording)
             controller.cancel();
           const { uri, transcription } = await platform.restoreRecording(saved);
+          if (session.consentWithdrawn) {
+            platform.deleteRecording(uri);
+            notifySavedDictationDiscarded();
+            return;
+          }
           // Browser reloads reset the in-memory revision counter.
           session.revision.text = saved.draft.text;
           session.revision.revision = saved.draft.revision;
@@ -709,7 +721,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (typeof navigator === "undefined") return;
     let existing = retainedKey ? retainedSessions.get(retainedKey) : undefined;
     if (existing && existing.grantId !== grantId) {
-      disposeRetainedSession(existing);
+      withdrawSessionConsent(existing);
       existing = undefined;
     }
     // Consent is unchanged across a reconnect, so unsent audio stays and retries on the new link.
