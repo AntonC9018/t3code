@@ -601,13 +601,6 @@ export function useComposerSend(input: ComposerSendInput) {
       interactionMode: sendInteractionMode,
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
-    if (
-      !allowUncachedRead &&
-      isServerThread &&
-      sendNeedsPromptCacheAcknowledgement(input.cacheProjection, ctxSelectedModelSelection)
-    ) {
-      return "cache-cold";
-    }
     const { images: composerImages, previewAnnotations: composerPreviewAnnotations } =
       mergeDirectPreviewAnnotation({
         images: sendContextImages,
@@ -748,6 +741,15 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     // Read once: an arm made while this send is in flight belongs to the next message.
     const freshArm = freshSessionAvailable ? readFreshSessionArm(routeThreadKey) : undefined;
+    // A fresh session starts a new conversation, so it never reads the old cache.
+    if (
+      !allowUncachedRead &&
+      isServerThread &&
+      freshArm === undefined &&
+      sendNeedsPromptCacheAcknowledgement(input.cacheProjection, ctxSelectedModelSelection)
+    ) {
+      return "cache-cold";
+    }
     if (
       !directAnnotation &&
       freshArm === undefined &&
