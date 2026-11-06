@@ -987,6 +987,24 @@ it("keeps retained audio across a dropped connection and retries it on the next 
   expect(mocks.committed).toHaveBeenCalledWith("Raw transcript", expect.anything());
 });
 
+it("keeps an active recording's controls reachable while the connection is down", async () => {
+  using _state = setup();
+  mocks.microphoneFailure = false;
+  mocks.retainRecording = true;
+  await using screen = await mountProbe(true);
+  await act(() => mocks.voice!.start());
+
+  mocks.voiceCapability = false;
+  await screen.rerender(<Probe input={probeInput()} controls />);
+  await vi.waitFor(() => expect(mocks.voice!.state.phase).toBe("recording"));
+  expect(mocks.voice!.available).toBe(true);
+
+  await screen.getByRole("button", { name: "Finish voice input" }).click();
+  await vi.waitFor(() => expect(mocks.committed).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(mocks.voice!.state.phase).toBe("idle"));
+  expect(mocks.voice!.available).toBe(false);
+});
+
 it("discards retained audio when the transcription consent changes", async () => {
   using _state = setup();
   mocks.retainRecording = true;

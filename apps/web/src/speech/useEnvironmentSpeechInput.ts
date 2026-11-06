@@ -949,7 +949,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   return {
     available:
-      prepared !== null &&
       ((status?.prepared === prepared && status.value?.supported !== false) ||
         (retainedKey !== null && state.phase !== "idle")) &&
       typeof navigator !== "undefined" &&
