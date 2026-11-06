@@ -63,6 +63,7 @@ describe("reopenClosedView", () => {
               relativePath,
               revealLine: line,
               revealRequestId: 1,
+              ...(line === null ? {} : { revealRequestToken: expect.any(String) }),
               ...(folderTrail === undefined ? {} : { folderTrail }),
             };
       const before = selectThreadRightPanelState(
