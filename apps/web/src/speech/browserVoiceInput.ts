@@ -37,6 +37,7 @@ export function createBrowserVoiceInputPlatform(input: {
   readonly getPostProcessingOptions?: () => SpeechPostProcessingOptions | undefined;
   readonly getMicrophoneId: () => string;
   readonly onLevel: (level: number) => void;
+  readonly onDurationLimit?: () => void;
   readonly onText: (text: SpeechStreamText, locale?: string) => void;
   readonly onError: (message: string) => void;
   readonly onStorageWarning?: (message: string) => void;
@@ -167,6 +168,7 @@ export function createBrowserVoiceInputPlatform(input: {
     {
       getMicrophoneId: input.getMicrophoneId,
       onLevel: input.onLevel,
+      ...(input.onDurationLimit ? { onDurationLimit: input.onDurationLimit } : {}),
       onError: input.onError,
       retainAudio: true,
       onChunk: saveChunk,

@@ -14,27 +14,14 @@ import { searchableSetting } from "./settingsSearch";
 const TEST_RECORDING_SECONDS = 10;
 
 // The controller reads `uri` after recording, so the getter must stay live.
-function testRecorder(
-  recorder: ReturnType<typeof createBrowserVoiceInputPlatform>["recorder"],
-  onLimit: () => void,
-) {
-  let limit: ReturnType<typeof setTimeout> | undefined;
+function testRecorder(recorder: ReturnType<typeof createBrowserVoiceInputPlatform>["recorder"]) {
   return {
     get uri() {
       return recorder.uri;
     },
-    prepareToRecordAsync: () => {
-      clearTimeout(limit);
-      return recorder.prepareToRecordAsync();
-    },
-    record: () => {
-      recorder.record();
-      limit = setTimeout(onLimit, TEST_RECORDING_SECONDS * 1_000);
-    },
-    stop: () => {
-      clearTimeout(limit);
-      return recorder.stop();
-    },
+    prepareToRecordAsync: () => recorder.prepareToRecordAsync(),
+    record: () => recorder.record({ forDuration: TEST_RECORDING_SECONDS }),
+    stop: () => recorder.stop(),
   };
 }
 
@@ -83,6 +70,7 @@ export function TranscriptionTest({
       onLevel: (value) => {
         if (!disposed) setLevel(value);
       },
+      onDurationLimit: () => void instance.stop(),
       onText: (text) => {
         if (!disposed) setPreview(text);
       },
@@ -91,7 +79,7 @@ export function TranscriptionTest({
       },
     });
     const instance = new VoiceInputController({
-      recorder: testRecorder(platform.recorder, () => void instance.stop()),
+      recorder: testRecorder(platform.recorder),
       getTranscriber: () => platform.transcriber,
       requestPermission: async () => ({ granted: true, canAskAgain: true }),
       configureRecording: async () => {},
