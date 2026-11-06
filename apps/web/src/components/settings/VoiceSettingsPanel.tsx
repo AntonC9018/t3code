@@ -72,11 +72,7 @@ const deviceValue = (id: string) => `device:${id}`;
 const environmentValue = (id: EnvironmentId) => `environment:${id}`;
 const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 const normalizeDictionaryTerm = (value: string) =>
-  value
-    .replace(/[<>"']/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .normalize("NFC");
+  value.replace(/\s+/g, " ").trim().normalize("NFC");
 const prepareBulkWords = (draft: string, words: SpeechCustomWords) => {
   const seen = new Set(
     words.flatMap(({ term, aliases }) =>
@@ -1127,10 +1123,7 @@ export function VoiceSettingsPanel() {
                   const inherited = Boolean(
                     projectId && !projectWords.some((entry) => entry.term === term),
                   );
-                  const draft = (aliasDrafts[term] ?? "")
-                    .replace(/[<>"']/g, "")
-                    .replace(/\s+/g, " ")
-                    .trim();
+                  const draft = normalizeDictionaryTerm(aliasDrafts[term] ?? "");
                   const used = customWords.some((entry) =>
                     [entry.term, ...entry.aliases].some(
                       (spelling) => spelling.toLocaleLowerCase() === draft.toLocaleLowerCase(),

@@ -314,7 +314,7 @@ it("bulk adds normalized words and reports skipped entries", async () => {
   const words = [
     ...mocks.customWords,
     { term: "New Name", aliases: [] },
-    { term: "Other", aliases: [] },
+    { term: "<Other>", aliases: [] },
   ];
   mocks.saveWords.mockResolvedValue({
     supported: true,
@@ -653,5 +653,14 @@ it("keeps punctuation in a saved dictionary term and its alias", async () => {
   await userEvent.keyboard("{Enter}");
   expect(mocks.saveClient).toHaveBeenCalledWith({
     speechCustomWords: [{ term: "O'Reilly", aliases: [] }],
+  });
+  mocks.saveClient.mockClear();
+  mocks.customWords = [{ term: "O'Reilly", aliases: [] }];
+  await screen.rerender(<VoiceSettingsPanel />);
+  await userEvent.click(screen.getByRole("button", { name: "Edit misspellings for O'Reilly" }));
+  await userEvent.fill(page.getByLabelText("Transcribed as for O'Reilly"), '"Oh Really"');
+  await userEvent.keyboard("{Enter}");
+  expect(mocks.saveClient).toHaveBeenCalledWith({
+    speechCustomWords: [{ term: "O'Reilly", aliases: ['"Oh Really"'] }],
   });
 });
