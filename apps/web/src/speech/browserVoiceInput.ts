@@ -32,7 +32,11 @@ import {
 export function createBrowserVoiceInputPlatform(input: {
   readonly prepared: PreparedConnection;
   readonly hasAudioConsent: () => boolean;
-  readonly retainedDraft?: { readonly ownerKey: string; readonly read: () => VoiceDraftSnapshot };
+  readonly retainedDraft?: {
+    readonly ownerKey: string;
+    readonly grantId: string;
+    readonly read: () => VoiceDraftSnapshot;
+  };
   readonly getTranscriptionOptions: () => SpeechTranscriptionOptions;
   readonly getPostProcessingOptions?: () => SpeechPostProcessingOptions | undefined;
   readonly getMicrophoneId: () => string;
@@ -235,6 +239,7 @@ export function createBrowserVoiceInputPlatform(input: {
         const recording: SavedVoiceRecording = {
           id: randomUUID(),
           ownerKey: input.retainedDraft.ownerKey,
+          grantId: input.retainedDraft.grantId,
           draft: input.retainedDraft.read(),
           options: recordingOptions,
           locale,

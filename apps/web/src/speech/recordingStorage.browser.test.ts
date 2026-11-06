@@ -89,7 +89,11 @@ it("prevents another tab's session from recovering or discarding an owned record
   const makePlatform = () =>
     createBrowserVoiceInputPlatform({
       prepared: {} as PreparedConnection,
-      retainedDraft: { ownerKey: saved.ownerKey, read: () => saved.draft },
+      retainedDraft: {
+        ownerKey: saved.ownerKey,
+        grantId: "consent-grant",
+        read: () => saved.draft,
+      },
       getTranscriptionOptions: () => saved.options,
       getMicrophoneId: () => "",
       onLevel() {},

@@ -252,6 +252,7 @@ function createSpeechSession(
       ? {
           retainedDraft: {
             ownerKey: context.ownerKey,
+            grantId,
             read: () => readSessionDraft(session)!,
           },
         }
@@ -473,6 +474,16 @@ function createSpeechSession(
         .findRecording()
         .then(async (saved) => {
           if (!saved) return;
+          // Saved audio only ever goes to the destination it was recorded for.
+          if (saved.grantId !== session.grantId) {
+            await platform.discardSavedRecording();
+            toastManager.add({
+              type: "warning",
+              title: "Saved dictation discarded",
+              description: "It was recorded for a different transcription destination.",
+            });
+            return;
+          }
           if (session.context.retainedDraft?.hasDelivered?.(saved.id)) {
             await platform.discardSavedRecording();
             return;
@@ -693,7 +704,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     }
   });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Attaches the controller bound to the consented destination and disposes it with the consent, the connection, or the owner.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Attaches the controller bound to the consented destination and disposes it with the consent or the owner; only a retained session outlives a lost connection.
   useEffect(() => {
     if (typeof navigator === "undefined") return;
     let existing = retainedKey ? retainedSessions.get(retainedKey) : undefined;

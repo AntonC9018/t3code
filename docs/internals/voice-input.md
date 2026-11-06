@@ -28,14 +28,23 @@ a retry of a retained recording.
 The [web hook](../../apps/web/src/speech/useEnvironmentSpeechInput.ts) binds a
 recording controller to the prepared connection of the granted environment and to
 nothing else. The transcription host can differ from the thread's environment, even
-when the desktop app has a bundled server. When the destination changes,
-disconnects, or stops advertising the `voiceTranscription` capability, the
+when the desktop app has a bundled server. When the consent grant changes, the
 controller is disposed: a recording in progress is discarded, a failed recording
-kept for retry is deleted, and nothing falls back to another environment. Every
-sender in the web app, including the settings page's transcription test, goes
-through that hook. The microphone loopback test captures separately for local
-playback and sends nothing. The transport refuses redirects so credentials and
-audio cannot follow one to another host.
+kept for retry is deleted, and nothing falls back to another environment. Saved
+recordings store the grant they were made under, and a saved recording from any
+other grant, or from before grants existed, is deleted instead of restored.
+Reselecting the same destination makes a new grant.
+
+Losing the connection or the `voiceTranscription` capability disposes an unretained
+controller. A retained session survives, so its audio stays and its controls stay
+reachable. Starting or retrying waits for a current connection, and the session
+retries on the reconnected one under the same grant.
+
+The hook is one sender. The settings page's transcription test is the other: it
+creates its own platform and is bound by the same `hasAudioConsent` check. The
+microphone loopback test captures separately for local playback and sends nothing.
+The transport refuses redirects so credentials and audio cannot follow one to another
+host.
 
 Microphone selection and personal dictation preferences are client-local. Each
 recording snapshots those preferences and the originating project's vocabulary.

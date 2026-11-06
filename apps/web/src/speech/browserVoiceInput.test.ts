@@ -267,6 +267,7 @@ it("removes an empty saved session when microphone permission is denied", async 
     prepared: {} as PreparedConnection,
     retainedDraft: {
       ownerKey: "denied-chat",
+      grantId: "consent-grant",
       read: () => ({
         ownerKey: "denied-chat",
         text: "",
@@ -285,6 +286,7 @@ it("removes an empty saved session when microphone permission is denied", async 
   await expect(platform.recorder.prepareToRecordAsync()).rejects.toMatchObject({
     name: "NotAllowedError",
   });
+  expect(create.mock.calls[0]![0].grantId).toBe("consent-grant");
   expect(remove).toHaveBeenCalledWith(create.mock.calls[0]![0].id);
 });
 

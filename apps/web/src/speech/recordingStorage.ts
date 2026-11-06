@@ -5,6 +5,8 @@ import { notifyVoiceRecordingRecoveryChange } from "./recordingRecoveryEvents";
 export type SavedVoiceRecording = {
   readonly id: string;
   readonly ownerKey: string;
+  /** The consent this audio was recorded under. Rows saved before grants existed have none. */
+  readonly grantId?: string;
   readonly draft: VoiceDraftSnapshot;
   readonly options: SpeechTranscriptionOptions;
   readonly locale: string;

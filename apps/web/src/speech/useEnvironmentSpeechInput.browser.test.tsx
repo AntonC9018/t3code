@@ -30,6 +30,8 @@ const mocks = vi.hoisted(() => ({
   retainRecording: false,
   recoveredPostProcessing: undefined as SpeechPostProcessingOptions | undefined,
   recoveredOwner: null as string | null,
+  savedGrant: null as { readonly id: string | undefined } | null,
+  transcribedThrough: null as PreparedConnection | null,
   closedQuestionPrefix: undefined as string | undefined,
   questionAvailable: true,
   savedQuestionOwners: [] as string[],
@@ -186,16 +188,24 @@ vi.mock("./recordingStorage", () => ({
 }));
 vi.mock("./browserVoiceInput", () => ({
   createBrowserVoiceInputPlatform: (input: {
+    prepared: PreparedConnection;
     getTranscriptionOptions: () => SpeechTranscriptionOptions;
-    retainedDraft?: { ownerKey: string };
+    retainedDraft?: { ownerKey: string; grantId: string };
   }) => ({
     recordingId: input.retainedDraft?.ownerKey ?? null,
     get postProcessingOptions() {
       return mocks.recoveredPostProcessing;
     },
-    findRecording: async () =>
-      mocks.recovery ??
-      (await import("./recordingStorage")).recordingStorage.find(input.retainedDraft!.ownerKey),
+    findRecording: async () => {
+      const { recordingStorage } = await import("./recordingStorage");
+      const saved = await (mocks.recovery ?? recordingStorage.find(input.retainedDraft!.ownerKey));
+      return (
+        saved && {
+          ...saved,
+          grantId: mocks.savedGrant ? mocks.savedGrant.id : input.retainedDraft!.grantId,
+        }
+      );
+    },
     discardSavedRecording: async () => {
       const owner = input.retainedDraft?.ownerKey;
       mocks.deletedRecordings(owner);
@@ -209,6 +219,7 @@ vi.mock("./browserVoiceInput", () => ({
         locale: "en",
         transcribe: async () => {
           mocks.transcriptions();
+          mocks.transcribedThrough = input.prepared;
           return mocks.transcript ?? "Raw transcript";
         },
       },
@@ -342,6 +353,8 @@ function resetMocks() {
   mocks.retainRecording = false;
   mocks.recoveredPostProcessing = undefined;
   mocks.recoveredOwner = null;
+  mocks.savedGrant = null;
+  mocks.transcribedThrough = null;
   mocks.closedQuestionPrefix = undefined;
   mocks.questionAvailable = true;
   mocks.savedQuestionOwners = [];
@@ -980,13 +993,15 @@ it("keeps retained audio across a dropped connection and retries it on the next 
   expect(mocks.transcriptions).not.toHaveBeenCalled();
 
   mocks.voiceCapability = true;
-  mocks.prepared = {} as PreparedConnection;
+  const reconnected = {} as PreparedConnection;
+  mocks.prepared = reconnected;
   await screen.rerender(<Probe input={probeInput()} />);
   expect(mocks.deletedRecordings).not.toHaveBeenCalled();
   expect(mocks.voice!.state.hasRecording).toBe(true);
 
   await act(() => mocks.voice!.start());
   expect(mocks.transcriptions).toHaveBeenCalledOnce();
+  expect(mocks.transcribedThrough).toBe(reconnected);
   expect(mocks.committed).toHaveBeenCalledWith("Raw transcript", expect.anything());
 });
 
@@ -1018,6 +1033,20 @@ it("discards retained audio when the transcription consent changes", async () =>
   selectTranscriptionEnvironment("another-environment" as EnvironmentId);
   await screen.rerender(<Probe input={probeInput()} />);
   expect(mocks.deletedRecordings).toHaveBeenCalledWith("draft");
+});
+
+it.each([
+  ["another consent grant", "earlier-grant"],
+  ["no consent grant", undefined],
+])("discards saved audio recorded under %s instead of offering it", async (_label, id) => {
+  using _state = setup();
+  mocks.retainRecording = true;
+  mocks.recoveredOwner = "draft";
+  mocks.savedGrant = { id };
+  await using _screen = await mountProbe();
+  await vi.waitFor(() => expect(mocks.deletedRecordings).toHaveBeenCalledWith("draft"));
+  expect(mocks.voice!.state.hasRecording).not.toBe(true);
+  expect(mocks.transcriptions).not.toHaveBeenCalled();
 });
 
 it("checks for newly recoverable audio before opening the microphone", async () => {
