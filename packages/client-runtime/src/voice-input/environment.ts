@@ -1,5 +1,6 @@
 import { encodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import { SPEECH_STREAM_PATH } from "@t3tools/contracts";
 import type {
   SpeechAcceleration,
@@ -17,16 +18,13 @@ import {
 } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpAuth.ts";
 
-const VOICE_REQUEST_TIMEOUT_MS = 30 * 60_000;
+const INFERENCE_OR_DOWNLOAD_TIMEOUT_MS = 30 * 60_000;
 const SPEECH_BATCH_CHUNK_SECONDS = 30;
 const SPEECH_SAMPLE_RATE = 16_000;
 const SPEECH_BYTES_PER_SAMPLE = Float32Array.BYTES_PER_ELEMENT;
 type EnvironmentApiClient<G extends "voice" | "auth"> = Effect.Success<
   ReturnType<typeof makeEnvironmentHttpApiGroupClient<G>>
 >;
-type EnvironmentApiUrls<G extends "voice" | "auth"> = ReturnType<
-  typeof makeEnvironmentHttpApiUrlBuilder
->[G];
 
 const request = Effect.fn("clientRuntime.voiceInput.environmentRequest")(function* <
   A,
@@ -36,7 +34,9 @@ const request = Effect.fn("clientRuntime.voiceInput.environmentRequest")(functio
   readonly group: G;
   readonly prepared: PreparedConnection;
   readonly method: "GET" | "POST" | "DELETE";
-  readonly path: (urls: EnvironmentApiUrls<G>) => string;
+  readonly timeoutMs?: number;
+  readonly canSend?: () => boolean;
+  readonly path: (urls: ReturnType<typeof makeEnvironmentHttpApiUrlBuilder>[G]) => string;
   readonly run: (input: {
     readonly client: EnvironmentApiClient<G>;
     readonly headers: { readonly authorization?: string; readonly dpop?: string };
@@ -51,9 +51,11 @@ const request = Effect.fn("clientRuntime.voiceInput.environmentRequest")(functio
     ),
     method: input.method,
     url: input.path,
-    timeoutMs: VOICE_REQUEST_TIMEOUT_MS,
+    timeoutMs: input.timeoutMs ?? 30_000,
+    // Audio and credentials never follow a redirect to another host.
     requestInit: { redirect: "error" },
-    request: input.run,
+    request: (args) =>
+      Effect.suspend(() => (input.canSend?.() === false ? Effect.interrupt : input.run(args))),
   });
 });
 
@@ -73,29 +75,33 @@ export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
     prepared,
     method: "POST",
     path: (urls) => {
-      const ticketUrl = urls.webSocketTicketFor({ params: { use: "media" } });
-      endpoint = new URL(ticketUrl).origin;
-      return ticketUrl;
+      endpoint = urls.webSocketTicketFor({ params: { use: "media" } });
+      return endpoint;
     },
     run: ({ client, headers }) => client.webSocketTicketFor({ headers, params: { use: "media" } }),
   }).pipe(
     Effect.map(({ ticket }) => {
       const url = new URL(SPEECH_STREAM_PATH, endpoint);
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-      url.searchParams.set("wsTicket", ticket);
+      url.searchParams.set("wsTicket", Redacted.value(ticket));
       return url.toString();
     }),
   );
 };
 
-export const getEnvironmentSpeechModels = (prepared: PreparedConnection) =>
-  request({
+export const getEnvironmentSpeechModels = (
+  prepared: PreparedConnection,
+  includeBenchmarks = false,
+) => {
+  const query = includeBenchmarks ? { benchmarks: "1" as const } : {};
+  return request({
     group: "voice",
     prepared,
     method: "GET",
-    path: (urls) => urls.models(),
-    run: ({ client, headers }) => client.models({ headers }),
+    path: (urls) => urls.models({ query }),
+    run: ({ client, headers }) => client.models({ headers, query }),
   });
+};
 
 export const prepareEnvironmentSpeechModel = (prepared: PreparedConnection) =>
   request({
@@ -103,6 +109,7 @@ export const prepareEnvironmentSpeechModel = (prepared: PreparedConnection) =>
     prepared,
     method: "POST",
     path: (urls) => urls.prepareModel(),
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
     run: ({ client, headers }) => client.prepareModel({ headers }),
   });
 
@@ -112,6 +119,7 @@ export const downloadEnvironmentSpeechModel = (prepared: PreparedConnection, mod
     prepared,
     method: "POST",
     path: (urls) => urls.downloadModel(),
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
     run: ({ client, headers }) => client.downloadModel({ headers, payload: { modelId } }),
   });
 
@@ -140,12 +148,15 @@ const transcribeEnvironmentPcmRequest = (
   prepared: PreparedConnection,
   pcm: Uint8Array,
   options: SpeechTranscriptionOptions,
+  canSend: () => boolean,
 ) =>
   request({
     group: "voice",
     prepared,
     method: "POST",
     path: (urls) => urls.transcribe(),
+    canSend,
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
     run: ({ client, headers }) =>
       client.transcribe({
         headers,
@@ -184,9 +195,15 @@ const nextSpeechBatchBoundary = (pcm: Uint8Array, offset: number) => {
 };
 
 /** Split long recordings into contiguous short requests; each request stays within backend limits. */
+/** Splits long recordings into contiguous requests that each stay within backend limits. */
 export const transcribeEnvironmentPcm = Effect.fn(
   "clientRuntime.voiceInput.transcribeEnvironmentPcm",
-)(function* (prepared: PreparedConnection, pcm: Uint8Array, options: SpeechTranscriptionOptions) {
+)(function* (
+  prepared: PreparedConnection,
+  pcm: Uint8Array,
+  options: SpeechTranscriptionOptions,
+  canSend: () => boolean,
+) {
   const transcripts: string[] = [];
   let offset = 0;
   while (offset < pcm.byteLength) {
@@ -195,6 +212,7 @@ export const transcribeEnvironmentPcm = Effect.fn(
       prepared,
       pcm.subarray(offset, end),
       options,
+      canSend,
     );
     if (result.text.trim()) transcripts.push(result.text.trim());
     offset = end;
@@ -202,6 +220,7 @@ export const transcribeEnvironmentPcm = Effect.fn(
   return { text: transcripts.join(" ") };
 });
 
+/** Sends the transcript and draft context to a provider on `prepared`; a separate opt-in. */
 export const postProcessEnvironmentTranscript = (
   prepared: PreparedConnection,
   transcript: string,
@@ -210,17 +229,17 @@ export const postProcessEnvironmentTranscript = (
     readonly selection: { readonly start: number; readonly end: number };
   },
   options: SpeechPostProcessingOptions,
+  canSend: () => boolean,
 ) =>
   request({
     group: "voice",
     prepared,
     method: "POST",
     path: (urls) => urls.postProcess(),
+    canSend,
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
     run: ({ client, headers }) =>
-      client.postProcess({
-        headers,
-        payload: { transcript, draft, options },
-      }),
+      client.postProcess({ headers, payload: { transcript, draft, options } }),
   });
 
 export const updateEnvironmentSpeechAcceleration = (

@@ -11,32 +11,49 @@ import { Button } from "../ui/button";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
+const TEST_RECORDING_SECONDS = 10;
+
 // The controller reads `uri` after recording, so the getter must stay live.
-function testRecorder(recorder: ReturnType<typeof createBrowserVoiceInputPlatform>["recorder"]) {
+function testRecorder(
+  recorder: ReturnType<typeof createBrowserVoiceInputPlatform>["recorder"],
+  onLimit: () => void,
+) {
+  let limit: ReturnType<typeof setTimeout> | undefined;
   return {
     get uri() {
       return recorder.uri;
     },
-    prepareToRecordAsync: () => recorder.prepareToRecordAsync(),
-    record: () => recorder.record({ forDuration: 10 }),
-    stop: () => recorder.stop(),
+    prepareToRecordAsync: () => {
+      clearTimeout(limit);
+      return recorder.prepareToRecordAsync();
+    },
+    record: () => {
+      recorder.record();
+      limit = setTimeout(onLimit, TEST_RECORDING_SECONDS * 1_000);
+    },
+    stop: () => {
+      clearTimeout(limit);
+      return recorder.stop();
+    },
   };
 }
 
 export function TranscriptionTest({
   prepared,
+  hasAudioConsent,
   microphoneId,
   disabled,
   modelName,
   options,
 }: {
   prepared: PreparedConnection | null;
+  hasAudioConsent: () => boolean;
   microphoneId: string;
   disabled: boolean;
   modelName: string;
   options: SpeechTranscriptionOptions;
 }) {
-  const [state, setState] = useState<VoiceInputState<true>>({
+  const [state, setState] = useState<VoiceInputState>({
     phase: "idle",
     error: null,
     errorAction: null,
@@ -45,7 +62,7 @@ export function TranscriptionTest({
   const [transcript, setTranscript] = useState<string | null>(null);
   const [preview, setPreview] = useState<SpeechStreamText | null>(null);
   const optionsRef = useLatestRef(options);
-  const controller = useRef<VoiceInputController<true> | null>(null);
+  const controller = useRef<VoiceInputController | null>(null);
   const [connection, setConnection] = useState(prepared);
   if (connection !== prepared) {
     setConnection(prepared);
@@ -60,12 +77,12 @@ export function TranscriptionTest({
     let disposed = false;
     const platform = createBrowserVoiceInputPlatform({
       prepared,
+      hasAudioConsent,
       getTranscriptionOptions: () => optionsRef.current,
       getMicrophoneId: () => microphoneId,
       onLevel: (value) => {
         if (!disposed) setLevel(value);
       },
-      onDurationLimit: () => void instance.stop(),
       onText: (text) => {
         if (!disposed) setPreview(text);
       },
@@ -73,8 +90,8 @@ export function TranscriptionTest({
         if (!disposed) void instance.interruptRecording(message);
       },
     });
-    const instance = new VoiceInputController<true>({
-      recorder: testRecorder(platform.recorder),
+    const instance = new VoiceInputController({
+      recorder: testRecorder(platform.recorder, () => void instance.stop()),
       getTranscriber: () => platform.transcriber,
       requestPermission: async () => ({ granted: true, canAskAgain: true }),
       configureRecording: async () => {},
@@ -102,7 +119,7 @@ export function TranscriptionTest({
       controller.current = null;
       instance.dispose();
     };
-  }, [microphoneId, optionsRef, prepared]);
+  }, [hasAudioConsent, microphoneId, optionsRef, prepared]);
 
   const showPill = state.phase !== "idle";
   return (
@@ -117,7 +134,7 @@ export function TranscriptionTest({
               state={state}
               progress={null}
               level={level}
-              recordingLimitSeconds={10}
+              recordingLimitSeconds={TEST_RECORDING_SECONDS}
               disabled={disabled || !prepared}
               onStart={() => {
                 setTranscript(null);

@@ -12,17 +12,13 @@ import * as CursorSdk from "./CursorSdk.ts";
 import { makeCursorAgentSdkRunner } from "./CursorAgentSdk.ts";
 import { makeCursorTextGeneration } from "./textGeneration.ts";
 
-vi.mock("./sdk.ts", () => ({
-  cursorSdk: {
-    get Agent() {
-      throw new Error("Cursor agent SDK loaded during startup");
-    },
-    get createAgentPlatform() {
-      throw new Error("Cursor platform SDK loaded during startup");
-    },
-    get SqliteLocalAgentStore() {
-      throw new Error("Cursor SQLite SDK loaded during startup");
-    },
+vi.mock("./sdk.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./sdk.ts")>()),
+  loadCursorSdk: () => {
+    throw new Error("Cursor SDK loaded during startup");
+  },
+  loadCursorSqlite: () => {
+    throw new Error("Cursor SQLite SDK loaded during startup");
   },
 }));
 

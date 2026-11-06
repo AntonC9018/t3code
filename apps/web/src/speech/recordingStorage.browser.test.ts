@@ -93,7 +93,7 @@ it("prevents another tab's session from recovering or discarding an owned record
       getTranscriptionOptions: () => saved.options,
       getMicrophoneId: () => "",
       onLevel() {},
-      onDurationLimit() {},
+      hasAudioConsent: () => true,
       onText() {},
       onError() {},
     });

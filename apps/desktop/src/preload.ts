@@ -203,6 +203,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   cancelProviderAuthCallback: (url: string) =>
     ipcRenderer.invoke(IpcChannels.CANCEL_PROVIDER_AUTH_CALLBACK_CHANNEL, url),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
+  readMedia: (url: string) => ipcRenderer.invoke(IpcChannels.READ_MEDIA_CHANNEL, url),
   checkSystemPermission: (pane: string) =>
     ipcRenderer.invoke(IpcChannels.CHECK_SYSTEM_PERMISSION_CHANNEL, pane),
   openSystemSettings: (pane: string) =>
@@ -348,6 +349,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL, { tabId, colorScheme }),
     setAudioMuted: (tabId, audioMuted) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_AUDIO_MUTED_CHANNEL, { tabId, audioMuted }),
+    setShown: (tabId, shown) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_SHOWN_CHANNEL, { tabId, shown }),
     openDevTools: (tabId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL, { tabId }),
     listBrowserImportSources: () => ipcRenderer.invoke(IpcChannels.PREVIEW_IMPORT_SOURCES_CHANNEL),
@@ -361,10 +364,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, { environmentId, profileId }),
     setAnnotationTheme: (theme) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL, { theme }),
+    setAnnotationSendEnabled: (tabId, enabled) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_ANNOTATION_SEND_ENABLED_CHANNEL, {
+        tabId,
+        enabled,
+      }),
     annotationVoice: {
       onEvent: (listener) => {
         const onEvent = (_event: Electron.IpcRendererEvent, tabId: string, value: unknown) => {
-          if (typeof value !== "object" || value === null) return;
+          if (typeof tabId !== "string" || typeof value !== "object" || value === null) return;
           listener(tabId, value as DesktopPreviewAnnotationVoiceEvent);
         };
         ipcRenderer.on(IpcChannels.PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL, onEvent);
@@ -375,11 +383,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     },
     pickElement: (tabId, voice) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL, { tabId, voice }),
-    setAnnotationSendEnabled: (tabId, enabled) =>
-      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_ANNOTATION_SEND_ENABLED_CHANNEL, {
-        tabId,
-        enabled,
-      }),
     cancelPickElement: (tabId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL, { tabId }),
     captureScreenshot: (tabId) =>

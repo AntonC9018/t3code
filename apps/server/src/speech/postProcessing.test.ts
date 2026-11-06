@@ -1,6 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
+  type EnvironmentSpeechPostProcessingRequest,
   type SpeechPostProcessingOptions,
   DEFAULT_SPEECH_POST_PROCESSING_PROMPT,
   ProviderDriverKind,
@@ -53,6 +54,7 @@ const runPostProcess = (
     readonly cwd: string;
     readonly settings?: ServerSettings;
     readonly options?: Partial<SpeechPostProcessingOptions>;
+    readonly draft?: EnvironmentSpeechPostProcessingRequest["draft"];
   },
   generate: TextGeneration.TextGeneration["Service"]["generateTranscriptionPostProcessing"],
   providers: ReadonlyArray<ServerProvider> = [codexProvider],
@@ -60,7 +62,8 @@ const runPostProcess = (
   postProcessTranscript({
     ...input,
     settings: input.settings ?? DEFAULT_SERVER_SETTINGS,
-    options: { ...DEFAULT_CLIENT_SETTINGS, speechPostProcessingEnabled: true, ...input.options },
+    draft: input.draft ?? { text: "", selection: { start: 0, end: 0 } },
+    options: { ...DEFAULT_CLIENT_SETTINGS, ...input.options },
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -194,19 +197,10 @@ describe("postProcessTranscript", () => {
     }),
   );
 
-  it.effect("does not call a provider when disabled", () =>
+  it.effect("does not call a provider for a blank transcript", () =>
     Effect.gen(function* () {
       const generate = vi.fn(() => Effect.succeed({ transcription: "unexpected" }));
-      expect(
-        yield* runPostProcess(
-          {
-            transcript: "raw text",
-            cwd: "C:/neutral",
-            options: { ...DEFAULT_CLIENT_SETTINGS, speechPostProcessingEnabled: false },
-          },
-          generate,
-        ),
-      ).toBe("raw text");
+      expect(yield* runPostProcess({ transcript: "  ", cwd: "C:/neutral" }, generate)).toBe("  ");
       expect(generate).not.toHaveBeenCalled();
     }),
   );
@@ -252,7 +246,6 @@ describe("postProcessTranscript", () => {
           {
             transcript: "raw text",
             cwd: "C:/neutral",
-            options: { ...DEFAULT_CLIENT_SETTINGS, speechPostProcessingEnabled: true },
           },
           () => Effect.succeed({ transcription: "   " }),
         ),

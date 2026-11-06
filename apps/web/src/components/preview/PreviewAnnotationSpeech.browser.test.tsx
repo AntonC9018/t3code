@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   onEvent: null as ((tabId: string, event: DesktopPreviewAnnotationVoiceEvent) => void) | null,
   speech: {
     available: true,
-    state: { phase: "idle", error: null, errorAction: null } as VoiceInputState<true>,
+    state: { phase: "idle", error: null, errorAction: null } as VoiceInputState,
     start: vi.fn(async () => {}),
     stop: vi.fn(async () => {}),
     cancel: vi.fn(),
@@ -55,7 +55,7 @@ vi.mock("./previewBridge", () => ({
 }));
 const main = {
   available: true,
-  state: { phase: "idle", error: null, errorAction: null } as VoiceInputState<true>,
+  state: { phase: "idle", error: null, errorAction: null } as VoiceInputState,
   start: vi.fn(async () => {}),
   stop: vi.fn(async () => {}),
   cancel: vi.fn(),
@@ -77,7 +77,8 @@ function Editors() {
       <PreviewAnnotationSpeech
         threadRef={threadRef}
         tabId="tab"
-        config={{ sessionId: "session", keybindings: DEFAULT_RESOLVED_KEYBINDINGS }}
+        config={{ sessionId: "session", shortcuts: [] }}
+        keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
       />
     </>
   );

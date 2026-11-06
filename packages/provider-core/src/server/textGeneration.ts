@@ -118,6 +118,16 @@ export type ReviewGuideGenerationResult = Omit<
   "headSha" | "generatedAt" | "modelSelection"
 >;
 
+export interface TranscriptionPostProcessingInput {
+  cwd: string;
+  prompt: string;
+  modelSelection: ModelSelection;
+}
+
+export interface TranscriptionPostProcessingResult {
+  transcription: string;
+}
+
 export interface ProviderTextGeneration {
   readonly generateContextSummary: (
     input: ContextSummaryGenerationInput,

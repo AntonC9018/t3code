@@ -4,20 +4,24 @@ import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t
 import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode, type RefObject } from "react";
 
-import { useTextFieldSpeech, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
-
+import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
 import { pullRequestEnvironment } from "~/state/pullRequests";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger } from "../ui/select";
-import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
+import { readableFailure } from "./pullRequestDetail.logic";
 import {
   pullRequestReviewKey,
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
+import {
+  PullRequestMarkdownTextarea,
+  type PullRequestCompletionScope,
+} from "./PullRequestMarkdownTextarea";
 
 const VERDICTS: ReadonlyArray<{
   readonly value: PullRequestReviewVerdict;
@@ -49,6 +53,7 @@ export function PullRequestReviewForm({
   environmentId,
   active,
   reference,
+  completionScope,
   term,
   verdicts,
   requestChangesSummaryRequired,
@@ -58,8 +63,10 @@ export function PullRequestReviewForm({
   onSubmitted,
 }: {
   environmentId: EnvironmentId;
+  /** False while the form stays mounted but hidden; dictation is cancelled then. */
   active: boolean;
   reference: PullRequestRef;
+  completionScope: PullRequestCompletionScope | null;
   /** The host's word for a change request, as in "pull request". */
   term: string;
   verdicts: ReadonlyArray<PullRequestReviewVerdict>;
@@ -85,14 +92,10 @@ export function PullRequestReviewForm({
     disabled: !active || pending,
   });
   const { cancel } = speech;
-  const closeSetup = speech.setup.setOpen;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stops an in-progress voice recording, which holds the microphone, when this form becomes inactive
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- discards a recording when the hidden form can no longer be submitted
   useEffect(() => {
-    if (!active) {
-      cancel();
-      closeSetup(false);
-    }
-  }, [active, cancel, closeSetup]);
+    if (!active) cancel();
+  }, [active, cancel]);
   const clearSummary = usePullRequestReviewStore((store) => store.clearSummary);
   const submitReview = useAtomCommand(pullRequestEnvironment.submitReview, {
     reportFailure: false,
@@ -103,9 +106,9 @@ export function PullRequestReviewForm({
     offered.find((verdict) => verdict.value === requestedVerdict) ?? offered[0];
 
   const submit = async (verdict: (typeof VERDICTS)[number], text: string) => {
-    if (pending || !canSubmit(verdict.value, text)) return;
+    const submittedComments = usePullRequestReviewStore.getState().drafts[reviewKey] ?? [];
+    if (pending || !canSubmit(verdict.value, text, submittedComments.length)) return;
     const submittedBody = text;
-    const submittedComments = comments;
     onPendingChange(true);
     const result = await submitReview({
       environmentId,
@@ -118,7 +121,14 @@ export function PullRequestReviewForm({
     });
     onPendingChange(false);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "The review could not be submitted" });
+      toastManager.add({
+        type: "error",
+        title: "The review could not be submitted",
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          "The host refused the review. Your draft is still here to try again.",
+        ),
+      });
       return;
     }
     // Preserve comments and summary edits made during submission.
@@ -132,12 +142,12 @@ export function PullRequestReviewForm({
   };
 
   // Forgejo requires a summary when requesting changes, even with inline comments.
-  const canSubmit = (verdict: PullRequestReviewVerdict, summary = body) =>
+  const canSubmit = (verdict: PullRequestReviewVerdict, summary: string, commentCount: number) =>
     verdict === "request-changes" && requestChangesSummaryRequired
       ? summary.trim().length > 0
-      : verdict === "approve" || summary.trim().length > 0 || comments.length > 0;
+      : verdict === "approve" || summary.trim().length > 0 || commentCount > 0;
   const placeholder =
-    selectedVerdict === undefined || canSubmit(selectedVerdict.value, "")
+    selectedVerdict === undefined || canSubmit(selectedVerdict.value, "", comments.length)
       ? "Summarize your review (optional)"
       : selectedVerdict.value === "request-changes" && requestChangesSummaryRequired
         ? "Summarize your review (required to request changes)"
@@ -145,80 +155,72 @@ export function PullRequestReviewForm({
 
   return (
     <>
-      <Textarea
+      <PullRequestMarkdownTextarea
         ref={textareaRef}
+        completionScope={completionScope}
         rows={3}
         readOnly={speech.freezesEditor}
         value={body}
         placeholder={placeholder}
         aria-label="Review summary"
-        onChange={(event) => setSummary(reviewKey, event.target.value)}
+        onValueChange={(next) => setSummary(reviewKey, next)}
         onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing || event.keyCode === 229 || event.repeat) return;
           if (
-            event.nativeEvent.isComposing ||
-            event.keyCode === 229 ||
-            event.repeat ||
-            selectedVerdict === undefined
-          )
-            return;
-          if (isCommentSubmitShortcut(event, body, pending || speech.preparing, true)) {
+            selectedVerdict !== undefined &&
+            isCommentSubmitShortcut(event, body, pending || speech.preparing, true)
+          ) {
             event.preventDefault();
             event.stopPropagation();
             speech.submitAfterDictation((text) => void submit(selectedVerdict, text));
           }
         }}
       />
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-1">
+      <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+        <div className="mr-auto flex min-w-0 flex-wrap items-center gap-1">
           <TextFieldSpeechControls speech={speech} disabled={pending} />
         </div>
-        <div className="ml-auto flex items-center gap-2">
-          {offered.length > 1 ? (
-            <Select
-              value={selectedVerdict?.value ?? null}
-              disabled={pending}
-              onValueChange={(value) => {
-                if (value !== null) setRequestedVerdict(value);
-              }}
-            >
-              <SelectTrigger
-                size="xs"
-                className="mr-auto w-auto min-w-0"
-                aria-label="Review verdict"
-              >
-                <span className="flex items-center gap-1.5">
-                  {selectedVerdict?.icon}
-                  {selectedVerdict?.label}
-                </span>
-              </SelectTrigger>
-              <SelectPopup side="top" alignItemWithTrigger={false}>
-                {offered.map((verdict) => (
-                  <SelectItem key={verdict.value} value={verdict.value}>
-                    <span className="flex items-center gap-1.5">
-                      {verdict.icon}
-                      {verdict.label}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          ) : null}
-          <Button
-            size="xs"
-            disabled={
-              speech.preparing ||
-              pending ||
-              selectedVerdict === undefined ||
-              (!canSubmit(selectedVerdict.value) && !speech.blocksSubmission)
-            }
-            onClick={() => {
-              if (selectedVerdict !== undefined)
-                speech.submitAfterDictation((text) => void submit(selectedVerdict, text));
+        {offered.length > 1 ? (
+          <Select
+            value={selectedVerdict?.value ?? null}
+            disabled={pending}
+            onValueChange={(value) => {
+              if (value !== null) setRequestedVerdict(value);
             }}
           >
-            {pending ? "Submitting..." : "Submit review"}
-          </Button>
-        </div>
+            <SelectTrigger size="xs" className="w-auto min-w-0" aria-label="Review verdict">
+              <span className="flex items-center gap-1.5">
+                {selectedVerdict?.icon}
+                {selectedVerdict?.label}
+              </span>
+            </SelectTrigger>
+            <SelectPopup side="top" alignItemWithTrigger={false}>
+              {offered.map((verdict) => (
+                <SelectItem key={verdict.value} value={verdict.value}>
+                  <span className="flex items-center gap-1.5">
+                    {verdict.icon}
+                    {verdict.label}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        ) : null}
+        <Button
+          size="xs"
+          disabled={
+            speech.preparing ||
+            pending ||
+            selectedVerdict === undefined ||
+            (!canSubmit(selectedVerdict.value, body, comments.length) && !speech.blocksSubmission)
+          }
+          onClick={() => {
+            if (selectedVerdict !== undefined)
+              speech.submitAfterDictation((text) => void submit(selectedVerdict, text));
+          }}
+        >
+          {pending ? "Submitting..." : "Submit review"}
+        </Button>
       </div>
     </>
   );

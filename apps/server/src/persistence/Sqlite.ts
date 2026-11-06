@@ -9,7 +9,7 @@ import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
 
-const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
+const WAL_SIZE_LIMIT_BYTES = 128 * 1024 * 1024;
 
 export const clearStoredPlannerStatistics = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -50,7 +50,7 @@ const layerSetup = Layer.effectDiscard(
     // Collecting stats scans every page, and stale small-table stats cause scans after growth.
     // Clear stored stats and reload the connection to prefer indexes without stale estimates.
     yield* clearStoredPlannerStatistics;
-  }),
+  }).pipe(Effect.withSpan("Sqlite.setup")),
 );
 
 export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (dbPath: string) {

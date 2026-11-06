@@ -1,5 +1,5 @@
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { SPEECH_STREAM_MAX_QUEUED_BYTES, type SpeechStreamEvent } from "@t3tools/contracts";
 import { openSpeechStream } from "./stream.ts";
 
@@ -18,17 +18,16 @@ class TestSocket extends EventTarget {
   }
 }
 
-afterEach(() => vi.useRealTimers());
-
-async function connect() {
+function connect(bufferedAudio?: Float32Array, canSend = () => true) {
   const socket = new TestSocket();
   const abort = new AbortController();
   const onText = vi.fn();
   const onError = vi.fn();
-  const pending = openSpeechStream({
+  const stream = openSpeechStream({
     url: "wss://environment.test/ws/voice",
     options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
     signal: abort.signal,
+    canSend,
     onText,
     onError,
     createSocket: () => socket as unknown as WebSocket,
@@ -38,13 +37,16 @@ async function connect() {
     type: "start",
     options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
   });
+  if (bufferedAudio) {
+    stream.feed(bufferedAudio);
+    expect(socket.sent).toHaveLength(0);
+  }
   socket.receive({ type: "ready" });
-  return { socket, abort, onText, onError, stream: await pending };
+  return { socket, abort, onText, onError, stream };
 }
 
 it("drains ordered PCM before finishing and replaces tentative hypotheses", async () => {
-  const { socket, stream, onText } = await connect();
-  stream.feed(new Float32Array([0.1]));
+  const { socket, stream, onText } = connect(new Float32Array([0.1]));
   stream.feed(new Float32Array([0.2]));
   const final = stream.finish();
   expect(socket.sent).toHaveLength(2);
@@ -67,7 +69,7 @@ it("drains ordered PCM before finishing and replaces tentative hypotheses", asyn
 });
 
 it("drains more than five minutes of audio across acknowledgements", async () => {
-  const { socket, stream } = await connect();
+  const { socket, stream } = connect();
   const seconds = 301;
   let acknowledgedBytes = 0;
   let firstSample = 0;
@@ -94,7 +96,7 @@ it("drains more than five minutes of audio across acknowledgements", async () =>
 });
 
 it("coalesces queued audio into fewer inference frames", async () => {
-  const { socket, stream, abort } = await connect();
+  const { socket, stream, abort } = connect();
   stream.feed(new Float32Array([0.1]));
   stream.feed(new Float32Array([0.2]));
   stream.feed(new Float32Array([0.3]));
@@ -111,7 +113,7 @@ it("coalesces queued audio into fewer inference frames", async () => {
 });
 
 it("caps buffered audio when inference falls behind without imposing a recording duration limit", async () => {
-  const { socket, stream, onError } = await connect();
+  const { socket, stream, onError } = connect();
   stream.feed(new Float32Array(SPEECH_STREAM_MAX_QUEUED_BYTES / 4 + 1));
   await expect(stream.finish()).rejects.toThrow("cannot keep up with buffered microphone audio");
   expect(onError).toHaveBeenCalledOnce();
@@ -119,36 +121,47 @@ it("caps buffered audio when inference falls behind without imposing a recording
   expect(socket.closed).toBe(true);
 });
 
-it("cancels in-flight audio without sending queued frames or accepting late text", async () => {
-  const { socket, stream, abort, onText } = await connect();
+it.each(["cancel", "revoke"])("does not send queued frames after %s", async (action) => {
+  let allowed = true;
+  const { socket, stream, abort, onText } = connect(undefined, () => allowed);
   stream.feed(new Float32Array([0.1]));
   stream.feed(new Float32Array([0.2]));
-  abort.abort();
+  stream.feed(new Float32Array([0.3]));
+  if (action === "cancel") abort.abort();
+  else allowed = false;
   socket.receive({ type: "update", revision: 1, text: { committed: "late", tentative: "" } });
   expect(socket.sent).toHaveLength(2);
   expect(onText).not.toHaveBeenCalled();
-  await expect(stream.finish()).rejects.toThrow("cancelled");
+  await expect(stream.finish()).rejects.toThrow(action === "cancel" ? "cancelled" : "revoked");
 });
 
 it("fails on disconnect and times out stalled inference", async () => {
   vi.useFakeTimers();
-  const first = await connect();
-  first.socket.close();
-  await expect(first.stream.finish()).rejects.toThrow("connection closed");
-  const second = await connect();
-  second.stream.feed(new Float32Array([0.1]));
-  await vi.advanceTimersByTimeAsync(120_000);
-  await expect(second.stream.finish()).rejects.toThrow("stopped responding");
-  expect(second.socket.closed).toBe(true);
+  try {
+    const first = connect();
+    first.socket.close();
+    await expect(first.stream.finish()).rejects.toThrow("connection closed");
+    const second = connect();
+    second.stream.feed(new Float32Array([0.1]));
+    await vi.advanceTimersByTimeAsync(120_000);
+    await expect(second.stream.finish()).rejects.toThrow("stopped responding");
+    expect(second.socket.closed).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("times out when the last pipelined chunk never receives an acknowledgement", async () => {
   vi.useFakeTimers();
-  const { socket, stream } = await connect();
-  stream.feed(new Float32Array([0.1]));
-  stream.feed(new Float32Array([0.2]));
-  socket.receive({ type: "update", revision: 1, text: null });
-  const final = stream.finish();
-  await vi.advanceTimersByTimeAsync(120_000);
-  await expect(final).rejects.toThrow("stopped responding");
+  try {
+    const { socket, stream } = connect();
+    stream.feed(new Float32Array([0.1]));
+    stream.feed(new Float32Array([0.2]));
+    socket.receive({ type: "update", revision: 1, text: null });
+    const final = stream.finish();
+    await vi.advanceTimersByTimeAsync(120_000);
+    await expect(final).rejects.toThrow("stopped responding");
+  } finally {
+    vi.useRealTimers();
+  }
 });

@@ -3,6 +3,8 @@ import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Exit from "effect/Exit";
+import * as Cause from "effect/Cause";
 import { vi } from "vite-plus/test";
 
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -94,7 +96,7 @@ const cursorSdkMock = vi.hoisted(() => {
 });
 
 vi.mock("./sdk.ts", () => ({
-  cursorSdk: {
+  loadCursorSdk: () => ({
     Agent: {
       create: cursorSdkMock.create,
       resume: cursorSdkMock.resume,
@@ -105,8 +107,8 @@ vi.mock("./sdk.ts", () => ({
       },
     },
     createAgentPlatform: vi.fn(),
-    SqliteLocalAgentStore: { open: vi.fn() },
-  },
+  }),
+  loadCursorSqlite: () => ({ SqliteLocalAgentStore: { open: vi.fn() } }),
 }));
 
 const layerTest = CursorAgentSdk.layer.pipe(
@@ -134,6 +136,41 @@ const layerTest = CursorAgentSdk.layer.pipe(
 );
 
 describe("CursorAgentSdkRunner", () => {
+  it.effect("constructs without loading and reports first-use load failures as runner errors", () =>
+    Effect.gen(function* () {
+      const failure = new Error("missing SDK chunk");
+      const load = vi.fn(() => {
+        throw failure;
+      });
+      const runner = yield* CursorAgentSdk.makeCursorAgentSdkRunner(() => undefined).pipe(
+        Effect.provideService(CursorSdk.CursorSdk, {
+          load,
+          loadSqlite: () => {
+            throw new Error("unused SQLite");
+          },
+        }),
+      );
+      assert.strictEqual(load.mock.calls.length, 0);
+      const result = yield* runner
+        .open({
+          operation: "create",
+          options: {},
+          threadId: ThreadId.make("lazy-load"),
+          providerSessionId: ProviderSessionId.make("lazy-load"),
+        })
+        .pipe(Effect.exit);
+      assert(Exit.isFailure(result));
+      assert.deepStrictEqual(
+        Cause.squash(result.cause),
+        new CursorAgentSdk.CursorAgentSdkRunnerError({
+          method: "agent.create",
+          cause: failure,
+        }),
+      );
+      assert.strictEqual(load.mock.calls.length, 1);
+    }),
+  );
+
   it.effect("retries a resumed send after cancelling its abandoned local run", () =>
     Effect.gen(function* () {
       cursorSdkMock.runOperations.length = 0;

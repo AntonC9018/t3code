@@ -20,6 +20,7 @@ export type SettingsPath =
   | "/settings/general"
   | "/settings/voice"
   | "/settings/diagnostics"
+  | "/settings/voice"
   | "/settings/appearance"
   | "/settings/chat"
   | "/settings/diffs"
@@ -242,7 +243,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/worktrees",
     scope: "project-defaults",
     searchTerms: [
-      "disk storage delete deleted archived threads old inactive merged unchanged worktrees retention days project inherit off custom",
+      "disk storage automatic delete deleted archived threads old inactive merged settled unchanged worktrees retention days project inherit off custom",
     ],
   },
   {
@@ -257,7 +258,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Artifacts and logs",
     to: "/settings/maintenance",
     scope: "environment-defaults",
-    searchTerms: ["disk storage browser screenshots captures rotated logs cleanup retention"],
+    searchTerms: [
+      "disk storage delete old browser artifacts screenshots captures rotated logs cleanup retention",
+    ],
   },
   {
     id: "project-defaults",
@@ -278,6 +281,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/threads",
     scope: "project-defaults",
     searchTerms: ["new thread project provider reasoning effort"],
+  },
+  {
+    id: "fallback-model",
+    title: "Fallback model",
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: ["fallback agent provider out of usage new threads"],
+    environmentOnly: true,
   },
   {
     id: "default-permissions",
@@ -480,7 +491,10 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "dictionary",
     title: "Dictionary",
     to: "/settings/voice",
-    searchTerms: ["speech voice transcription vocabulary names glossary"],
+    scope: "project-defaults",
+    searchTerms: [
+      "speech voice transcription vocabulary names glossary alias shared team environment",
+    ],
   },
   {
     id: "remove-filler-words",
@@ -513,6 +527,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
   },
   {
+    id: "tool-call-visibility",
+    title: "Tool calls in chat",
+    to: "/settings/labs",
+    searchTerms: [
+      "beta hide tool calls commands edits searches work log activity quiet chat zen final answers only",
+    ],
+  },
+  {
     id: "guest-links",
     title: "Guest links",
     to: "/settings/labs",
@@ -532,6 +554,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/labs",
     scope: "environment",
     searchTerms: ["beta alpha simlock callstack simulator emulator ios android pool lease gateway"],
+  },
+  {
+    id: "voice-transcription-destination",
+    title: "Send microphone audio",
+    to: "/settings/voice",
+    searchTerms: ["speech voice dictation stt transcription environment machine consent privacy"],
+  },
+  {
+    id: "speech-language",
+    title: "Transcription language",
+    to: "/settings/voice",
+    searchTerms: ["speech voice translate english auto detect"],
+  },
+  {
+    id: "speech-silence-filtering",
+    title: "Silence filtering",
+    to: "/settings/voice",
+    searchTerms: ["voice speech vad silero pauses noise"],
   },
   {
     id: "auto-settle-inactive-threads",
@@ -619,9 +659,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "proactive-panels",
-    title: "Proactive panels",
+    title: "Open pull requests and changes panels proactively",
     to: "/settings/diffs",
-    searchTerms: ["automatically open diff pull request pr right panel agent completion"],
+    searchTerms: ["proactive automatically open diff pull request pr right panel agent completion"],
   },
   {
     id: "skills-in-slash-menu",
@@ -651,7 +691,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/maintenance",
-    searchTerms: ["installed cli versions newer available codex claude cursor grok fx opencode"],
+    searchTerms: [
+      "installed cli versions newer available codex claude cursor grok fx kiro opencode",
+    ],
     scope: "environment-defaults",
   },
   {
@@ -699,6 +741,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/threads",
     scope: "environment-defaults",
     searchTerms: ["base directory folder browser path home"],
+  },
+  {
+    id: "ghq-clone-layout",
+    title: "Clone into host folders",
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: ["ghq clone destination host owner repository root layout"],
   },
   {
     id: "unpin-confirmation",
@@ -886,7 +935,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Providers",
     to: "/settings/providers",
     searchTerms: [
-      "agents cli codex claude cursor grok fx opencode antigravity google sign in sign out install subscription instances authentication api key models configuration binary path config directory endpoint arguments environment variables display name accent color custom favorite hidden auto compact",
+      "agents cli codex claude cursor grok fx kiro opencode antigravity google sign in sign out install subscription instances authentication api key models configuration binary path config directory codex_home shadow home endpoint arguments environment variables display name accent color custom favorite hidden auto compact native sessions import resume",
     ],
   },
   {
@@ -1006,7 +1055,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "browser-search-engine",
     title: "Search engine",
     to: "/settings/browser",
-    searchTerms: ["address bar duckduckgo google bing brave kagi ecosia custom"],
+    searchTerms: ["address bar duckduckgo google bing brave kagi ecosia custom url"],
   },
   {
     id: "pull-request-links-open-in-app",
@@ -1168,7 +1217,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "WSL backend",
     to: "/settings/access",
     searchTerms: [
-      "windows subsystem linux distro second server projects stop windows backend restart",
+      "windows subsystem linux distro second server projects stop windows backend restart wsl only",
     ],
     desktopOnly: true,
     windowsOnly: true,

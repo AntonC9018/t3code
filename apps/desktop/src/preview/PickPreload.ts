@@ -1,13 +1,12 @@
 // @effect-diagnostics globalDate:off globalTimers:off - This isolated Electron preload does not run inside an Effect runtime.
 import { ipcRenderer } from "electron";
 import { getElementContext } from "react-grab/primitives";
-import { resolveKeybindingCommand } from "@t3tools/shared/keybindingMatching";
-
+import { matchesKeybindingShortcut } from "@t3tools/shared/keybindingMatching";
 import type {
   DesktopPreviewAnnotationTheme,
   DesktopPreviewAnnotationVoiceConfig,
-  DesktopPreviewAnnotationVoiceState,
   DesktopPreviewAnnotationVoiceEvent,
+  DesktopPreviewAnnotationVoiceState,
   PickedElementPayload,
   PickedElementStackFrame,
   PreviewAnnotationPayload,
@@ -26,10 +25,10 @@ import { installRecordingCursor } from "./RecordingCursor.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
-  ANNOTATION_VOICE_EVENT_CHANNEL,
-  ANNOTATION_VOICE_STATE_CHANNEL,
   ANNOTATION_SEND_ENABLED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
+  ANNOTATION_VOICE_EVENT_CHANNEL,
+  ANNOTATION_VOICE_STATE_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
@@ -41,7 +40,6 @@ import {
   RECORDING_CONTROLLER_CHANNEL,
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
-
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
 const INPUT_LAYER_ATTRIBUTE = "data-t3code-annotation-input";
 const Z_INDEX_OVERLAY = 2147483646;
@@ -533,8 +531,8 @@ function strokeBounds(
 }
 
 function startAnnotation(
-  voice?: DesktopPreviewAnnotationVoiceConfig,
-  initialSendEnabled = false,
+  sendEnabled: boolean,
+  voice: DesktopPreviewAnnotationVoiceConfig | undefined,
 ): void {
   activeSession?.teardown(false);
   let finished = false;
@@ -606,19 +604,19 @@ function startAnnotation(
     "min-h-8 max-h-24 min-w-0 flex-1 resize-none overflow-y-hidden border-0 border-b border-b-transparent bg-transparent px-0 py-1.5 font-sans text-sm leading-5 text-foreground outline-none ring-0 placeholder:text-muted-foreground focus:border-b-primary focus:outline-none focus:ring-0";
   composerRow.appendChild(comment);
 
-  let voicePhase = "idle";
+  // Recording happens in the application renderer, which owns the microphone consent.
+  // This guest only draws the controls, forwards trusted gestures, and mirrors state.
+  let voicePhase: DesktopPreviewAnnotationVoiceState["phase"] = "idle";
   let voiceSettings = false;
   let voiceBusy = false;
-  let voicePreparing = false;
-  let pendingVoiceSubmission: PreviewAnnotationSubmission | null = null;
-  let voiceSubmissionReady = false;
   let voiceAvailable = false;
   let voiceKeyCode: string | null = null;
-  const microphoneIcon =
-    '<svg class="size-4.5 shrink-0 text-muted-foreground sm:size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></svg>';
+  let pendingVoiceSubmission: PreviewAnnotationSubmission | null = null;
+  let voiceSubmissionReady = false;
   const voiceButton = createButton("", "Start voice input");
-  voiceButton.innerHTML = microphoneIcon;
-  voiceButton.className += " size-8 shrink-0 p-0 sm:size-7";
+  voiceButton.innerHTML =
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></svg>';
+  voiceButton.className += " h-8 w-8 shrink-0 p-0 text-muted-foreground";
   voiceButton.hidden = true;
   voiceButton.setAttribute("aria-label", "Start voice input");
   composerRow.appendChild(voiceButton);
@@ -626,17 +624,15 @@ function startAnnotation(
   voiceRow.className = "flex min-w-0 items-center justify-end gap-1 px-2 pb-2";
   voiceRow.hidden = true;
   const voicePill = document.createElement("div");
-  voicePill.className =
-    "flex h-10 w-48 min-w-0 items-center gap-2 rounded-full border border-border/50 bg-background/80 p-1 sm:h-9 sm:w-64";
   const voiceCancel = createButton("", "Cancel voice input");
   voiceCancel.innerHTML =
     '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
-  voiceCancel.className += " size-8 shrink-0 rounded-full p-0 sm:size-7";
+  voiceCancel.className += " h-7 w-7 shrink-0 rounded-full p-0";
   const voiceFinish = createButton("", "Finish voice input");
   voiceFinish.className +=
-    " size-8 shrink-0 rounded-full border-primary bg-primary p-0 text-primary-foreground shadow-xs hover:bg-primary/90 sm:size-7";
-  const voiceSkip = createButton("Skip", "Skip post-processing");
-  voiceSkip.className += " h-8 shrink-0 rounded-full px-2.5 sm:h-7";
+    " h-7 w-7 shrink-0 rounded-full border-primary bg-primary p-0 text-primary-foreground hover:bg-primary/90";
+  const voiceSkip = createButton("Skip", "Skip transcript cleanup");
+  voiceSkip.className += " h-7 shrink-0 rounded-full px-2.5";
   const voiceStatus = document.createElement("div");
   voiceStatus.className = "flex h-7 min-w-0 flex-1 items-center gap-2";
   voiceStatus.setAttribute("role", "status");
@@ -646,18 +642,15 @@ function startAnnotation(
   waveform.className =
     "flex h-5 min-w-0 flex-1 items-center justify-between gap-px overflow-hidden";
   waveform.setAttribute("aria-hidden", "true");
-  const waveformBars = Array.from({ length: 28 }, () => {
+  const waveformLevels = Array<number>(24).fill(0);
+  const waveformBars = waveformLevels.map(() => {
     const bar = document.createElement("span");
-    bar.className =
-      "h-full w-0.5 shrink-0 origin-center rounded-full bg-primary opacity-25 transition-[transform,opacity] duration-100 ease-out motion-reduce:transition-none";
+    bar.className = "h-full w-0.5 shrink-0 origin-center rounded-full bg-primary";
     bar.style.transform = "scaleY(0.08)";
+    bar.style.opacity = "0.25";
     waveform.appendChild(bar);
     return bar;
   });
-  const waveformLevels = Array<number>(28).fill(0);
-  const recordingDot = document.createElement("span");
-  recordingDot.className = "size-1.5 shrink-0 rounded-full bg-primary";
-  recordingDot.setAttribute("aria-hidden", "true");
   const voiceElapsed = document.createElement("span");
   voiceElapsed.className = "shrink-0 text-xs tabular-nums text-muted-foreground";
   let recordingStartedAt = 0;
@@ -666,7 +659,7 @@ function startAnnotation(
     const seconds = Math.floor((Date.now() - recordingStartedAt) / 1_000);
     voiceElapsed.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   };
-  voiceStatus.append(voiceStatusText, waveform, recordingDot, voiceElapsed);
+  voiceStatus.append(voiceStatusText, waveform, voiceElapsed);
   voicePill.append(voiceCancel, voiceStatus, voiceSkip, voiceFinish);
   voiceRow.appendChild(voicePill);
   const voicePreview = document.createElement("p");
@@ -677,8 +670,8 @@ function startAnnotation(
     action: DesktopPreviewAnnotationVoiceEvent["action"],
     keyboard?: KeyboardEvent,
   ) => {
-    if (!voice) return;
-    ipcRenderer.send(ANNOTATION_VOICE_EVENT_CHANNEL, {
+    if (!voice || finished) return;
+    const event: DesktopPreviewAnnotationVoiceEvent = {
       sessionId: voice.sessionId,
       text: comment.value,
       cursor: comment.selectionStart,
@@ -687,7 +680,7 @@ function startAnnotation(
       ...(keyboard
         ? {
             keyboard: {
-              type: keyboard.type,
+              type: keyboard.type === "keyup" ? ("keyup" as const) : ("keydown" as const),
               key: keyboard.key,
               code: keyboard.code,
               metaKey: keyboard.metaKey,
@@ -698,41 +691,47 @@ function startAnnotation(
             },
           }
         : {}),
-    });
+    };
+    ipcRenderer.send(ANNOTATION_VOICE_EVENT_CHANNEL, event);
   };
-  voiceButton.addEventListener("pointerdown", (event) => event.preventDefault());
-  voiceButton.addEventListener("click", () => {
+  const isDictationChord = (event: KeyboardEvent) =>
+    voice !== undefined &&
+    voice.shortcuts.some((shortcut) =>
+      matchesKeybindingShortcut(event, shortcut, navigator.platform),
+    );
+  for (const button of [voiceButton, voiceFinish, voiceCancel, voiceSkip]) {
+    button.addEventListener("pointerdown", (event) => event.preventDefault());
+  }
+  // Page scripts cannot reach the closed shadow root, and a synthetic click never counts.
+  voiceButton.addEventListener("click", (event) => {
+    if (!event.isTrusted) return;
     if (voiceSettings) {
       sendVoice("settings");
       return;
     }
     if (!voiceAvailable || (voiceBusy && voicePhase !== "recording")) return;
-    const action = voicePhase === "recording" ? "stop" : "start";
-    voiceBusy = true;
-    if (action === "start") voicePreparing = true;
-    comment.readOnly = true;
-    updateStatus();
-    sendVoice(action);
+    sendVoice(voicePhase === "recording" ? "stop" : "start");
   });
-  voiceFinish.addEventListener("pointerdown", (event) => event.preventDefault());
-  voiceFinish.addEventListener("click", () => sendVoice("stop"));
-  voiceCancel.addEventListener("pointerdown", (event) => event.preventDefault());
-  voiceSkip.addEventListener("pointerdown", (event) => event.preventDefault());
-  voiceCancel.addEventListener("click", () => {
+  voiceFinish.addEventListener("click", (event) => {
+    if (event.isTrusted) sendVoice("stop");
+  });
+  voiceCancel.addEventListener("click", (event) => {
+    if (!event.isTrusted) return;
     pendingVoiceSubmission = null;
     sendVoice("cancel");
   });
-  voiceSkip.addEventListener("click", () => sendVoice("skip"));
+  voiceSkip.addEventListener("click", (event) => {
+    if (event.isTrusted) sendVoice("skip");
+  });
   const onVoiceState = (
     _event: Electron.IpcRendererEvent,
     state: DesktopPreviewAnnotationVoiceState,
   ) => {
-    if (state.sessionId !== voice?.sessionId || finished) return;
+    if (finished || state.sessionId !== voice?.sessionId) return;
     const phaseChanged = voicePhase !== state.phase;
     const submissionChanged = voiceBusy !== state.blocksSubmission;
     const previewChanged = voicePreview.textContent !== (state.preview ?? "");
     voicePhase = state.phase;
-    voicePreparing = state.phase === "preparing";
     voiceSettings = state.errorAction === "settings";
     voiceBusy = state.blocksSubmission;
     voiceAvailable = state.available;
@@ -753,7 +752,7 @@ function startAnnotation(
     voiceButton.setAttribute("aria-label", label);
     voiceRow.hidden = state.phase === "idle";
     voicePill.className = active
-      ? "flex h-10 w-48 min-w-0 items-center gap-2 rounded-full border border-border/50 bg-background/80 p-1 sm:h-9 sm:w-64"
+      ? "flex h-9 w-64 min-w-0 items-center gap-2 rounded-full border border-border bg-background p-1"
       : "flex min-w-0 items-center gap-1";
     voiceCancel.title =
       state.phase === "error" ? "Dismiss voice input error" : "Cancel voice input";
@@ -764,7 +763,6 @@ function startAnnotation(
     voiceStatusText.style.color = state.phase === "error" ? "var(--t3-destructive)" : "";
     voiceStatusText.hidden = recording;
     waveform.hidden = !recording;
-    recordingDot.hidden = !recording;
     voiceElapsed.hidden = !recording;
     if (recording && elapsedTimer === null) {
       recordingStartedAt = Date.now();
@@ -781,7 +779,7 @@ function startAnnotation(
       const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       waveformBars.forEach((bar, index) => {
         const level = waveformLevels[index] ?? 0;
-        bar.style.opacity = String(0.22 + level * 0.78);
+        bar.style.opacity = String(0.25 + level * 0.75);
         bar.style.transform = `scaleY(${reducedMotion ? 0.35 : Math.max(0.08, level)})`;
       });
     }
@@ -789,12 +787,12 @@ function startAnnotation(
     voiceFinish.hidden = !active || state.phase === "post-processing";
     voiceFinish.disabled = !recording;
     voiceFinish.title = recording ? "Finish voice input" : (state.status ?? "Voice input is busy");
-    voiceFinish.setAttribute("aria-label", voiceFinish.title);
     if (recording && state.shortcutLabel) voiceFinish.title += ` (${state.shortcutLabel})`;
+    voiceFinish.setAttribute("aria-label", voiceFinish.title);
     if (phaseChanged)
       voiceFinish.innerHTML = recording
         ? '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="m5 12 4 4L19 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-        : '<svg class="motion-safe:animate-spin" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+        : '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
     if (!active) voicePill.append(voiceStatus, voiceCancel);
     else if (phaseChanged) voicePill.append(voiceCancel, voiceStatus, voiceSkip, voiceFinish);
     voicePreview.textContent = state.preview;
@@ -821,7 +819,6 @@ function startAnnotation(
   composerRow.appendChild(dragHandle);
 
   const submit = createButton("Attach", "Attach annotation and screenshot (Enter)");
-  let sendEnabled = initialSendEnabled;
   const updateSendHint = () => {
     submit.title = sendEnabled
       ? "Attach annotation and screenshot (Enter). Send with Cmd/Ctrl+Enter."
@@ -831,8 +828,7 @@ function startAnnotation(
   submit.className +=
     " h-8 shrink-0 border-primary bg-primary px-3 text-primary-foreground shadow-sm hover:bg-primary/90";
   composerRow.appendChild(submit);
-  editor.appendChild(composerRow);
-  editor.append(voicePreview, voiceRow);
+  editor.append(composerRow, voicePreview, voiceRow);
 
   const stylePanel = document.createElement("div");
   stylePanel.className =
@@ -885,7 +881,7 @@ function startAnnotation(
       sendVoice("cancel");
     }
     editor.style.display = hasTargets ? "flex" : "none";
-    submit.disabled = !hasTargets || voicePreparing || pendingCapture;
+    submit.disabled = !hasTargets || voicePhase === "preparing" || pendingCapture;
     submit.style.opacity = hasTargets ? "1" : "0.45";
     adjust.disabled = !hasTargets;
     stylePanel.style.display = editorExpanded && selected.size > 0 ? "grid" : "none";
@@ -921,7 +917,6 @@ function startAnnotation(
     for (const [key, change] of styleChanges) {
       if (change.targetId === target.id) styleChanges.delete(key);
     }
-    updateStatus();
   };
 
   const addSelected = (element: Element): void => {
@@ -936,7 +931,6 @@ function startAnnotation(
     selected.set(element, target);
     root.append(target.outline, target.label);
     updateSelectedVisual(target);
-    updateStatus();
     if (editorExpanded) {
       stylePanel.style.display = "grid";
       syncStyleControls();
@@ -947,12 +941,13 @@ function startAnnotation(
     const existing = selected.get(element);
     if (existing) {
       removeSelected(existing);
-      return;
+    } else {
+      if (!additive) {
+        for (const target of Array.from(selected.values())) removeSelected(target);
+      }
+      addSelected(element);
     }
-    if (!additive) {
-      for (const target of Array.from(selected.values())) removeSelected(target);
-    }
-    addSelected(element);
+    updateStatus();
   };
 
   const setStyleForSelected = (property: string, value: string): void => {
@@ -1366,6 +1361,7 @@ function startAnnotation(
       const rect = target.element.getBoundingClientRect();
       if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
         removeSelected(target);
+        updateStatus();
         return true;
       }
     }
@@ -1576,6 +1572,7 @@ function startAnnotation(
     window.removeEventListener("blur", onWindowBlur);
     window.removeEventListener("focus", onWindowFocus);
     window.removeEventListener("keydown", onKeyDown, true);
+    window.removeEventListener("keyup", onVoiceKeyUp, true);
     window.removeEventListener("scroll", repaint, true);
     window.removeEventListener("resize", repaint);
     dragHandle.removeEventListener("pointerdown", onEditorPointerDown);
@@ -1585,9 +1582,8 @@ function startAnnotation(
     if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
     ipcRenderer.off(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
-    if (elapsedTimer !== null) clearInterval(elapsedTimer);
     ipcRenderer.off(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);
-    window.removeEventListener("keyup", onVoiceKeyUp, true);
+    if (elapsedTimer !== null) clearInterval(elapsedTimer);
     document.documentElement.removeAttribute("data-t3code-annotation-tool");
     cursorStyle.remove();
     inputLayer?.remove();
@@ -1598,16 +1594,17 @@ function startAnnotation(
 
   const onCancel = (): void => teardown(false);
   const onCaptured = (): void => teardown(false);
-  const onVoiceKeyUp = (event: KeyboardEvent) => {
-    if ((event.code || event.key) !== voiceKeyCode) return;
+  const onVoiceKeyUp = (event: KeyboardEvent): void => {
+    if (!event.isTrusted || (event.code || event.key) !== voiceKeyCode) return;
     voiceKeyCode = null;
     event.preventDefault();
     event.stopImmediatePropagation();
     sendVoice("key", event);
   };
   const onKeyDown = (event: KeyboardEvent): void => {
-    if (voice && !event.isComposing && event.keyCode !== 229) {
-      if (event.key === "Escape" && (voiceBusy || voicePhase === "error")) {
+    // Only the keyboard drives dictation; a page cannot synthesize the chord or Escape.
+    if (voice && event.isTrusted && !event.isComposing && event.keyCode !== 229) {
+      if (event.key === "Escape" && voiceBusy) {
         event.preventDefault();
         event.stopImmediatePropagation();
         voiceKeyCode = null;
@@ -1615,27 +1612,10 @@ function startAnnotation(
         sendVoice("key", event);
         return;
       }
-      if (event.key === "Escape") sendVoice("key", event);
-      if (
-        voiceAvailable &&
-        editor.style.display !== "none" &&
-        resolveKeybindingCommand(event, voice.keybindings, navigator.platform, {
-          previewFocus: true,
-          previewOpen: true,
-          isDesktop: true,
-          isWeb: false,
-          editableFocus: true,
-        }) === "composer.dictation"
-      ) {
+      if (voiceAvailable && editor.style.display !== "none" && isDictationChord(event)) {
         event.preventDefault();
         event.stopImmediatePropagation();
         voiceKeyCode = event.code || event.key;
-        if (!event.repeat && !voiceBusy) {
-          voiceBusy = true;
-          voicePreparing = true;
-          comment.readOnly = true;
-          updateStatus();
-        }
         sendVoice("key", event);
         return;
       }
@@ -1656,7 +1636,9 @@ function startAnnotation(
   };
 
   const submitAnnotation = (submission: PreviewAnnotationSubmission): void => {
-    if (voicePreparing) return;
+    if (submission === "send" && !sendEnabled) return;
+    if (voicePhase === "preparing") return;
+    // Submitting while dictating finishes the recording and submits once the text lands.
     if (voiceBusy) {
       if (pendingVoiceSubmission === null) {
         pendingVoiceSubmission = submission;
@@ -1665,7 +1647,6 @@ function startAnnotation(
       }
       return;
     }
-    if (submission === "send" && !sendEnabled) return;
     if (pendingCapture || (selected.size === 0 && regions.length === 0 && strokes.length === 0))
       return;
     pendingCapture = true;
@@ -1746,13 +1727,12 @@ function startAnnotation(
   window.addEventListener("blur", onWindowBlur);
   window.addEventListener("focus", onWindowFocus);
   window.addEventListener("keydown", onKeyDown, { capture: true });
+  window.addEventListener("keyup", onVoiceKeyUp, { capture: true });
   window.addEventListener("scroll", repaint, { capture: true, passive: true });
   window.addEventListener("resize", repaint, { passive: true });
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
-  ipcRenderer.on(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);
-  window.addEventListener("keyup", onVoiceKeyUp, true);
-  sendVoice(document.hasFocus() && editor.style.display !== "none" ? "focus" : "sync");
+  if (voice) ipcRenderer.on(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);
   if (inputLayer) {
     document.documentElement.appendChild(inputLayer);
     inputLayer.focus({ preventScroll: true });
@@ -1761,6 +1741,7 @@ function startAnnotation(
   rootResizeObserver.observe(document.documentElement);
   refreshToolButtons();
   updateStatus();
+  sendVoice(document.hasFocus() ? "focus" : "sync");
   activeSession = {
     teardown,
     applyTheme: (theme) => applyAnnotationTheme(host, theme),
@@ -1776,11 +1757,11 @@ ipcRenderer.on(
   (
     _event,
     theme: DesktopPreviewAnnotationTheme | undefined,
-    voice: DesktopPreviewAnnotationVoiceConfig | undefined,
     sendEnabled?: boolean,
+    voice?: DesktopPreviewAnnotationVoiceConfig,
   ) => {
     if (theme) annotationTheme = theme;
-    startAnnotation(voice, sendEnabled === true);
+    startAnnotation(sendEnabled === true, voice);
   },
 );
 ipcRenderer.on(ANNOTATION_SEND_ENABLED_CHANNEL, (_event, enabled: boolean) => {

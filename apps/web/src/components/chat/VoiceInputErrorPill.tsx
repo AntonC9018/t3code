@@ -1,9 +1,10 @@
 import { MICROPHONE_PERMISSION_ERROR } from "@t3tools/client-runtime/voice-input";
-import { RotateCcwIcon, SettingsIcon, XIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
-import { VoiceInputPill } from "./VoiceInputPill";
+import { RotateCcwIcon, SettingsIcon, XIcon } from "lucide-react";
+
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { VoiceInputPill } from "./VoiceInputPill";
 
 const VOICE_ERROR_LABELS: Record<string, string> = {
   [MICROPHONE_PERMISSION_ERROR]: "Microphone access needed",
@@ -26,14 +27,13 @@ const VOICE_ERROR_LABELS: Record<string, string> = {
   "Voice input stopped when the app moved to the background.": "Recording stopped in background",
   "Could not finish voice recording.": "Couldn’t finish recording",
   "Could not transcribe this recording.": "Transcription failed",
+  "Voice transcription on this environment failed.": "Transcription failed",
   "The draft changed while voice input was running. The transcript was not added.": "Draft changed",
   "No speech was detected.": "No speech detected",
   "Microphone processing failed.": "Microphone processing failed",
   "The microphone disconnected.": "Microphone disconnected",
   "Could not prepare voice input.": "Couldn’t prepare dictation",
   "Reconnect the project environment to load its dictionary.": "Project disconnected",
-  "Personal and project dictionaries together cannot exceed 100 words.":
-    "Dictionary exceeds 100 words",
 };
 
 function voiceErrorLabel(error: string | null): string {
@@ -56,7 +56,9 @@ export function VoiceInputErrorPill(props: {
     ? "Open voice settings"
     : props.recoveringClosedQuestion
       ? "Recover to draft"
-      : props.hasRecording || props.error === "Could not transcribe this recording."
+      : props.hasRecording ||
+          props.error === "Could not transcribe this recording." ||
+          props.error === "Voice transcription on this environment failed."
         ? "Retry transcription"
         : "Record again";
   const dismissLabel = props.hasRecording ? "Discard saved recording" : "Dismiss voice input error";

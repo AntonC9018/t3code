@@ -10,17 +10,11 @@ const mocks = vi.hoisted(() => ({
   supportsLanguageDetection: true,
   transcriptionText: "Recovered speech",
   transcriptions: vi.fn(),
-  stream: (() => {
-    type Stream = {
-      feed: (pcm: Float32Array) => void;
-      finish: () => Promise<string>;
-    };
-    let resolve!: (stream: Stream) => void;
-    const promise = new Promise<Stream>((accept) => {
-      resolve = accept;
-    });
-    return { promise, resolve };
-  })(),
+  stream: {
+    feed: (_pcm: Float32Array) => {},
+    finish: async () => "",
+    cancel: () => {},
+  },
 }));
 
 vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
@@ -36,7 +30,7 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
     }),
   prepareEnvironmentSpeechModel: () => Effect.succeed({ supported: true, state: "ready" }),
   getEnvironmentSpeechStreamUrl: () => Effect.succeed("ws://speech.test"),
-  openSpeechStream: () => mocks.stream.promise,
+  openSpeechStream: () => mocks.stream,
   transcribeEnvironmentPcm: () => {
     mocks.transcriptions();
     return Effect.succeed({ text: mocks.transcriptionText });
@@ -96,8 +90,9 @@ function setupCapture() {
   );
 }
 
-it("preserves audio when recording stops before the streaming model is ready", async () => {
+it("keeps the recorded audio after feeding a live stream", async () => {
   const feed = vi.fn();
+  mocks.stream = { feed, finish: async () => "hello", cancel() {} };
   const onLevel = vi.fn();
   setupCapture();
 
@@ -106,7 +101,7 @@ it("preserves audio when recording stops before the streaming model is ready", a
     getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
     getMicrophoneId: () => "",
     onLevel,
-    onDurationLimit() {},
+    hasAudioConsent: () => true,
     onText() {},
     onError: vi.fn(),
   });
@@ -114,20 +109,19 @@ it("preserves audio when recording stops before the streaming model is ready", a
     signal: new AbortController().signal,
   });
   await platform.recorder.prepareToRecordAsync();
-  platform.recorder.record({ forDuration: 300 });
+  platform.recorder.record();
   worklet.port.onmessage?.({ data: 0.4 });
   expect(onLevel).toHaveBeenLastCalledWith(0.4);
   const earlyAudio = new Float32Array([0.25, 0.5]);
   worklet.port.onmessage?.({ data: earlyAudio });
 
-  expect(feed).not.toHaveBeenCalled();
+  expect(feed).toHaveBeenCalledWith(earlyAudio);
   const stopping = platform.recorder.stop();
   worklet.port.onmessage?.({ data: "stopped" });
   await stopping;
   expect(platform.recorder.uri).not.toBeNull();
   const audio = await (await fetch(platform.recorder.uri!)).arrayBuffer();
   expect(Array.from(new Float32Array(audio))).toEqual([0.25, 0.5]);
-  mocks.stream.resolve({ feed, finish: async () => "hello" });
   await expect(
     transcription.streaming?.finish({ signal: new AbortController().signal }),
   ).resolves.toBe("hello");
@@ -157,7 +151,7 @@ it.each([
       }),
       getMicrophoneId: () => "",
       onLevel() {},
-      onDurationLimit() {},
+      hasAudioConsent: () => true,
       onText() {},
       onError: vi.fn(),
     });
@@ -181,7 +175,7 @@ it("keeps the selected output language when the model cannot translate", async (
     }),
     getMicrophoneId: () => "",
     onLevel() {},
-    onDurationLimit() {},
+    hasAudioConsent: () => true,
     onText() {},
     onError: vi.fn(),
   });
@@ -204,7 +198,7 @@ it.each([true, false])(
       }),
       getMicrophoneId: () => "",
       onLevel() {},
-      onDurationLimit() {},
+      hasAudioConsent: () => true,
       onText() {},
       onError: vi.fn(),
     });
@@ -222,20 +216,18 @@ it("keeps all audio for retry after a live stream has consumed it", async () => 
   setupCapture();
   const feed = vi.fn();
   mocks.stream = {
-    promise: Promise.resolve({
-      feed,
-      finish: async () => {
-        throw new Error("provider offline");
-      },
-    }),
-    resolve() {},
+    feed,
+    finish: async () => {
+      throw new Error("provider offline");
+    },
+    cancel() {},
   };
   const platform = createBrowserVoiceInputPlatform({
     prepared: {} as PreparedConnection,
     getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
     getMicrophoneId: () => "",
     onLevel() {},
-    onDurationLimit() {},
+    hasAudioConsent: () => true,
     onText() {},
     onError() {},
   });
@@ -285,7 +277,7 @@ it("removes an empty saved session when microphone permission is denied", async 
     getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
     getMicrophoneId: () => "",
     onLevel() {},
-    onDurationLimit() {},
+    hasAudioConsent: () => true,
     onText() {},
     onError() {},
   });
@@ -308,7 +300,7 @@ it("resends saved audio when an earlier provider returned an empty transcript", 
     getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
     getMicrophoneId: () => "",
     onLevel() {},
-    onDurationLimit() {},
+    hasAudioConsent: () => true,
     onText() {},
     onError() {},
   });
@@ -347,7 +339,7 @@ it("delivers and caches provider text when its recovery journal cannot be writte
     getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
     getMicrophoneId: () => "",
     onLevel() {},
-    onDurationLimit() {},
+    hasAudioConsent: () => true,
     onText() {},
     onError() {},
     onStorageWarning,
@@ -391,7 +383,7 @@ it("acknowledges delivery cleanup only after the audio backup has been removed",
     getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
     getMicrophoneId: () => "",
     onLevel() {},
-    onDurationLimit() {},
+    hasAudioConsent: () => true,
     onText() {},
     onError() {},
     onRecordingRemoved,

@@ -188,7 +188,7 @@ describe("HandySpeechService", () => {
       const service = yield* test.service;
       const previewChunk = new Uint8Array(new Float32Array(16_000).fill(0.25).buffer);
       expect(yield* service.status).toMatchObject({ supportsStreaming: true });
-      expect((yield* service.models).models[0]).toMatchObject({ supportsStreaming: true });
+      expect((yield* service.models(false)).models[0]).toMatchObject({ supportsStreaming: true });
 
       yield* Effect.scoped(
         Effect.gen(function* () {

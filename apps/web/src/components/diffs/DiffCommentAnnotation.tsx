@@ -1,15 +1,18 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import {
-  SpeechTextField,
-  TextFieldSpeechControls,
-  type useTextFieldSpeech,
-} from "~/speech/useTextFieldSpeech";
-
 import { MessageCircle, Trash2 } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
-import { Textarea } from "~/components/ui/textarea";
+import {
+  PullRequestMarkdownTextarea,
+  type PullRequestCompletionScope,
+} from "~/components/pullRequest/PullRequestMarkdownTextarea";
+import {
+  SpeechTextField,
+  TextFieldSpeechControls,
+  type TextFieldSpeech,
+} from "~/speech/useTextFieldSpeech";
+import { textDirection } from "~/textDirection";
 
 import { isCommentSubmitShortcut } from "./commentSubmitShortcut";
 
@@ -21,8 +24,9 @@ interface DiffCommentSecondaryAction {
 }
 
 interface DiffCommentAnnotationProps {
-  environmentId?: EnvironmentId;
-  projectId?: ProjectId | undefined;
+  /** With an environment, the draft can be dictated; its project supplies vocabulary. */
+  environmentId?: EnvironmentId | undefined;
+  projectId?: ProjectId | null | undefined;
   ownerKey?: string;
   kind: "draft" | "comment";
   rangeLabel: string;
@@ -36,6 +40,8 @@ interface DiffCommentAnnotationProps {
   pending?: boolean;
   secondaryAction?: DiffCommentSecondaryAction;
   focusOnMount?: boolean;
+  /** Set only for pull request comments, where `@` completes the repository's users. */
+  completionScope?: PullRequestCompletionScope | null;
 }
 
 export function DiffCommentAnnotation({
@@ -54,6 +60,7 @@ export function DiffCommentAnnotation({
   pending = false,
   secondaryAction,
   focusOnMount = true,
+  completionScope = null,
 }: DiffCommentAnnotationProps) {
   const [localDraftText, setLocalDraftText] = useState("");
   const displayedText = kind === "draft" && !onTextChange ? localDraftText : text;
@@ -78,7 +85,12 @@ export function DiffCommentAnnotation({
         onPointerDown={(event) => event.stopPropagation()}
       >
         <MessageCircle className="size-3.5 h-5 shrink-0 text-primary/70" aria-hidden="true" />
-        <p className="min-w-0 flex-1 whitespace-pre-wrap text-sm leading-5">{displayedText}</p>
+        <p
+          className="min-w-0 flex-1 whitespace-pre-wrap text-sm leading-5"
+          dir={textDirection(displayedText)}
+        >
+          {displayedText}
+        </p>
         {onDelete ? (
           <span className="-my-1 -mr-1 flex shrink-0 opacity-0 transition-opacity group-hover/comment:opacity-100 focus-within:opacity-100 max-sm:opacity-100">
             <Button
@@ -96,33 +108,36 @@ export function DiffCommentAnnotation({
   }
 
   const submit = (
-    speech: ReturnType<typeof useTextFieldSpeech> | undefined,
+    speech: TextFieldSpeech | undefined,
     action: (text: string) => void,
     allowEmpty = false,
   ) => {
-    const finish = (text: string) => {
-      if (!pending && (allowEmpty || text.trim())) action(text.trim());
+    const finish = (value: string) => {
+      if (!pending && (allowEmpty || value.trim())) action(value.trim());
     };
     if (speech) speech.submitAfterDictation(finish);
     else finish(displayedText);
   };
 
-  const renderDraft = (speech?: ReturnType<typeof useTextFieldSpeech>) => (
+  // Pierre hides native carets and selection; textarea comments need their own visible feedback.
+  const renderDraft = (speech?: TextFieldSpeech) => (
     <div
       data-diff-comment-annotation
       className="px-3 py-2 font-sans text-foreground caret-foreground selection:bg-primary selection:text-primary-foreground"
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <Textarea
+      <PullRequestMarkdownTextarea
         ref={textareaRef}
+        completionScope={completionScope}
         readOnly={speech?.freezesEditor}
         autoFocus={focusOnMount}
         size="sm"
         value={displayedText}
+        dir={textDirection(displayedText)}
         placeholder={placeholder}
         aria-label={`Comment on lines ${rangeLabel}`}
-        onChange={(event) => (onTextChange ?? setLocalDraftText)(event.target.value)}
+        onValueChange={onTextChange ?? setLocalDraftText}
         onFocus={(event) => {
           const end = event.currentTarget.value.length;
           event.currentTarget.setSelectionRange(end, end);
@@ -130,7 +145,8 @@ export function DiffCommentAnnotation({
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();
-            onCancel();
+            if (speech && speech.state.phase !== "idle") speech.cancel();
+            else onCancel();
           }
           if (isCommentSubmitShortcut(event, trimmedText, pending, speech?.blocksSubmission)) {
             event.preventDefault();
@@ -169,6 +185,7 @@ export function DiffCommentAnnotation({
       </div>
     </div>
   );
+
   return environmentId ? (
     <SpeechTextField
       environmentId={environmentId}

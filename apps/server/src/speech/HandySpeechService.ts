@@ -21,12 +21,7 @@ import {
 } from "effect/http";
 import * as SpeechService from "./SpeechService.ts";
 import { decodeSpeechPcm, MAX_SPEECH_BYTES } from "./SpeechService.ts";
-import {
-  applySpeechAliases,
-  applySpeechCustomWords,
-  normalizeSpeechCustomWords,
-  transcriptionCustomWords,
-} from "./customWords.ts";
+import { makeSpeechTextCorrector, normalizeSpeechCustomWords } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 
 const HandyModel = Schema.Struct({
@@ -122,6 +117,7 @@ export const make = Effect.fn("HandySpeechService.make")(function* (url: string,
       model: remote.model?.name ?? "Handy",
       size: (remote.model?.size_mb ?? 0) * 1024 * 1024,
       supportsStreaming: true,
+      supportsBufferedStreaming: true,
       supportsTranslation: remote.model?.supports_translation ?? false,
       supportsLanguageDetection: remote.model?.supports_language_detection ?? true,
       languages: remote.model?.supported_languages ?? [],
@@ -130,7 +126,7 @@ export const make = Effect.fn("HandySpeechService.make")(function* (url: string,
       gpuDevices: remote.gpu_devices,
     })),
   );
-  const models = Effect.gen(function* () {
+  const readModels = Effect.gen(function* () {
     const remote = yield* request(
       HttpClientRequest.get(`${origin}/models`),
       HandyModels,
@@ -169,7 +165,7 @@ export const make = Effect.fn("HandySpeechService.make")(function* (url: string,
       HandyModels,
       "model selection",
       download ? "15 minutes" : "3 minutes",
-    ).pipe(Effect.andThen(models));
+    ).pipe(Effect.andThen(readModels));
   const control = (payload: { action: string; model_id?: string; value?: string }) =>
     request(
       HttpClientRequest.post(`${origin}/control`).pipe(HttpClientRequest.bodyJsonUnsafe(payload)),
@@ -207,23 +203,19 @@ export const make = Effect.fn("HandySpeechService.make")(function* (url: string,
       }),
     );
     const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
-    const corrected = applySpeechAliases(
-      applySpeechCustomWords(result.text, transcriptionCustomWords(options)),
+    const corrected = makeSpeechTextCorrector(
+      dictionary.map(({ term }) => term),
       dictionary,
-    );
+    )(result.text);
     return (
       options.speechRemoveFillerWords
-        ? removeSpeechFillerWords(
-            corrected,
-            options.speechLanguage,
-            options.speechPostProcessingEnabled ? options.speechCorrectionWord : undefined,
-          )
+        ? removeSpeechFillerWords(corrected, options.speechLanguage, options.speechCorrectionWord)
         : corrected
     ).trim();
   });
   return SpeechService.SpeechService.of({
     status,
-    models,
+    models: Effect.fn("HandySpeechService.models")(() => readModels),
     downloadModel: Effect.fn("HandySpeechService.downloadModel")((modelId) =>
       select(modelId, true),
     ),
@@ -360,10 +352,10 @@ export const make = Effect.fn("HandySpeechService.make")(function* (url: string,
       } satisfies SpeechService.SpeechStream;
     }),
     cancelDownload: Effect.fn("HandySpeechService.cancelDownload")((modelId) =>
-      control({ action: "cancel_download", model_id: modelId }).pipe(Effect.andThen(models)),
+      control({ action: "cancel_download", model_id: modelId }).pipe(Effect.andThen(readModels)),
     ),
     removeModel: Effect.fn("HandySpeechService.removeModel")((modelId) =>
-      control({ action: "remove_model", model_id: modelId }).pipe(Effect.andThen(models)),
+      control({ action: "remove_model", model_id: modelId }).pipe(Effect.andThen(readModels)),
     ),
     updateAcceleration: Effect.fn("HandySpeechService.updateAcceleration")((acceleration) =>
       control({ action: "acceleration", value: acceleration }).pipe(Effect.andThen(status)),

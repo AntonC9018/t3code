@@ -23,6 +23,7 @@ import {
 import { PreviewAnnotationSpeech } from "../components/preview/PreviewAnnotationSpeech";
 import { ComposerSpeechRecordingPill } from "../components/chat/ComposerSpeechButton";
 import { notifyVoiceRecordingRecoveryChange } from "./recordingRecoveryEvents";
+import { chooseAudioDestination, chooseTranscriptCleanup } from "./voiceConsent";
 
 const mocks = vi.hoisted(() => ({
   voice: null as ReturnType<typeof useEnvironmentSpeechInput> | null,
@@ -64,7 +65,7 @@ const mocks = vi.hoisted(() => ({
   preparedEnvironmentId: null as EnvironmentId | null,
   preparedEnvironmentIds: [] as Array<EnvironmentId | null>,
   primaryEnvironmentId: "primary-environment" as EnvironmentId,
-  transcriptionEnvironmentId: null as EnvironmentId | null,
+  transcriptionEnvironmentId: "primary-environment" as EnvironmentId,
 }));
 vi.mock("../state/entities", () => ({
   useThreadShell: () => (mocks.draftThread ? null : { projectId: mocks.projectId }),
@@ -94,6 +95,7 @@ vi.mock("../components/chat/ComposerSpeechButton", async (importOriginal) => ({
 }));
 vi.mock("../components/preview/previewBridge", () => ({ previewBridge: null }));
 vi.mock("../state/session", () => ({
+  useEnvironmentScope: () => true,
   usePreparedConnection: (environmentId: EnvironmentId | null) => {
     mocks.preparedEnvironmentId = environmentId;
     mocks.preparedEnvironmentIds.push(environmentId);
@@ -121,7 +123,6 @@ vi.mock("../hooks/useSettings", () => ({
   useClientSettings: (selector?: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) => {
     const settings = {
       ...DEFAULT_CLIENT_SETTINGS,
-      voiceTranscriptionEnvironmentId: mocks.transcriptionEnvironmentId,
       speechPostProcessingEnabled: mocks.postProcessingEnabled,
       ...mocks.clientPreferences,
     };
@@ -319,12 +320,18 @@ async function mountProbe(controls = false) {
           threadId: ThreadId.make("annotation-thread"),
         }}
         tabId="annotation-tab"
-        config={{ sessionId: "annotation-session", keybindings: [] }}
+        config={{ sessionId: "annotation-session", shortcuts: [] }}
+        keybindings={[]}
       />
     ) : (
       <Probe input={probeInput()} controls={controls} />
     ),
   );
+}
+
+function selectTranscriptionEnvironment(environmentId: EnvironmentId) {
+  mocks.transcriptionEnvironmentId = environmentId;
+  chooseAudioDestination({ kind: "environment", environmentId });
 }
 
 function resetMocks() {
@@ -350,7 +357,8 @@ function resetMocks() {
   mocks.missingModel = false;
   mocks.microphoneRequests = 0;
   mocks.ownerKey = "draft";
-  mocks.transcriptionEnvironmentId = null;
+  selectTranscriptionEnvironment(mocks.primaryEnvironmentId);
+  chooseTranscriptCleanup(true);
   mocks.preparedEnvironmentId = null;
   mocks.preparedEnvironmentIds = [];
   mocks.clientPreferences = {};
@@ -609,7 +617,7 @@ it("uses the primary environment for transcription by default", async () => {
   await using screen = await mountProbe();
   expect(mocks.preparedEnvironmentIds).toContain(mocks.primaryEnvironmentId);
 
-  mocks.transcriptionEnvironmentId = "voice-environment" as EnvironmentId;
+  selectTranscriptionEnvironment("voice-environment" as EnvironmentId);
   await screen.rerender(<Probe input={probeInput()} />);
   expect(mocks.preparedEnvironmentIds).toContain(mocks.transcriptionEnvironmentId);
 });
@@ -644,7 +652,7 @@ it("transcribes on the selected host and cleans on the thread environment using 
   using _state = setup();
   mocks.microphoneFailure = false;
   mocks.postProcessingEnabled = true;
-  mocks.transcriptionEnvironmentId = "voice-environment" as EnvironmentId;
+  selectTranscriptionEnvironment("voice-environment" as EnvironmentId);
   mocks.projectId = ProjectId.make("project-one");
   mocks.originSettings = {
     ...DEFAULT_SERVER_SETTINGS,
@@ -686,7 +694,6 @@ it("transcribes on the selected host and cleans on the thread environment using 
     { text: "", selection: { start: 0, end: 0 } },
     expect.objectContaining({
       speechCorrectionWord: "pardon",
-      speechPostProcessingEnabled: true,
       speechCustomWords: mocks.recordingOptions!.speechCustomWords,
     }),
   );
@@ -921,7 +928,6 @@ it("uses the saved cleanup preference snapshot when retrying audio after reload"
   mocks.recoveredOwner = "draft";
   mocks.postProcessingEnabled = false;
   mocks.recoveredPostProcessing = {
-    speechPostProcessingEnabled: true,
     speechCorrectionWord: "fix",
     speechPostProcessingPrompt: { ...DEFAULT_CLIENT_SETTINGS.speechPostProcessingPrompt },
     speechCustomWords: [{ term: "Effect", aliases: ["a fact"] }],

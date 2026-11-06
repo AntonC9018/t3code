@@ -9,11 +9,16 @@ export const claudeHistoryCommand = Command.make("__claude-history", {
 }).pipe(
   Command.unlisted,
   Command.withHandler(({ method, sessionId, options }) =>
-    Effect.promise(async () =>
-      (await import("../claudeHistoryWorker.ts")).runClaudeHistoryWorker(
-        method,
-        sessionId,
-        options._tag === "Some" ? options.value : undefined,
+    // Two effects, so an interrupt during the import never starts the worker.
+    Effect.promise(() => import("../claudeHistoryWorker.ts")).pipe(
+      Effect.flatMap(({ runClaudeHistoryWorker }) =>
+        Effect.promise(() =>
+          runClaudeHistoryWorker(
+            method,
+            sessionId,
+            options._tag === "Some" ? options.value : undefined,
+          ),
+        ),
       ),
     ),
   ),

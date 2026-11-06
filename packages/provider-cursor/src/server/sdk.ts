@@ -1,52 +1,34 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The SDK must load from disk beside its Webpack chunks.
 import * as NodeModule from "node:module";
 
-// createRequire loads the disk-backed SDK and adjacent chunks even from a Node SEA executable.
+// createRequire preserves adjacent Webpack chunks and native modules in bundled/SEA builds.
 const requireCursorSdk = NodeModule.createRequire(import.meta.url);
+let sdk: typeof import("@cursor/sdk") | undefined;
+let sqlite: typeof import("@cursor/sdk/sqlite") | undefined;
 
-type CursorSdkModule = typeof import("@cursor/sdk");
-type CursorSdkSqliteModule = typeof import("@cursor/sdk/sqlite");
-
-let loadedCursorSdk: CursorSdkModule | undefined;
-function loadCursorSdk(): CursorSdkModule {
-  loadedCursorSdk ??= requireCursorSdk("@cursor/sdk") as CursorSdkModule;
-  return loadedCursorSdk;
+export function loadCursorSdk(): typeof import("@cursor/sdk") {
+  if (sdk !== undefined) return sdk;
+  const start = performance.now();
+  sdk = requireCursorSdk("@cursor/sdk") as typeof import("@cursor/sdk");
+  if (process.env.T3CODE_STARTUP_PROFILE_DIR) {
+    performance.measure("provider.cursor.importSdk", { start });
+  }
+  return sdk;
 }
 
-let loadedCursorSdkSqlite: CursorSdkSqliteModule | undefined;
-function loadCursorSdkSqlite(): CursorSdkSqliteModule {
-  loadedCursorSdkSqlite ??= requireCursorSdk("@cursor/sdk/sqlite") as CursorSdkSqliteModule;
-  return loadedCursorSdkSqlite;
+export function loadCursorSqlite(): typeof import("@cursor/sdk/sqlite") {
+  if (sqlite !== undefined) return sqlite;
+  const start = performance.now();
+  sqlite = requireCursorSdk("@cursor/sdk/sqlite") as typeof import("@cursor/sdk/sqlite");
+  if (process.env.T3CODE_STARTUP_PROFILE_DIR) {
+    performance.measure("provider.cursor.importSqliteStore", { start });
+  }
+  return sqlite;
 }
 
-/**
- * The SDK entry and its separate sqlite entry are expensive to parse and
- * initialize. Providers stay lazy so a server with Cursor disabled never pays
- * for either one.
- */
-export const cursorSdk = {
-  get Agent() {
-    return loadCursorSdk().Agent;
-  },
-  get AuthenticationError() {
-    return loadCursorSdk().AuthenticationError;
-  },
-  get ConfigurationError() {
-    return loadCursorSdk().ConfigurationError;
-  },
-  get createAgentPlatform() {
-    return loadCursorSdk().createAgentPlatform;
-  },
-  get Cursor() {
-    return loadCursorSdk().Cursor;
-  },
-  get CursorSdkError() {
-    return loadCursorSdk().CursorSdkError;
-  },
-  get InMemoryCredentialStore() {
-    return loadCursorSdk().InMemoryCredentialStore;
-  },
-  get SqliteLocalAgentStore() {
-    return loadCursorSdkSqlite().SqliteLocalAgentStore;
-  },
-};
+// Error classification must not initialize the SDK when the load itself failed.
+export function isCursorSdkError<
+  K extends "AuthenticationError" | "ConfigurationError" | "CursorSdkError",
+>(cause: unknown, kind: K): cause is InstanceType<(typeof import("@cursor/sdk"))[K]> {
+  return sdk !== undefined && cause instanceof sdk[kind];
+}

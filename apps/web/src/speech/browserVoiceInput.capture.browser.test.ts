@@ -48,7 +48,7 @@ it("captures microphone samples through the shipped AudioWorklet", async () => {
     getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
     getMicrophoneId: () => "",
     onLevel() {},
-    onDurationLimit() {},
+    hasAudioConsent: () => true,
     onText() {},
     onError: (message) => {
       throw new Error(message);

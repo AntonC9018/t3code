@@ -82,3 +82,50 @@ it.effect("repairs upstream search skipped by the fork's deployed migration 69",
     assert.deepEqual(yield* runMigrations(), []);
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
+
+it.effect("runs upstream's later migrations on a database at fork migration 74", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations({ toMigrationInclusive: 68 });
+    yield* legacyStartupQueryIndexes;
+    yield* sql`UPDATE effect_sql_migrations SET name = 'StartupQueryIndexes' WHERE migration_id = 63`;
+    yield* sql`INSERT INTO effect_sql_migrations(migration_id, name) VALUES (69, 'ForkStartupCompatibility')`;
+    yield* runMigrations({ toMigrationInclusive: 74 });
+    yield* sql`INSERT INTO scheduled_tasks ${sql.insert({
+      task_id: "continues-thread",
+      title: "task",
+      prompt: "Run",
+      enabled: 1,
+      schedule_json: '{"type":"interval","everyMs":60000}',
+      project_id: "project",
+      thread_id: "thread",
+      workspace_strategy_json: '{"type":"root"}',
+      model_selection_json: '{"instanceId":"codex","model":"gpt-5"}',
+      runtime_mode: "full-access",
+      interaction_mode: "default",
+      created_by: "user",
+      creation_source: "web",
+      created_at: "2026-10-01T00:00:00.000Z",
+      updated_at: "2026-10-01T00:00:00.000Z",
+      next_run_at: null,
+      last_run_at: null,
+      last_run_status: "never",
+      last_run_error: null,
+      run_count: 0,
+    })}`;
+
+    assert.deepEqual(yield* runMigrations(), [
+      [75, "ExcludeAttachmentPlaceholdersFromSearch"],
+      [76, "SubagentDeliveryState"],
+      [77, "ProjectionProjectsPinArchive"],
+      [78, "RepairBooleanSettledOverride"],
+      [79, "DropOrchestrationEventCorrelationIndex"],
+      [80, "DelegatedRecoveryIndexes"],
+      [81, "ScheduledTaskThreadMode"],
+    ]);
+    assert.deepEqual(yield* sql`SELECT thread_mode FROM scheduled_tasks`, [
+      { thread_mode: "continue" },
+    ]);
+    assert.deepEqual(yield* runMigrations(), []);
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);

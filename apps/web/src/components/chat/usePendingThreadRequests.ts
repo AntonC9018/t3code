@@ -49,6 +49,8 @@ import { readEnvironmentScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
+import { toastManager } from "../ui/toast";
+
 import type { ChatComposerHandle } from "./ChatComposer";
 
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
@@ -399,6 +401,12 @@ export function usePendingThreadRequests(input: {
     const nextPrompt = carryDisplacedCustomAnswerIntoPrompt(currentPrompt, displacedAnswer);
     if (nextPrompt !== currentPrompt) {
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+      toastManager.add({
+        type: "info",
+        title: "Your typed text was set aside",
+        description: "It will be back in the composer once the question is answered.",
+        data: { threadRef: { environmentId, threadId: activeThreadId } },
+      });
       store.addThreadContexts(
         composerDraftTarget,
         threadContextsReferencedByAnswer(

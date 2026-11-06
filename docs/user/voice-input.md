@@ -1,55 +1,82 @@
 # Voice input
 
-On web and desktop, voice input transcribes speech on a connected T3 Code
-environment. Streaming models preview dictation in your draft as you speak;
-finish recording to complete the transcript, or press Send during dictation to
-send once it is ready. Dictation is also available in supported comment, pull
-request review, diff annotation, and desktop browser annotation editors.
+Dictate into the composer instead of typing. The transcript lands in your draft
+for review, and only sending the message sends anything to an agent. Dictation
+also works in citation comments, diff and file annotations, pull request
+comments, replies, and review summaries, and in the desktop app's browser
+annotation editor.
 
-On supported iPhones with iOS 26 or later, use the composer's microphone to record,
-then confirm to transcribe. This uses Apple's on-device speech model instead of
-the environment service; see [Voice input on iPhone](./composer.md#voice-input-on-iphone).
-Android does not currently have built-in voice input.
+On iPhone and Android, voice input transcribes on the device by default. To opt in
+to a named environment on that phone, open **Settings → Voice → Transcribe on**. See
+[Voice input on mobile](./composer.md#voice-input-on-mobile).
 
-## Set up web and desktop dictation
+## Choose where audio goes
 
-Open **Settings → Voice** to choose the transcription environment and download
-and select a model. The primary environment is used by default, regardless of
-which environment owns the current thread. If the selected environment is remote,
-microphone audio is sent to that machine for transcription.
+On web and desktop, transcription runs on one of your T3 Code environments.
+Nothing is sent until you choose one: open **Settings → Voice** and turn on
+**Send microphone audio**. The audio goes to the environment shown under
+**Transcription environment**, which defaults to the primary environment.
+Microphone audio recorded on this device is sent to that environment over your
+authenticated connection, transcribed there, and discarded. The choice is saved
+on this device only, so every computer and browser you use asks for it once.
+Turn it off at any time; a recording in progress is discarded.
 
-The first use opens voice setup if the selected environment has no transcription
-model. Download the recommended English model, or open Voice settings to choose
-another language or model. After the download, choose a microphone or start
-dictating. Voice settings also lets you switch between downloaded models or
-remove them from the environment.
+Changing the transcription environment while sending is on moves the choice to the
+new environment. If the chosen environment goes offline, voice input waits for it.
+T3 Code never substitutes another environment.
 
-Models vary in download size, supported languages, speed, and accuracy. Browsing
-models by language helps you find a compatible model; **Transcription language**
-chooses the language you speak. Choose **Auto** to detect it when the selected
-model supports language detection. **Translate to English** converts speech into
-English text when the model supports translation.
+## Set up a model
 
-## Dictate into a draft
+The first time you dictate, T3 Code offers to download the recommended English
+model to the chosen environment. In **Settings → Voice → Transcription**, select
+the languages you dictate in to compare models that support all of them.
+Accuracy shows how often the model got words or characters wrong in each
+language; speed is the time to transcribe 30 seconds on a reference GPU. Choose
+**All languages** to browse the full catalog. Filtering does not switch your model.
+Voice settings also lets you switch between downloaded models or remove them.
 
-Start voice input with the microphone control, then finish to complete the transcript.
-Cancel to discard the recording and preserve your draft. Recording continues until
-you finish or cancel it. On web and desktop, text is inserted at the cursor or replaces
-the selection captured when recording starts. You can keep editing while recording.
-Streaming models show a tentative transcript as you speak; it may change as the model
-hears more. Handy refreshes its preview about every couple of seconds. When recording
-finishes, the full recording supplies the completed transcript. Other models insert
-their transcript after recording stops. Send becomes available once recording starts.
-Press Send to finish recording and send the completed draft, including
-any existing text, after transcription and optional post-processing. You can also
-press Send while those steps are finishing. In other supported editors, the
-submit or save action works the same way. Cancelling dictation cancels the queued
-action and preserves your draft.
+**Transcription acceleration** defaults to **Auto**, which uses a GPU when
+available. Choose CPU to avoid GPU use, or select a specific GPU. With **Auto**, a
+recording that fails on the GPU is retried once on that same environment's CPU; a
+GPU you picked yourself reports the error instead. Nothing is ever retried on
+another environment. **Model unload** defaults to 15 minutes of inactivity. Choose
+**Never** to keep the model ready until the environment stops, or **Immediately** to
+release its memory after each transcription.
 
-In the web and desktop chat composer, dictation stays with the chat where you started it.
+Models marked **Live preview** show text while you speak. Handy refreshes its
+preview about every couple of seconds. Other models insert their transcript after
+recording stops.
+
+## Dictate
+
+Press the microphone in the composer, or `mod+shift+d` (`mod` is Command on
+macOS and Ctrl elsewhere). Press again, or the check mark, to finish; `Esc`
+discards the recording and leaves your draft unchanged. Recording continues until
+you finish or cancel it. Text is inserted at the cursor or replaces the selection
+you had when recording started. You can keep editing while recording. A live
+preview is tentative and may change as the model hears more; the full recording
+supplies the completed transcript.
+
+Pressing Send while dictating finishes the recording and sends the draft once
+the transcript, and any cleanup, has been inserted. You can also press Send while
+those steps are finishing. Cancelling also cancels that queued send and keeps your
+draft. In the other editors, Save, Comment, Reply, Submit review, or Attach works the
+same way, and the shortcut targets the editor that has focus, or the composer
+when none does. In the desktop browser's annotation editor, the microphone and
+the shortcut work while the page has focus; the page you are annotating never
+sees the recording, which runs in T3 Code itself.
+
+In the chat composer, dictation stays with the chat where you started it.
 You can switch chats while recording or transcribing; the completed text goes into
 the original chat's draft. Switching chats cancels a queued Send, so the transcript
 remains available for review.
+
+**Dictation shortcut** in Voice settings picks how the keybinding behaves:
+**Auto** tap-toggles or records while held, **Hold** records only while the keys
+are down, and **Toggle** always needs a second press. Change the chord itself in
+[Keybindings settings](./keybindings.md).
+
+### Saved recordings
 
 Unfinished chat recordings are saved on this device as you speak. If transcription
 fails, reconnect the transcription environment and choose **Retry transcription**
@@ -57,76 +84,63 @@ to resend the saved audio without recording again. After a reload or app restart
 open the original chat to retry its saved recording. Saved audio is removed after
 the text is added to the draft or you explicitly discard it. Keep the browser's
 site data to retain unfinished recordings; they do not sync between devices.
+Retrying needs the audio grant to still be on.
 
 If a question closes before its dictation finishes, the recording stays in the
 original chat. Choose **Recover to draft** to insert it into the chat draft, or
 explicitly discard it. Closing a question does not delete its recording.
 
-Press `mod+shift+d` to start dictation and `Esc` to discard it. `mod` means Command
-on macOS and Ctrl on Windows and Linux. The shortcut targets the focused supported
-editor, or the composer when no supported editor is focused. The default **Auto**
-shortcut mode lets you tap to keep recording until the next press, or hold the keys
-and release to finish. In Voice settings, choose **Hold** to record only while the
-keys are down, or **Toggle** to start and finish with separate presses. Change the
-shortcut in [Keybindings settings](./keybindings.md).
-
 ## Improve recognition
 
-Add names, technical terms, and other uncommon vocabulary to the **Dictionary**.
-The current project's name is included automatically when transcribing in its composer.
-If transcription repeatedly writes a term differently, add that spelling as an alias
-under the preferred term. Only preferred terms are sent as recognition hints; aliases
-correct matching words and phrases in the transcript.
+- **Language** picks what you speak. **Auto** lets a multilingual model detect
+  it. Models that translate offer **Translate to English**.
+- **Dictionary** holds names and terms the model should get right. Add an alias
+  under a term when transcription keeps producing a particular misspelling.
+  Only preferred terms are sent as recognition hints; aliases correct matching
+  words and phrases in the transcript. Your dictionary is saved on this device.
+  The name of the project you dictate in is sent along as a hint.
+- **Project dictionary** is vocabulary saved with a project on its environment,
+  so everyone who dictates in that project gets the same spellings. Pick the
+  project at the top of Settings to edit it; with an environment selected, the
+  entries apply to every project there. Project spellings win when they overlap
+  your personal dictionary. Each recording carries up to 100 entries from the
+  two combined.
+- **Silence filtering** is on by default. Your chosen environment skips non-speech
+  audio before transcription. Turn it off to keep those sections. Filtering happens
+  after upload: it does not grant permission to send audio or reduce how much is sent.
+- **Remove filler words** drops hesitation sounds from finished transcripts.
 
-Select **All projects** to edit your personal dictionary on this client, or select
-a project to edit vocabulary saved on its originating environments. Both dictionaries
-are used together, even when transcription runs elsewhere. Project spellings take
-precedence when dictionaries overlap. Each recording can use up to 100 personal
-and project words combined.
+Language and these preferences travel with each recording to the chosen
+environment; nothing else about the project is sent.
 
-**Remove filler words** deletes common hesitation sounds from completed
-transcriptions while preserving ambiguous words when the language is uncertain.
+## Clean up transcripts with a provider
 
-### Optional transcript cleanup
+**Voice post-processing** is a separate choice and is off by default. When on, the
+finished transcript and up to 1,024 characters each from before, inside, and
+after your selection are sent to the text generation provider configured on the
+draft's environment, which fixes punctuation, numbers, and spoken corrections such
+as "make it 42, sorry, 24". Depending on the provider, that can involve an external
+service. Audio is never sent to it. The choice is saved on this device only. Use
+the built-in instructions or write your own, press **Skip** while cleanup runs to
+insert the raw transcript, and if cleanup fails the raw transcript is inserted.
 
-Enable **Voice post-processing** in Voice settings to polish a completed transcript.
-It is disabled by default.
-Cleanup runs through a provider configured on the thread's environment. Its model
-is configured separately from the environment's general text generation model.
-The transcript and existing draft context are sent to that provider to help resolve
-recognition errors. Depending on the provider, this can involve an external service.
+Cleanup uses the environment's text generation model unless you pick a
+**Cleanup model** for that environment, for example a cheaper or faster one.
 
-Choose the cleanup model and use the built-in prompt or write custom instructions
-in Voice settings. Language, translation, filler removal, cleanup instructions,
-and correction cues are saved on this client. The cleanup model is configured
-separately on each thread's environment. Changes to personal preferences apply
-to the next recording.
+If cleanup misses the way you correct yourself, set a **Correction cue**: the
+word or phrase you say to flag a correction, such as "scratch that". Cleanup
+applies the correction only where the context shows one and drops the cue, and
+the model hears the cue as a dictionary hint.
 
-If cleanup misses your spoken corrections, add the word or phrase you use to signal
-them as an **Explicit correction cue**. It is used to apply corrections when
-post-processing is enabled. Select **Skip** during processing to insert the original
-transcript instead. If processing fails, T3 Code preserves the original transcript.
+## Test and troubleshoot
 
-## Check microphone and transcription problems
-
-Allow microphone access when prompted. Browser recording requires HTTPS or
-localhost and a browser that supports microphone capture and audio worklets.
-For a remote server opened over plain HTTP, use an HTTPS client or the desktop app.
-
-In **Settings → Voice**, use **Test mic** to record and play back your microphone,
-then **Test model** to check recognition with the selected transcription model.
-The model test runs without provider post-processing, so you can check recognition
-separately from cleanup. If the selected microphone is unavailable, choose another
-or use the system default. Make sure the transcription environment is connected
-and its model is downloaded.
-
-## Manage transcription resources
-
-**Transcription acceleration** defaults to Auto, which uses a GPU when available.
-Choose CPU to avoid GPU use, or select a specific GPU on the transcription
-environment. If that GPU fails or becomes unavailable, transcription reports an
-error instead of switching to CPU.
-
-**Model unload** defaults to 15 minutes of inactivity on the selected environment.
-Choose Never to keep the model ready until the environment stops, or Immediately
-to release its memory after each transcription.
+In **Settings → Voice**, **Test microphone** beside the microphone selector
+records up to ten seconds and plays it back in your browser;
+the audio stays on this device and is never transcribed, so silent playback
+points at the microphone. **Test model** on the selected model shows a transcript using the
+same environment, language, and dictionary as the composer, but skips transcript
+cleanup even when it is on, so you see what the model heard. Browser recording
+needs HTTPS or localhost and microphone permission; for a remote server over
+plain HTTP, use the desktop app. If the selected microphone is missing, choose
+another or the system default. Make sure the transcription environment is
+connected and its model is downloaded.

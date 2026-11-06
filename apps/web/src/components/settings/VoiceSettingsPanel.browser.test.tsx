@@ -1,8 +1,10 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render, type Screen } from "../../../test/render";
+import { chooseAudioDestination } from "../../speech/voiceConsent";
 
 const mocks = vi.hoisted(() => ({
   rerender: null as null | (() => Promise<void>),
@@ -112,21 +114,21 @@ vi.mock("../../lib/runtime", async (original) => ({
   ...(await original<object>()),
   runtime: { runPromise: (value: unknown) => value },
 }));
-vi.mock("../../state/environments", async (original) => ({
-  ...(await original<object>()),
-  usePrimaryEnvironmentId: () => "environment",
-  useEnvironments: () => ({
-    environments: [
-      {
-        environmentId: "environment",
-        label: "My Computer",
-        serverConfig: {
-          environment: { capabilities: { voiceTranscription: mocks.voiceCapability } },
-        },
-      },
-    ],
-  }),
-}));
+vi.mock("../../state/environments", async (original) => {
+  const environment = () => ({
+    environmentId: "environment",
+    label: "My Computer",
+    serverConfig: {
+      environment: { capabilities: { voiceTranscription: mocks.voiceCapability } },
+    },
+  });
+  return {
+    ...(await original<object>()),
+    usePrimaryEnvironmentId: () => "environment",
+    useEnvironment: (id: string | null) => (id === "environment" ? environment() : undefined),
+    useEnvironments: () => ({ environments: [environment()] }),
+  };
+});
 vi.mock("../../state/session", async (original) => {
   const Option = await import("effect/Option");
   return {
@@ -183,6 +185,7 @@ function setup() {
   mocks.projectWords = [];
   mocks.scope = null;
   mocks.connection = {};
+  chooseAudioDestination({ kind: "environment", environmentId: "environment" as EnvironmentId });
   mocks.settings.voiceTranscriptionEnvironmentId = null;
   mocks.settings.voiceMicrophone = "";
   mocks.settings.speechLanguage = "auto";
@@ -194,6 +197,8 @@ async function mount() {
   return screen;
 }
 
+const audioGrant = (): { destination: unknown } | null =>
+  JSON.parse(window.localStorage.getItem("t3code:voice-audio-grant:v1") ?? "null");
 const texts = (root: Element, selector: string) =>
   Array.from(root.querySelectorAll(selector), (element) => element.textContent ?? "");
 const normalizedText = (element: Element) => (element.textContent ?? "").replace(/\s+/g, " ");
@@ -616,3 +621,37 @@ it.each([false, undefined])(
     expect(mocks.listModels).not.toHaveBeenCalled();
   },
 );
+
+it("grants and revokes sending microphone audio from the settings switch", async () => {
+  setup();
+  chooseAudioDestination(null);
+  await using screen = await mount();
+  const toggle = screen.getByRole("switch", { name: "Send microphone audio" });
+  await expect.element(toggle).not.toBeChecked();
+  await act(() => (toggle.element() as HTMLElement).click());
+  expect(audioGrant()?.destination).toEqual({
+    kind: "environment",
+    environmentId: "environment",
+  });
+  await act(() => (toggle.element() as HTMLElement).click());
+  expect(audioGrant()).toBeNull();
+});
+
+it("keeps a missing destination selected", async () => {
+  setup();
+  chooseAudioDestination({ kind: "environment", environmentId: "missing" as EnvironmentId });
+  await using screen = await mount();
+  await expect
+    .element(screen.getByLabelText("Transcription environment"))
+    .toHaveTextContent("Selected environment (Unavailable)");
+});
+
+it("keeps punctuation in a saved dictionary term and its alias", async () => {
+  setup();
+  await using screen = await mount();
+  await userEvent.fill(screen.getByLabelText("Add a word or phrase"), "O'Reilly");
+  await userEvent.keyboard("{Enter}");
+  expect(mocks.saveClient).toHaveBeenCalledWith({
+    speechCustomWords: [{ term: "O'Reilly", aliases: [] }],
+  });
+});

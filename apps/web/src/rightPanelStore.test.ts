@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { useClosedViewStore } from "./closedViewStore";
 import { reopenClosedView } from "./reopenClosedView";
 import {
+  hostRightPanel,
   migratePersistedRightPanelState,
   pullRequestSurface,
   pullRequestSurfaceId,
@@ -48,6 +49,23 @@ describe("rightPanelStore", () => {
     const after = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
     expect(before?.kind === "file" && before.revealRequestToken).not.toBe(
       after?.kind === "file" && after.revealRequestToken,
+    );
+  });
+
+  it("opens a hosted side chat's panel actions in its parent's panel until unhosted", () => {
+    const store = useRightPanelStore.getState();
+    const unhost = hostRightPanel(refB, refA);
+    store.openFile(refB, "src/app.ts");
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)?.id).toBe(
+      "file:src/app.ts",
+    );
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
+    ).toEqual([]);
+    unhost();
+    store.openFile(refB, "src/app.ts");
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refB)?.id).toBe(
+      "file:src/app.ts",
     );
   });
 

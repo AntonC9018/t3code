@@ -6,6 +6,13 @@ const SUPPORTED_PLATFORMS = new Set([
   "linux-arm64",
 ]);
 
-export function isSpeechPlatformSupported(platform: string, architecture: string): boolean {
-  return SUPPORTED_PLATFORMS.has(`${platform}-${architecture}`);
+export function isSpeechPlatformSupported(
+  platform: string,
+  architecture: string,
+  libc: "gnu" | "musl" | undefined,
+): boolean {
+  return (
+    (platform !== "linux" || libc === "gnu") &&
+    SUPPORTED_PLATFORMS.has(`${platform}-${architecture}`)
+  );
 }

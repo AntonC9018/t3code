@@ -16,9 +16,10 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  MessageId,
+  managedRuntimeModeDenial,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type EnvironmentId,
-  type MessageId,
   type ModelSelection,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
@@ -465,6 +466,7 @@ export async function restoreRejectedQueuedMessage(
       ...(queuedMessage.modelSelection ? { modelSelection: queuedMessage.modelSelection } : {}),
       ...(queuedMessage.runtimeMode ? { runtimeMode: queuedMessage.runtimeMode } : {}),
       ...(queuedMessage.interactionMode ? { interactionMode: queuedMessage.interactionMode } : {}),
+      ...(queuedMessage.freshContext ? { freshContext: true } : {}),
       ...(queuedMessage.creation
         ? {
             workspaceSelection: {
@@ -799,6 +801,14 @@ export function createThreadOutboxDelivery(): {
       );
       return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
     }
+    // The server would refuse this mode in settings sync, which retries forever; stop first.
+    const runtimeModeDenial = managedRuntimeModeDenial(
+      serverConfig.managedPolicy,
+      settings.runtimeMode,
+    );
+    if (runtimeModeDenial !== undefined) {
+      return restoreQueuedMessage(queuedMessage, runtimeModeDenial);
+    }
 
     if (settings.runtimeMode !== thread.runtimeMode) {
       if (!hasAccess()) return true;
@@ -883,12 +893,44 @@ export function createThreadOutboxDelivery(): {
     );
     if (
       !queuedMessage.allowUncachedRead &&
+      queuedMessage.compactBeforeSend !== true &&
       queuedPromptCacheNeedsConfirmation(thread, sendSettings.modelSelection)
     ) {
       return restoreQueuedMessage(
         persistedMessage,
         "Claude's prompt cache went cold while this message was queued. Send it again to confirm an uncached read.",
       );
+    }
+    if (queuedMessage.compactBeforeSend === true) {
+      if (!hasAccess()) return true;
+      // Queued, since steering a running turn with a compaction is rejected.
+      const compactionResult = await runDeliveryCommand(threadEnvironment.startTurn, {
+        environmentId: queuedMessage.environmentId,
+        input: {
+          commandId: settingsCommandId(queuedMessage, "compact"),
+          creationSource: "mobile",
+          threadId: queuedMessage.threadId,
+          message: {
+            messageId: MessageId.make(`${queuedMessage.messageId}:compact`),
+            role: "user",
+            text: "/compact",
+            attachments: [],
+            idleCompaction: "onReturn",
+          },
+          modelSelection: sendSettings.modelSelection,
+          runtimeMode: sendSettings.runtimeMode,
+          interactionMode: sendSettings.interactionMode,
+          createdAt: queuedMessage.createdAt,
+          dispatchMode: "queue",
+        },
+      });
+      if (AsyncResult.isFailure(compactionResult) && !hasAccess()) return true;
+      const compactionFailure = reportCommandFailure(queuedMessage, compactionResult, "start-turn");
+      if (compactionFailure?.action === "retry") return false;
+      if (compactionFailure?.action === "restore") {
+        return restoreQueuedMessage(persistedMessage, compactionFailure.message);
+      }
+      if (!isQueuedMessagePayloadCurrent(persistedMessage, deliveryRevision)) return true;
     }
     if (!hasAccess()) return true;
     const deliveryResult = await runDeliveryCommand(threadEnvironment.startTurn, {
@@ -920,6 +962,7 @@ export function createThreadOutboxDelivery(): {
         interactionMode: sendSettings.interactionMode,
         createdAt: queuedMessage.createdAt,
         dispatchMode: queuedMessage.dispatchMode ?? "start",
+        ...(queuedMessage.freshContext ? { freshContext: true } : {}),
       },
     });
     if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;
@@ -975,6 +1018,13 @@ export function createThreadOutboxDelivery(): {
         creation.projectId,
       );
       return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
+    }
+    const runtimeModeDenial = managedRuntimeModeDenial(
+      serverConfig.managedPolicy,
+      settings.runtimeMode,
+    );
+    if (runtimeModeDenial !== undefined) {
+      return restoreQueuedMessage(queuedMessage, runtimeModeDenial);
     }
     let prepared: PreparedTurnAttachments;
     let persistedMessage: QueuedThreadMessage;

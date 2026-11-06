@@ -890,7 +890,18 @@ index 8f04a6f..5b70f19 100644
  	#fileInstance;
  	#applyDocumentChange;
  	#applySuspendedDocumentChange;
-@@ -540,6 +541,8 @@ var Editor = class {
+@@ -436,7 +437,9 @@ var Editor = class {
+ 		this.#canMountSelectionAction = false;
+ 		this.#updateSelections(resolvedSelections);
+ 		const primarySelection = resolvedSelections.at(-1);
+-		if (primarySelection !== void 0) this.#revealLineIfCollapsed(getCaretPosition(primarySelection).line);
++		// Clearing keeps the selection while search matches or markers exist; scrolling to it steals focus.
++		if (primarySelection === void 0) return;
++		this.#revealLineIfCollapsed(getCaretPosition(primarySelection).line);
+ 		this.#scrollToPrimaryCaret();
+ 	}
+ 	setMarkers(markers) {
+@@ -540,6 +543,8 @@ var Editor = class {
  		this.#overlayElement = void 0;
  		this.#resizeObserver?.disconnect();
  		this.#resizeObserver = void 0;
@@ -899,7 +910,7 @@ index 8f04a6f..5b70f19 100644
  		this.#fontRemeasureScheduled = false;
  		if (this.#themeSelectionRefreshFrame !== void 0) {
  			cancelAnimationFrame(this.#themeSelectionRefreshFrame);
-@@ -1307,7 +1310,16 @@ var Editor = class {
+@@ -1307,7 +1312,16 @@ var Editor = class {
  		}
  		this.#markerRenderer?.listenHover(contentEl);
  		this.#resizeObserver?.disconnect();
@@ -916,7 +927,7 @@ index 8f04a6f..5b70f19 100644
  		this.#resizeObserver.observe(contentEl);
  		this.#resizeObserver.observe(contentEl.parentElement);
  		this.#computeContentOffset(contentEl);
-@@ -1769,6 +1781,8 @@ var Editor = class {
+@@ -1769,6 +1783,8 @@ var Editor = class {
  		if (change !== void 0) this.#applyChange(change, nextSelections);
  	}
  	#handleLayoutResize = () => {
@@ -925,7 +936,7 @@ index 8f04a6f..5b70f19 100644
  		const lineAnnotations = this.#lineAnnotations?.length ?? 0;
  		const prevGutterWidth = this.#gutterWidthCache;
  		const prevContentWidth = this.#contentWidthCache;
-@@ -1776,11 +1790,11 @@ var Editor = class {
+@@ -1776,11 +1792,11 @@ var Editor = class {
  		this.#contentWidthCache = void 0;
  		const gutterWidthChanged = this.#getGutterWidth() !== prevGutterWidth;
  		const contentWidthChanged = this.#getContentWidth() !== prevContentWidth;
@@ -939,7 +950,7 @@ index 8f04a6f..5b70f19 100644
  			this.#wrapLineOffsetsCache.clear();
  			if (this.#isWrap || lineAnnotations > 0) this.#lineYCache.clear();
  		}
-@@ -1899,7 +1913,11 @@ var Editor = class {
+@@ -1899,7 +1915,11 @@ var Editor = class {
  			changedDocumentLines: this.#isDiff && !didLineCountChange ? getChangedDocumentLines(textDocument, change) : void 0,
  			documentLineCount: textDocument.lineCount
  		});

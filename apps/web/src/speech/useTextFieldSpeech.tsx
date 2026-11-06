@@ -12,16 +12,15 @@ import {
 } from "~/components/chat/ComposerSpeechButton";
 import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
 
-/** Bind dictation to a plain-text draft and keep the insertion cursor in that editor. */
+/** Binds dictation to a plain textarea draft; the shortcut targets it only while it has focus. */
 export function useTextFieldSpeech(input: {
-  environmentId: EnvironmentId;
-  projectId?: ProjectId | undefined;
-  ownerKey: string;
-  text: string;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
-  onTextChange(text: string): void;
-  onSetupOpenChange?(open: boolean): void;
-  disabled?: boolean;
+  readonly environmentId: EnvironmentId;
+  readonly projectId?: ProjectId | null | undefined;
+  readonly ownerKey: string;
+  readonly text: string;
+  readonly textareaRef: RefObject<HTMLTextAreaElement | null>;
+  readonly onTextChange: (text: string) => void;
+  readonly disabled?: boolean | undefined;
 }) {
   const latest = useLatestRef(input);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -31,7 +30,6 @@ export function useTextFieldSpeech(input: {
     ownerKey: input.ownerKey,
     draftText: input.text,
     disabled: input.disabled,
-    onSetupOpenChange: input.onSetupOpenChange,
     readDraft: () => {
       const field = latest.current.textareaRef.current;
       const cursor = field?.selectionStart ?? latest.current.text.length;
@@ -61,19 +59,21 @@ export function useTextFieldSpeech(input: {
   return { ...speech, shortcutLabel };
 }
 
+export type TextFieldSpeech = ReturnType<typeof useTextFieldSpeech>;
+
 export function TextFieldSpeechControls({
   speech,
   disabled = false,
 }: {
-  speech: ReturnType<typeof useTextFieldSpeech>;
+  speech: TextFieldSpeech;
   disabled?: boolean;
 }) {
   return (
     <>
       {speech.preview ? (
-        <p role="status" className="text-sm text-muted-foreground">
+        <p role="status" className="w-full text-sm text-muted-foreground">
           {speech.preview.committed}
-          {speech.preview.tentative}
+          <span className="opacity-70">{speech.preview.tentative}</span>
         </p>
       ) : null}
       <div className="flex min-w-0 items-center gap-1">
@@ -82,8 +82,9 @@ export function TextFieldSpeechControls({
           progress={speech.progress}
           level={speech.level}
           finishShortcutLabel={speech.shortcutLabel}
-          onStart={() => void speech.start()}
+          cancelShortcutLabel="Esc"
           disabled={disabled}
+          onStart={() => void speech.start()}
           onStop={() => void speech.stop()}
           onCancel={speech.cancel}
           onSkipPostProcessing={speech.skipPostProcessing}
@@ -116,12 +117,12 @@ export function TextFieldSpeechControls({
   );
 }
 
+/** Render-prop form for editors that only sometimes have an environment to dictate on. */
 export function SpeechTextField({
   children,
   ...input
 }: Parameters<typeof useTextFieldSpeech>[0] & {
-  children(speech: ReturnType<typeof useTextFieldSpeech>): ReactNode;
+  children: (speech: TextFieldSpeech) => ReactNode;
 }) {
-  const speech = useTextFieldSpeech(input);
-  return children(speech);
+  return children(useTextFieldSpeech(input));
 }

@@ -71,7 +71,7 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
         Layer.succeed(SpeechService.SpeechService, {
           status: Effect.succeed({ supported: false as const, reason: "test" }),
           prepareModel: Effect.void,
-          models: Effect.succeed({ models: [] }),
+          models: () => Effect.succeed({ models: [] }),
           downloadModel: () => Effect.succeed({ models: [] }),
           selectModel: () => Effect.succeed({ models: [] }),
           cancelDownload: () => Effect.succeed({ models: [] }),
@@ -90,6 +90,14 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
       const address = server.address as NetAddress.InetAddress;
       const host = address._tag === "InetAddressV6" ? "[::1]" : "127.0.0.1";
       const url = `http://${host}:${address.port}/api/voice/transcribe`;
+      const select = yield* Effect.promise(() =>
+        fetch(new URL("models/select", url), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ modelId: "test" }),
+        }),
+      );
+      expect(select.status).toBe(403);
       yield* Effect.promise(() =>
         expect(
           fetch(url, {
@@ -106,7 +114,7 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
             }),
             duplex: "half",
           }),
-        ).rejects.toMatchObject({ cause: { code: "UND_ERR_SOCKET" } }),
+        ).resolves.toMatchObject({ status: 413 }),
       );
       expect(transcribe).not.toHaveBeenCalled();
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeHttpServer.layerTest, dependencies)));
@@ -158,7 +166,7 @@ effectIt.effect.each([
       const service = Layer.succeed(SpeechService.SpeechService, {
         status: Effect.succeed({ supported: false as const, reason: "test" }),
         prepareModel: Effect.void,
-        models: Effect.succeed({ models: [] }),
+        models: () => Effect.succeed({ models: [] }),
         downloadModel: () => Effect.fail(error),
         selectModel: () => Effect.fail(error),
         cancelDownload: () => Effect.fail(error),

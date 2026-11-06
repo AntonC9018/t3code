@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ClaudeSettings } from "@t3tools/contracts";
@@ -43,7 +44,7 @@ it.effect("prepares the query runner without loading an unused SDK", () =>
         Layer.provide(
           Layer.succeed(ProviderEventLoggers, { native: undefined, canonical: undefined }),
         ),
-        Layer.provide(NodeServices.layer),
+        Layer.provide(Layer.merge(NodeServices.layer, NodeCrypto.layer)),
       ),
     ),
   ),

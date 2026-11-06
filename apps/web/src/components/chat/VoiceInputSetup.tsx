@@ -6,8 +6,10 @@ import type {
 import { useNavigate } from "@tanstack/react-router";
 import { RefreshCwIcon } from "lucide-react";
 
+import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { useEnvironment } from "../../state/environments";
+import { useEnvironmentScope } from "../../state/session";
 import { useAudioInputDevices } from "../../speech/useAudioInputDevices";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
@@ -102,6 +104,7 @@ export function VoiceInputSetup(props: {
 }) {
   const navigate = useNavigate();
   const environment = useEnvironment(props.environmentId);
+  const canManage = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const status = props.status?.supported ? props.status : null;
   const model = props.model;
   const progress =
@@ -135,7 +138,11 @@ export function VoiceInputSetup(props: {
                 <p className="mt-2 text-muted-foreground">
                   Download the {status ? Math.round(status.size / 1024 / 1024) : 697} MB model to{" "}
                   {environment?.label ?? "your transcription environment"}. Microphone audio is sent
-                  there for transcription. You can choose another environment in Voice settings.
+                  there for transcription, as chosen in Voice settings.
+                </p>
+                <p className="mt-2 text-muted-foreground">
+                  Silero (1.2 MB), used for silence filtering and pause detection, downloads
+                  alongside the speech model. An installed copy is reused.
                 </p>
                 {props.downloading ? (
                   <div role="status" className="mt-4 space-y-1 text-muted-foreground">
@@ -186,16 +193,21 @@ export function VoiceInputSetup(props: {
                 Choose another model or language
               </Button>
               {props.downloading ? (
-                <Button variant="outline" onClick={props.onCancelDownload}>
+                <Button variant="outline" disabled={!canManage} onClick={props.onCancelDownload}>
                   Cancel download
                 </Button>
               ) : null}
-              <Button disabled={props.downloading || !status} onClick={props.onDownload}>
+              <Button
+                disabled={!canManage || props.downloading || !status}
+                onClick={props.onDownload}
+              >
                 {props.downloading
                   ? "Downloading…"
                   : props.error
                     ? "Retry download"
-                    : "Download model"}
+                    : canManage
+                      ? "Download model"
+                      : "Ask an environment admin to download"}
               </Button>
             </>
           ) : (

@@ -21,6 +21,7 @@ import {
   postProcessEnvironmentTranscript,
 } from "./environment.ts";
 
+const canSend = () => true;
 const environmentId = Schema.decodeSync(EnvironmentId)("voice-test");
 const prepared = (
   httpBaseUrl: string,
@@ -54,6 +55,7 @@ it.effect.each([
         prepared(url),
         new Uint8Array(4),
         DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        canSend,
       ).pipe(
         Effect.provide(FetchHttpClient.layer),
         Effect.provideService(FetchHttpClient.Fetch, fetch),
@@ -82,6 +84,7 @@ it.effect.each([
       prepared(url, { _tag: "Bearer", token: "secret" }),
       new Uint8Array(4),
       DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      canSend,
     ).pipe(
       Effect.provide(FetchHttpClient.layer),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
@@ -116,6 +119,7 @@ it.effect("cancels a long batch recording without starting later requests", () =
       prepared("https://remote.example"),
       new Uint8Array(16_000 * 4 * 301),
       DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      canSend,
     ).pipe(
       Effect.provide(FetchHttpClient.layer),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
@@ -144,6 +148,7 @@ it.effect.each([61, 301, 601])(
         prepared("https://remote.example"),
         pcm,
         DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        canSend,
       ).pipe(
         Effect.provide(FetchHttpClient.layer),
         Effect.provideService(FetchHttpClient.Fetch, fetch),
@@ -175,7 +180,6 @@ it.effect(
           new Uint8Array(await new Response(init?.body).arrayBuffer()),
         );
         expect(decoded.options).toMatchObject({
-          projectName: "T3 Code",
           speechLanguage: "fr",
           speechCustomWords: [{ term: "Effect", aliases: [] }],
         });
@@ -183,12 +187,16 @@ it.effect(
         expect(new Headers(init?.headers).has("x-t3-project-id")).toBe(false);
         return Response.json({ text: "hello" });
       });
-      yield* transcribeEnvironmentPcm(prepared("https://remote.example"), new Uint8Array(4), {
-        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-        projectName: "T3 Code",
-        speechLanguage: "fr",
-        speechCustomWords: [{ term: "Effect", aliases: [] }],
-      }).pipe(
+      yield* transcribeEnvironmentPcm(
+        prepared("https://remote.example"),
+        new Uint8Array(4),
+        {
+          ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+          speechLanguage: "fr",
+          speechCustomWords: [{ term: "Effect", aliases: [] }],
+        },
+        canSend,
+      ).pipe(
         Effect.provide(FetchHttpClient.layer),
         Effect.provideService(FetchHttpClient.Fetch, fetch),
       );
@@ -232,11 +240,11 @@ it.effect.each([
           "Raw transcript",
           { text: "", selection: { start: 0, end: 0 } },
           {
-            speechPostProcessingEnabled: true,
             speechCorrectionWord: "sorry",
             speechPostProcessingPrompt: { mode: "default", customInstructions: "" },
             speechCustomWords: [],
           },
+          canSend,
         ),
       ).toEqual({ text: "Clean transcript" });
     }).pipe(
@@ -244,5 +252,27 @@ it.effect.each([
       Effect.provideService(FetchHttpClient.Fetch, fetch),
     );
     expect(fetch).toHaveBeenCalledTimes(6);
+  }),
+);
+
+it.effect("stops sending the remaining chunks once a long recording loses its grant", () =>
+  Effect.gen(function* () {
+    let allowed = true;
+    const fetch = vi.fn(async () => {
+      allowed = false;
+      return Response.json({ text: "part" });
+    });
+    const exit = yield* transcribeEnvironmentPcm(
+      prepared("https://remote.example"),
+      new Uint8Array(16_000 * 4 * 90),
+      DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      () => allowed,
+    ).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+      Effect.exit,
+    );
+    expect(exit._tag).toBe("Failure");
+    expect(fetch).toHaveBeenCalledOnce();
   }),
 );

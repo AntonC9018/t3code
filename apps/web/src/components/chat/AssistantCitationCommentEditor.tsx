@@ -1,9 +1,10 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
-import { useEffect, useRef, useState, use, type RefObject } from "react";
+import { use, useEffect, useRef, useState, type RefObject } from "react";
 
-import { ComposerContextActionsContext } from "../composerContextPresentation";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
+import { textDirection } from "~/textDirection";
 
+import { ComposerContextActionsContext } from "../composerContextActions";
 import { Button } from "../ui/button";
 
 export function AssistantCitationCommentEditor({
@@ -21,7 +22,7 @@ export function AssistantCitationCommentEditor({
   onSubmitAndSend?: (comment: string) => boolean;
   onCancel: () => void;
   onDraftChange?: (comment: string) => void;
-  onVoiceSetupOpenChange: (open: boolean) => void;
+  onVoiceSetupOpenChange?: (open: boolean) => void;
 }) {
   const [comment, setComment] = useState(citation.comment ?? "");
   const localInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -35,6 +36,7 @@ export function AssistantCitationCommentEditor({
     environmentId: environmentId ?? citation.environmentId,
     projectId,
     ownerKey: JSON.stringify([
+      "citation",
       environmentId,
       citation.threadId,
       citation.messageId,
@@ -44,11 +46,14 @@ export function AssistantCitationCommentEditor({
     text: comment,
     textareaRef,
     onTextChange: updateComment,
-    onSetupOpenChange: onVoiceSetupOpenChange,
   });
+  const setupOpen = speech.setup.open;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the citation popover open while the voice setup dialog owns focus
+  useEffect(() => {
+    onVoiceSetupOpenChange?.(setupOpen);
+    return () => onVoiceSetupOpenChange?.(false);
+  }, [onVoiceSetupOpenChange, setupOpen]);
   const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the chip's voice-setup flag when this editor unmounts with its dialog open, so the comment popover is not left hidden
-  useEffect(() => () => onVoiceSetupOpenChange(false), [onVoiceSetupOpenChange]);
   const submit = () => {
     speech.submitAfterDictation((text) => {
       if (text.length <= ASSISTANT_CITATION_MAX_COMMENT_LENGTH) onSubmit(text);
@@ -56,9 +61,7 @@ export function AssistantCitationCommentEditor({
   };
   const submitAndSend = () => {
     speech.submitAfterDictation((text) => {
-      if (text.length <= ASSISTANT_CITATION_MAX_COMMENT_LENGTH) {
-        (onSubmitAndSend ?? onSubmit)(text);
-      }
+      if (text.length <= ASSISTANT_CITATION_MAX_COMMENT_LENGTH) (onSubmitAndSend ?? onSubmit)(text);
     });
   };
 
@@ -70,7 +73,8 @@ export function AssistantCitationCommentEditor({
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
         if (event.key === "Escape") {
           event.preventDefault();
-          onCancel();
+          if (speech.state.phase !== "idle") speech.cancel();
+          else onCancel();
         }
       }}
     >
@@ -82,11 +86,10 @@ export function AssistantCitationCommentEditor({
         aria-invalid={commentTooLong || undefined}
         placeholder="Add an optional comment..."
         rows={2}
+        dir={textDirection(comment)}
         className="field-sizing-content block max-h-40 min-h-16 w-full resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
         value={comment}
-        onChange={(event) => {
-          updateComment(event.currentTarget.value);
-        }}
+        onChange={(event) => updateComment(event.currentTarget.value)}
         onKeyDown={(event) => {
           if (
             event.key === "Enter" &&

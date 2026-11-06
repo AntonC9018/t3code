@@ -23,6 +23,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useClientSettingsHydrated, updateClientSettings } from "../../hooks/useSettings";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { chooseTranscriptCleanup, useCleanupGrant } from "../../speech/voiceConsent";
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
@@ -32,6 +33,7 @@ export function VoicePostProcessingSettings() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const clientSettingsHydrated = useClientSettingsHydrated();
+  const cleanupGranted = useCleanupGrant() !== null;
   const { environment, connectedEnvironments, target } = useSettingsScope();
   const providersByEnvironment = useEnvironmentProviders();
   const providers =
@@ -75,14 +77,15 @@ export function VoicePostProcessingSettings() {
     <SettingsSection title="Post-processing">
       <SettingsRow
         {...searchableSetting("speech-post-processing")}
-        description="Enable cleanup for this client. Cleanup runs on each thread’s environment using its configured provider."
+        description="Sends each transcript and the draft text around your cursor to the thread’s environment, where its configured provider cleans it up. Your audio is never sent. This choice is saved on this device only."
         control={
           <Switch
-            checked={settings.speechPostProcessingEnabled}
+            checked={settings.speechPostProcessingEnabled && cleanupGranted}
             disabled={!clientSettingsHydrated}
-            onCheckedChange={(enabled) =>
-              void updateClientSettings({ speechPostProcessingEnabled: enabled })
-            }
+            onCheckedChange={(enabled) => {
+              chooseTranscriptCleanup(enabled);
+              void updateClientSettings({ speechPostProcessingEnabled: enabled });
+            }}
             aria-label="Enable voice post-processing"
           />
         }

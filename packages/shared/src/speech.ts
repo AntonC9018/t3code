@@ -19,24 +19,48 @@ export function effectiveSpeechLanguage(
   return model.languages.find((language) => language === "en") ?? model.languages[0] ?? "auto";
 }
 
+const vocabularyKey = (value: string) => value.trim().normalize("NFC").toLocaleLowerCase();
+
 /** Project spellings take precedence. Request validation enforces the combined size limit. */
 export function mergeSpeechCustomWords(
   personal: SpeechCustomWords,
   project: SpeechCustomWords,
 ): SpeechCustomWords {
   const seen = new Set<string>();
-  const key = (value: string) => value.trim().normalize("NFC").toLocaleLowerCase();
-  const words = [...project, ...personal].flatMap(({ term, aliases }) => {
-    if (seen.has(key(term))) return [];
-    seen.add(key(term));
+  return [...project, ...personal].flatMap(({ term, aliases }) => {
+    if (seen.has(vocabularyKey(term))) return [];
+    seen.add(vocabularyKey(term));
     const uniqueAliases = aliases.filter((alias) => {
-      if (seen.has(key(alias))) return false;
-      seen.add(key(alias));
+      if (seen.has(vocabularyKey(alias))) return false;
+      seen.add(vocabularyKey(alias));
       return true;
     });
     return [{ term, aliases: uniqueAliases }];
   });
-  return words;
+}
+
+/**
+ * Project spellings win over personal ones. Hint terms, such as the project name or the
+ * correction cue, come first so the 100-entry wire limit cannot drop them.
+ */
+export function resolveSpeechVocabulary(input: {
+  readonly personal: SpeechCustomWords;
+  readonly project: SpeechCustomWords;
+  readonly hints?: ReadonlyArray<string>;
+}): SpeechCustomWords {
+  const known = new Set(
+    [...input.project, ...input.personal].flatMap(({ term, aliases }) =>
+      [term, ...aliases].map(vocabularyKey),
+    ),
+  );
+  // A hint that is already a dictionary entry keeps that entry and its aliases in place.
+  const hints = (input.hints ?? []).flatMap((hint) => {
+    const term = hint.replace(/\s+/g, " ").trim();
+    return term.length > 0 && term.length <= 50 && !known.has(vocabularyKey(term))
+      ? [{ term, aliases: [] }]
+      : [];
+  });
+  return mergeSpeechCustomWords([...input.project, ...input.personal], hints).slice(0, 100);
 }
 
 /** Binary requests contain a four-byte JSON length, UTF-8 options, then unencoded PCM. */

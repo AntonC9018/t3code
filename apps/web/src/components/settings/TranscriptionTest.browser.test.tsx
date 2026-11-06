@@ -67,6 +67,7 @@ function mount() {
   return render(
     <TranscriptionTest
       prepared={prepared}
+      hasAudioConsent={() => true}
       options={DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS}
       microphoneId="mic"
       modelName="Test model"

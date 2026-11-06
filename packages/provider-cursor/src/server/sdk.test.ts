@@ -1,54 +1,58 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-const loader = vi.hoisted(() => {
-  const main = {
-    Agent: Symbol("Agent"),
-    AuthenticationError: Symbol("AuthenticationError"),
-    ConfigurationError: Symbol("ConfigurationError"),
-    createAgentPlatform: Symbol("createAgentPlatform"),
-    Cursor: Symbol("Cursor"),
-    CursorSdkError: Symbol("CursorSdkError"),
-    InMemoryCredentialStore: Symbol("InMemoryCredentialStore"),
+const fixture = vi.hoisted(() => {
+  // @effect-diagnostics-next-line extendsNativeError:off - stands in for the Cursor SDK's native Error classes.
+  class SdkError extends Error {}
+  const sdk = {
+    CursorSdkError: SdkError,
+    AuthenticationError: SdkError,
+    ConfigurationError: SdkError,
   };
-  const sqlite = { SqliteLocalAgentStore: Symbol("SqliteLocalAgentStore") };
-  const require = vi.fn((specifier: string) => {
-    if (specifier === "@cursor/sdk") return main;
-    if (specifier === "@cursor/sdk/sqlite") return sqlite;
-    throw new Error(`Unexpected SDK module load: ${specifier}`);
-  });
-  return { main, require, sqlite };
+  const sqlite = { SqliteLocalAgentStore: {} };
+  const requireSdk = vi.fn((id: string) => (id === "@cursor/sdk" ? sdk : sqlite));
+  return { sdk, sqlite, requireSdk };
 });
 
-vi.mock("node:module", () => ({ createRequire: () => loader.require }));
+vi.mock("node:module", () => ({ createRequire: () => fixture.requireSdk }));
 
-async function importSdk() {
-  vi.resetModules();
-  loader.require.mockClear();
-  return import("./sdk.ts");
-}
-
-describe("cursorSdk", () => {
-  it("loads the main SDK only when an export is read", async () => {
-    const { cursorSdk } = await importSdk();
-    expect(loader.require).not.toHaveBeenCalled();
-
-    const agent = cursorSdk.Agent;
-    expect(agent).toBe(loader.main.Agent);
-    expect(loader.require).toHaveBeenCalledTimes(1);
-    expect(loader.require).toHaveBeenCalledWith("@cursor/sdk");
-
-    expect(cursorSdk.Agent).toBe(agent);
-    expect(loader.require).toHaveBeenCalledTimes(1);
+describe("Cursor disk modules", () => {
+  it("loads on demand, shares exports across callers, and leaves SQLite unloaded", async () => {
+    vi.resetModules();
+    fixture.requireSdk.mockClear();
+    const sdk = await import("./sdk.ts");
+    expect(fixture.requireSdk).not.toHaveBeenCalled();
+    expect(sdk.isCursorSdkError(new Error("unloaded"), "CursorSdkError")).toBe(false);
+    const modules = await Promise.all([
+      Promise.resolve().then(sdk.loadCursorSdk),
+      Promise.resolve().then(sdk.loadCursorSdk),
+    ]);
+    expect(modules).toEqual([fixture.sdk, fixture.sdk]);
+    expect(modules[0]).toBe(modules[1]);
+    expect(fixture.requireSdk.mock.calls).toEqual([["@cursor/sdk"]]);
+    expect(
+      sdk.isCursorSdkError(new fixture.sdk.CursorSdkError("same class"), "CursorSdkError"),
+    ).toBe(true);
+    expect(sdk.loadCursorSqlite()).toBe(fixture.sqlite);
+    expect(sdk.loadCursorSqlite()).toBe(fixture.sqlite);
+    expect(fixture.requireSdk.mock.calls).toEqual([["@cursor/sdk"], ["@cursor/sdk/sqlite"]]);
   });
 
-  it("loads the sqlite entry separately when its export is read", async () => {
-    const { cursorSdk } = await importSdk();
-    expect(loader.require).not.toHaveBeenCalled();
-
-    const store = cursorSdk.SqliteLocalAgentStore;
-    expect(store).toBe(loader.sqlite.SqliteLocalAgentStore);
-    expect(loader.require).toHaveBeenCalledTimes(1);
-    expect(loader.require).toHaveBeenCalledWith("@cursor/sdk/sqlite");
-    expect(loader.require).not.toHaveBeenCalledWith("@cursor/sdk");
+  it("surfaces failed loads and permits a later retry without caching partial exports", async () => {
+    vi.resetModules();
+    fixture.requireSdk.mockClear();
+    const sdk = await import("./sdk.ts");
+    const failure = new Error("missing native chunk");
+    fixture.requireSdk.mockImplementationOnce(() => {
+      throw failure;
+    });
+    expect(sdk.loadCursorSdk).toThrow(failure);
+    expect(sdk.isCursorSdkError(failure, "CursorSdkError")).toBe(false);
+    expect(sdk.loadCursorSdk()).toBe(fixture.sdk);
+    fixture.requireSdk.mockImplementationOnce(() => {
+      throw failure;
+    });
+    expect(sdk.loadCursorSqlite).toThrow(failure);
+    expect(sdk.loadCursorSqlite()).toBe(fixture.sqlite);
+    expect(fixture.requireSdk).toHaveBeenCalledTimes(4);
   });
 });

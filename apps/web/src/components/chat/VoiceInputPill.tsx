@@ -9,7 +9,7 @@ export const VoiceWaveform = memo(function VoiceWaveform(props: { level: number 
   const barsRef = useRef<Array<HTMLSpanElement | null>>([]);
   const levelsRef = useRef(Array<number>(WAVEFORM_BAR_COUNT).fill(0));
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes each waveform bar's opacity and scale to its DOM node, which is styled outside React
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- updates native waveform bar styles when microphone levels arrive
   useEffect(() => {
     const levels = levelsRef.current;
     levels.copyWithin(0, 1);
@@ -43,7 +43,8 @@ export const VoiceWaveform = memo(function VoiceWaveform(props: { level: number 
 
 export function VoiceInputPill({ children }: { children: ReactNode }) {
   return (
-    <div className="flex h-10 w-48 min-w-0 shrink-0 items-center gap-2 rounded-full border border-border/50 bg-background/80 p-1 sm:h-9 sm:w-64">
+    // Same height as the toolbar's icon buttons, so starting a recording never resizes the composer.
+    <div className="flex h-8 w-48 min-w-0 shrink-0 items-center gap-2 sm:h-7 sm:w-64">
       {children}
     </div>
   );

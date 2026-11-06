@@ -19,7 +19,7 @@ export function shouldFinishDictationOnRelease(
 
 type SpeechActions = {
   available: boolean;
-  state: VoiceInputState<true>;
+  state: VoiceInputState;
   start(): Promise<void>;
   stop(): Promise<void>;
   cancel(): void;
@@ -37,12 +37,17 @@ type ShortcutInput = {
   disabled: boolean;
   terminalOpen: boolean;
   modelPickerOpen: boolean;
-  subscribeKeys?: (handlers: DictationKeyHandlers) => () => void;
+  /** Resolve the chord as if the preview had focus; the keys arrive relayed from its guest. */
   previewFocus?: boolean;
-  ownsFocus?: () => boolean;
+  /** When set, the chord targets this editor only while it has focus. */
   targetRef?: RefObject<HTMLElement | null>;
+  /** An editor outside this document reports whether it holds the keyboard. */
+  ownsFocus?: () => boolean;
+  /** Receives handlers that replay keys an outside editor relayed, as if typed here. */
+  subscribeKeys?: (handlers: DictationKeyHandlers) => () => void;
 };
 
+// Several editors can bind the chord; the busy one, then the focused one, then the untargeted one wins.
 const shortcutTargets = new Map<symbol, () => ShortcutInput>();
 
 function ownsShortcut(id: symbol) {
@@ -94,7 +99,12 @@ export function useDictationShortcut(input: ShortcutInput) {
       if (!ownsShortcut(id.current)) return;
       if (event.isComposing || event.keyCode === 229) return;
       const { speech } = current.current;
-      if (event.key === "Escape" && (pressed.current !== null || speech.state.phase !== "idle")) {
+      if (event.defaultPrevented || isCommandPaletteOpen()) return;
+      if (
+        event.key === "Escape" &&
+        (pressed.current !== null ||
+          (speech.state.phase !== "idle" && speech.state.phase !== "error"))
+      ) {
         event.preventDefault();
         event.stopImmediatePropagation();
         pressed.current = null;
@@ -102,29 +112,33 @@ export function useDictationShortcut(input: ShortcutInput) {
         speech.cancel();
         return;
       }
-      if (event.defaultPrevented || isCommandPaletteOpen()) return;
       const { keybindings, terminalOpen, modelPickerOpen, disabled } = current.current;
+      const previewFocus = current.current.previewFocus ?? false;
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: getTerminalFocusOwner() !== null,
           terminalOpen,
           modelPickerOpen,
-          previewFocus: current.current.previewFocus ?? false,
-          previewOpen: current.current.previewFocus ?? false,
+          previewFocus,
+          previewOpen: previewFocus,
+          ...(previewFocus ? { editableFocus: true } : {}),
         },
       });
       if (command !== "composer.dictation") return;
+      const canStart = speech.state.phase === "idle" || speech.state.phase === "error";
+      if (canStart && (!speech.available || disabled)) return;
       event.preventDefault();
       event.stopPropagation();
-      if (event.repeat || pressed.current) return;
+      if (event.repeat || (!canStart && speech.state.phase !== "recording")) return;
+      // macOS may omit the previous non-modifier keyup while Command is held.
+      pressed.current = null;
+      generation.current += 1;
       if (speech.state.phase === "recording") {
         void speech.stop();
         return;
       }
-      if (speech.state.phase !== "idle" && speech.state.phase !== "error") return;
-      if (!speech.available || disabled) return;
       pressed.current = {
-        generation: ++generation.current,
+        generation: generation.current,
         code: event.code || event.key,
         startedAt: performance.now(),
         mode,
@@ -132,14 +146,9 @@ export function useDictationShortcut(input: ShortcutInput) {
       };
     };
     const onBlur = () => finish(null);
-
     const unsubscribe = subscribeKeys?.({
-      keydown: (event) => {
-        window.dispatchEvent(event);
-      },
-      keyup: (event) => {
-        window.dispatchEvent(event);
-      },
+      keydown: (event) => window.dispatchEvent(event),
+      keyup: (event) => window.dispatchEvent(event),
       blur: onBlur,
     });
     window.addEventListener("keydown", onKeyDown, true);

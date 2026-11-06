@@ -20,13 +20,13 @@ type SpeechPresentation = {
 export function shouldShowComposerFooter(
   collapsed: boolean,
   approval: boolean,
-  phase: VoiceInputState<true>["phase"],
+  phase: VoiceInputState["phase"],
 ): boolean {
   return phase !== "idle" || (!collapsed && !approval);
 }
 
 export function resolveSpeechPresentation(
-  state: VoiceInputState<true>,
+  state: VoiceInputState,
   progress: { downloaded: number; total: number } | null,
 ): SpeechPresentation {
   switch (state.phase) {
@@ -90,7 +90,7 @@ function formatElapsed(seconds: number) {
 function RecordingStatus(props: { level: number; recordingLimitSeconds?: number | undefined }) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs a wall-clock interval that refreshes the elapsed time while the recording status is shown
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the timer displaying the native recording duration
   useEffect(() => {
     const startedAt = Date.now();
     const timer = window.setInterval(
@@ -115,7 +115,7 @@ function RecordingStatus(props: { level: number; recordingLimitSeconds?: number 
 }
 
 function ComposerSpeechStatus(props: {
-  state: VoiceInputState<true>;
+  state: VoiceInputState;
   progress: { downloaded: number; total: number } | null;
   level: number;
   recordingLimitSeconds?: number | undefined;
@@ -150,7 +150,7 @@ function ComposerSpeechStatus(props: {
 }
 
 function ComposerSpeechCancelButton(props: {
-  state: VoiceInputState<true>;
+  state: VoiceInputState;
   shortcutLabel?: string | null;
   onCancel(): void;
 }) {
@@ -183,7 +183,7 @@ function ComposerSpeechCancelButton(props: {
 }
 
 export function ComposerSpeechButton(props: {
-  state: VoiceInputState<true>;
+  state: VoiceInputState;
   progress: { downloaded: number; total: number } | null;
   shortcutLabel?: string | null;
   disabled?: boolean;
@@ -225,7 +225,7 @@ export function ComposerSpeechButton(props: {
 }
 
 export function ComposerSpeechRecordingPill(props: {
-  state: VoiceInputState<true>;
+  state: VoiceInputState;
   progress: { downloaded: number; total: number } | null;
   finishShortcutLabel?: string | null;
   cancelShortcutLabel?: string | null;

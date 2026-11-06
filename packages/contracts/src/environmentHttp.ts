@@ -49,13 +49,13 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import {
+  EnvironmentSpeechAccelerationRequest,
   EnvironmentSpeechModelRequest,
   EnvironmentSpeechModels,
-  EnvironmentSpeechStatus,
-  EnvironmentSpeechAccelerationRequest,
   EnvironmentSpeechModelUnloadTimeoutRequest,
   EnvironmentSpeechPostProcessingRequest,
   EnvironmentSpeechPostProcessingResult,
+  EnvironmentSpeechStatus,
   EnvironmentSpeechTranscriptionResult,
 } from "./speech.ts";
 import {
@@ -360,6 +360,8 @@ const EnvironmentScopedOperationErrors = [
 ] as const;
 const EnvironmentPairingCredentialErrors = [
   EnvironmentRequestInvalidError,
+  // The managed policy does not allow remote clients.
+  EnvironmentHttpForbiddenError,
   ...EnvironmentScopedOperationErrors,
 ] as const;
 const EnvironmentSessionRevokeErrors = [
@@ -776,6 +778,13 @@ export class EnvironmentVoiceBodyLimit extends HttpApiMiddleware.Service<Environ
 
 export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
   .add(
+    HttpApiEndpoint.get("status", "/api/voice/status", {
+      headers: OptionalBearerHeaders,
+      success: EnvironmentSpeechStatus,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("prepareModel", "/api/voice/models/prepare", {
       headers: OptionalBearerHeaders,
       success: Schema.Void,
@@ -783,17 +792,11 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.get("status", "/api/voice/status", {
-      headers: OptionalBearerHeaders,
-      success: EnvironmentSpeechStatus,
-      error: EnvironmentScopedOperationErrors,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
     HttpApiEndpoint.get("models", "/api/voice/models", {
       headers: OptionalBearerHeaders,
+      query: { benchmarks: Schema.optionalKey(Schema.Literal("1")) },
       success: EnvironmentSpeechModels,
-      error: EnvironmentScopedOperationErrors,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
@@ -821,6 +824,14 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("removeModel", "/api/voice/models/remove", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelRequest,
+      success: EnvironmentSpeechModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("updateAcceleration", "/api/voice/acceleration", {
       headers: OptionalBearerHeaders,
       payload: EnvironmentSpeechAccelerationRequest,
@@ -837,14 +848,6 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("postProcess", "/api/voice/post-process", {
-      headers: OptionalBearerHeaders,
-      payload: EnvironmentSpeechPostProcessingRequest,
-      success: EnvironmentSpeechPostProcessingResult,
-      error: EnvironmentScopedOperationErrors,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
     HttpApiEndpoint.post("transcribe", "/api/voice/transcribe", {
       headers: OptionalBearerHeaders,
       payload: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
@@ -855,11 +858,11 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
       .middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("removeModel", "/api/voice/models/remove", {
+    HttpApiEndpoint.post("postProcess", "/api/voice/post-process", {
       headers: OptionalBearerHeaders,
-      payload: EnvironmentSpeechModelRequest,
-      success: EnvironmentSpeechModels,
-      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+      payload: EnvironmentSpeechPostProcessingRequest,
+      success: EnvironmentSpeechPostProcessingResult,
+      error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 

@@ -36,6 +36,7 @@ interface ComposerPrimaryActionsProps {
   alternateShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
+  /** Dictation is running; Send finishes it and submits once the transcript lands. */
   voiceInputActive?: boolean;
   isSendBusy: boolean;
   sendDisabledReason: string | null;
@@ -377,7 +378,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           }
         >
           <Minimize2Icon aria-hidden="true" />
-          {keepFullHistory ? "Keep" : "Compact"}
+          <span className="@max-[480px]/composer-surface:hidden">
+            {keepFullHistory ? "Keep" : "Compact"}
+          </span>
           <span className="text-muted-foreground">{compactTokens}</span>
         </TooltipTrigger>
         <TooltipPopup>

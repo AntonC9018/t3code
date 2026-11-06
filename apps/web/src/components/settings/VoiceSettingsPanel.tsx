@@ -19,7 +19,6 @@ import type {
 import { SpeechCustomWords as SpeechCustomWordsSchema } from "@t3tools/contracts";
 import { effectiveSpeechLanguage, mergeSpeechCustomWords } from "@t3tools/shared/speech";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
   AudioLinesIcon,
@@ -47,8 +46,9 @@ import { ensureLocalApi } from "../../localApi";
 import { runtime } from "../../lib/runtime";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useAudioInputDevices } from "../../speech/useAudioInputDevices";
+import { useVoiceTranscriptionDestination } from "../../speech/useEnvironmentSpeechInput";
+import { bindAudioGrant, chooseAudioDestination } from "../../speech/voiceConsent";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
-import { usePreparedConnection } from "../../state/session";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -325,16 +325,20 @@ export function VoiceSettingsPanel() {
   const selectedEnvironmentId = useClientSettings(
     (settings) => settings.voiceTranscriptionEnvironmentId,
   );
-  const environmentId = clientSettingsHydrated
+  const destination = useVoiceTranscriptionDestination();
+  const environmentId = destination.environmentId;
+  const prepared = destination.prepared;
+  const offeredEnvironmentId = clientSettingsHydrated
     ? (selectedEnvironmentId ?? primaryEnvironmentId)
     : null;
-  const connection = Option.getOrNull(usePreparedConnection(environmentId));
+  const shownEnvironmentId = environmentId ?? offeredEnvironmentId;
+  const shownSelection = shownEnvironmentId === primaryEnvironmentId ? null : shownEnvironmentId;
   const transcriptionEnvironment = environments.find(
     (environment) => environment.environmentId === environmentId,
   );
   const supportsVoice =
     transcriptionEnvironment?.serverConfig?.environment.capabilities.voiceTranscription === true;
-  const prepared = supportsVoice ? connection : null;
+  const hasAudioConsent = destination.grantId ? bindAudioGrant(destination.grantId) : () => false;
   const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
   const voiceShortcutMode = useClientSettings((settings) => settings.voiceShortcutMode);
   const clientSettings = useClientSettings();
@@ -454,16 +458,16 @@ export function VoiceSettingsPanel() {
     selectedMicrophone && !microphones.some((device) => device.deviceId === selectedMicrophone),
   );
   const unavailableSelectedEnvironmentId =
-    selectedEnvironmentId !== null &&
-    !environments.some((environment) => environment.environmentId === selectedEnvironmentId)
-      ? selectedEnvironmentId
+    shownSelection !== null &&
+    !environments.some((environment) => environment.environmentId === shownSelection)
+      ? shownSelection
       : null;
   const primaryEnvironment = environments.find(
     (environment) => environment.environmentId === primaryEnvironmentId,
   );
-  const selectedEnvironmentLabel = selectedEnvironmentId
-    ? (environments.find((environment) => environment.environmentId === selectedEnvironmentId)
-        ?.label ?? "Selected environment (Unavailable)")
+  const selectedEnvironmentLabel = shownSelection
+    ? (environments.find((environment) => environment.environmentId === shownSelection)?.label ??
+      "Selected environment (Unavailable)")
     : primaryEnvironment
       ? `${primaryEnvironment.label} (Primary)`
       : "Primary environment";
@@ -698,24 +702,20 @@ export function VoiceSettingsPanel() {
           control={
             <Select
               disabled={!clientSettingsHydrated || operation !== null}
-              value={
-                selectedEnvironmentId
-                  ? environmentValue(selectedEnvironmentId)
-                  : PRIMARY_ENVIRONMENT
-              }
+              value={shownSelection ? environmentValue(shownSelection) : PRIMARY_ENVIRONMENT}
               onValueChange={(value) => {
                 if (!value) return;
-                if (value === PRIMARY_ENVIRONMENT) {
-                  void updateClientSettings({ voiceTranscriptionEnvironmentId: null });
-                  return;
-                }
-                const selectedEnvironment = environments.find(
-                  (environment) => environmentValue(environment.environmentId) === value,
-                );
-                if (selectedEnvironment)
-                  void updateClientSettings({
-                    voiceTranscriptionEnvironmentId: selectedEnvironment.environmentId,
-                  });
+                const next =
+                  value === PRIMARY_ENVIRONMENT
+                    ? null
+                    : (environments.find(
+                        (environment) => environmentValue(environment.environmentId) === value,
+                      )?.environmentId ?? undefined);
+                if (next === undefined) return;
+                void updateClientSettings({ voiceTranscriptionEnvironmentId: next });
+                const target = next ?? primaryEnvironmentId;
+                if (environmentId && target)
+                  chooseAudioDestination({ kind: "environment", environmentId: target });
               }}
             >
               <SelectTrigger size="sm" aria-label="Transcription environment" className="max-w-80">
@@ -746,17 +746,36 @@ export function VoiceSettingsPanel() {
             </Select>
           }
         />
+        <SettingsRow
+          {...searchableSetting("voice-transcription-destination")}
+          title="Send microphone audio"
+          description={`Microphone audio is sent to ${selectedEnvironmentLabel.replace(/ \(Primary\)$/, "")} to transcribe, then discarded. Turn this off to disable voice input on this device. This choice is saved on this device only.`}
+          control={
+            <Switch
+              aria-label="Send microphone audio"
+              checked={environmentId !== null}
+              disabled={!clientSettingsHydrated || (environmentId === null && !shownEnvironmentId)}
+              onCheckedChange={(enabled) =>
+                chooseAudioDestination(
+                  enabled && shownEnvironmentId
+                    ? { kind: "environment", environmentId: shownEnvironmentId }
+                    : null,
+                )
+              }
+            />
+          }
+        />
         <TranscriptionTest
           key={`${environmentId}:${activeModel?.id}:${selectedMicrophone}`}
           prepared={prepared}
+          hasAudioConsent={hasAudioConsent}
           microphoneId={selectedMicrophone}
           options={{
             speechLanguage: clientSettings.speechLanguage,
             speechTranslateToEnglish: clientSettings.speechTranslateToEnglish,
             speechCustomWords: customWords,
             speechRemoveFillerWords: removeFillerWords,
-            speechCorrectionWord: clientSettings.speechCorrectionWord,
-            speechPostProcessingEnabled: false,
+            speechSilenceFiltering: clientSettings.speechSilenceFiltering,
           }}
           modelName={
             currentStatus?.supported ? (activeModel?.name ?? "No model selected") : "Unavailable"
@@ -770,6 +789,7 @@ export function VoiceSettingsPanel() {
           }
         />
         <SettingsRow
+          {...searchableSetting("speech-language")}
           title="Transcription language"
           description={
             !activeModel
@@ -983,7 +1003,9 @@ export function VoiceSettingsPanel() {
           <p className="border-t border-border/50 px-4 py-4 text-xs text-muted-foreground">
             {currentStatus && !currentStatus.supported
               ? currentStatus.reason
-              : "Connect to a current T3 environment to manage transcription models."}
+              : environmentId === null
+                ? "Allow sending microphone audio to manage transcription models."
+                : "Connect to a current T3 environment to manage transcription models."}
           </p>
         )}
       </SettingsSection>
@@ -1256,6 +1278,21 @@ export function VoiceSettingsPanel() {
             </div>
           ) : null}
         </SettingsRow>
+        <SettingsRow
+          {...searchableSetting("speech-silence-filtering")}
+          title="Silence filtering"
+          description="Skip silence and other non-speech audio before transcription, keeping a short buffer so words aren’t cut off."
+          control={
+            <Switch
+              aria-label="Silence filtering"
+              checked={clientSettings.speechSilenceFiltering}
+              disabled={!clientSettingsHydrated}
+              onCheckedChange={(enabled) => {
+                void updateClientSettings({ speechSilenceFiltering: enabled });
+              }}
+            />
+          }
+        />
         <SettingsRow
           {...searchableSetting("remove-filler-words")}
           description="Remove common hesitation words while preserving ambiguous words in multilingual transcription."

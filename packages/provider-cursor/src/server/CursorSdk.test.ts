@@ -5,31 +5,8 @@ import { vi } from "vite-plus/test";
 
 import * as CursorSdk from "./CursorSdk.ts";
 
-const cursorSdkMock = vi.hoisted(() => ({
-  Agent: { kind: "Agent" },
-  createAgentPlatform: { kind: "createAgentPlatform" },
-  SqliteLocalAgentStore: { kind: "SqliteLocalAgentStore" },
-  reads: [] as Array<string>,
-}));
-
-vi.mock("./sdk.ts", () => ({
-  cursorSdk: {
-    get Agent() {
-      cursorSdkMock.reads.push("Agent");
-      return cursorSdkMock.Agent;
-    },
-    get createAgentPlatform() {
-      cursorSdkMock.reads.push("createAgentPlatform");
-      return cursorSdkMock.createAgentPlatform;
-    },
-    get SqliteLocalAgentStore() {
-      cursorSdkMock.reads.push("SqliteLocalAgentStore");
-      return cursorSdkMock.SqliteLocalAgentStore;
-    },
-  },
-}));
-
 // Shaped like the SDK's minified class: the constructor is not named after the error.
+// @effect-diagnostics-next-line extendsNativeError:off - mimics the Cursor SDK's own native Error class.
 class o extends Error {
   override name = "WriteIterableClosedError";
 }
@@ -52,30 +29,25 @@ const rejectThroughGuard = (reason: unknown) =>
     return exit.mock.calls;
   }).pipe(Effect.scoped);
 
-describe("CursorSdk layer", () => {
-  it.effect("reads the SDK only when the service is used", () =>
-    Effect.gen(function* () {
-      const service = yield* CursorSdk.CursorSdk;
-      assert.deepStrictEqual(cursorSdkMock.reads, []);
-      assert.strictEqual<unknown>(service.Agent, cursorSdkMock.Agent);
-      assert.strictEqual<unknown>(service.createAgentPlatform, cursorSdkMock.createAgentPlatform);
-      assert.strictEqual<unknown>(
-        service.SqliteLocalAgentStore,
-        cursorSdkMock.SqliteLocalAgentStore,
-      );
-      assert.deepStrictEqual(cursorSdkMock.reads, [
-        "Agent",
-        "createAgentPlatform",
-        "SqliteLocalAgentStore",
-      ]);
-    }).pipe(Effect.provide(CursorSdk.layer)),
-  );
-});
-
 describe("CursorSdk unhandled rejection guard", () => {
   it.effect("keeps the server running when the SDK writes to a closed stream", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* rejectThroughGuard(new o("WritableIterable is closed")), []);
+    }),
+  );
+
+  it.effect("keeps the server running when the SDK writes after its request stream ended", () =>
+    Effect.gen(function* () {
+      // Shaped like `ConnectError.from(e, Code.Aborted)` from the SDK's connect-node body pump.
+      const cause = Object.assign(new Error("write after end"), {
+        code: "ERR_STREAM_WRITE_AFTER_END",
+      });
+      const reason = Object.assign(new Error("[aborted] write after end", { cause }), {
+        name: "ConnectError",
+        code: 10,
+        rawMessage: "write after end",
+      });
+      assert.deepStrictEqual(yield* rejectThroughGuard(reason), []);
     }),
   );
 
@@ -84,6 +56,17 @@ describe("CursorSdk unhandled rejection guard", () => {
       assert.deepStrictEqual(yield* rejectThroughGuard(new Error("WritableIterable is closed")), [
         [1],
       ]);
+    }),
+  );
+
+  it.effect("still exits on aborted requests other than a write after end", () =>
+    Effect.gen(function* () {
+      const cause = Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+      const reason = Object.assign(new Error("[aborted] socket hang up", { cause }), {
+        name: "ConnectError",
+        code: 10,
+      });
+      assert.deepStrictEqual(yield* rejectThroughGuard(reason), [[1]]);
     }),
   );
 });
