@@ -192,6 +192,10 @@ vi.mock("./recordingStorage", () => ({
     remove: vi.fn(),
   },
 }));
+function releaseRecordingLock(holder: object) {
+  if (mocks.recordingLockHolder === holder) mocks.recordingLockHolder = null;
+}
+
 vi.mock("./browserVoiceInput", () => ({
   createBrowserVoiceInputPlatform: (input: {
     prepared: PreparedConnection;
@@ -209,6 +213,7 @@ vi.mock("./browserVoiceInput", () => ({
       }
       const { recordingStorage } = await import("./recordingStorage");
       const saved = await (mocks.recovery ?? recordingStorage.find(input.retainedDraft!.ownerKey));
+      if (!saved) releaseRecordingLock(input);
       return (
         saved && {
           ...saved,
@@ -218,6 +223,7 @@ vi.mock("./browserVoiceInput", () => ({
     },
     discardSavedRecording: async () => {
       const owner = input.retainedDraft?.ownerKey;
+      releaseRecordingLock(input);
       mocks.deletedRecordings(owner);
       mocks.savedQuestionOwners = mocks.savedQuestionOwners.filter((key) => key !== owner);
       notifyVoiceRecordingRecoveryChange();
@@ -262,6 +268,7 @@ vi.mock("./browserVoiceInput", () => ({
     cancelRecording() {},
     deleteRecording() {
       const owner = input.retainedDraft?.ownerKey;
+      releaseRecordingLock(input);
       mocks.deletedRecordings(owner);
       mocks.savedQuestionOwners = mocks.savedQuestionOwners.filter((key) => key !== owner);
       notifyVoiceRecordingRecoveryChange();
@@ -749,10 +756,23 @@ it("preserves the original transcript without cleanup when the client disables i
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((settle) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((settle, fail) => {
     resolve = settle;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
+}
+
+async function expectReleasedForNextRecording() {
+  await vi.waitFor(() => expect(mocks.recordingLockHolder).toBeNull());
+  expect(mocks.voice!.state.hasRecording).not.toBe(true);
+  // The deleted row is gone from storage.
+  mocks.recovery = null;
+  mocks.recoveredOwner = null;
+  mocks.microphoneFailure = false;
+  await act(() => mocks.voice!.start());
+  expect(mocks.microphoneRequests).toBe(1);
 }
 
 function savedDraftRecording(): SavedVoiceRecording {
@@ -1098,26 +1118,30 @@ it("discards saved audio when consent changes while storage finds it", async () 
   found.resolve(savedDraftRecording());
 
   await vi.waitFor(() => expect(mocks.deletedRecordings).toHaveBeenCalledWith("draft"));
-  expect(mocks.voice!.state.hasRecording).not.toBe(true);
+  await expectReleasedForNextRecording();
 });
 
-it("discards saved audio when consent changes while storage reads it", async () => {
-  using _state = setup();
-  mocks.retainRecording = true;
-  mocks.exclusiveRecording = true;
-  mocks.recoveredOwner = "draft";
-  const restored = deferred<void>();
-  mocks.restoring = restored.promise;
-  await using screen = await mountProbe();
-  await vi.waitFor(() => expect(mocks.restoreStarted).toHaveBeenCalledOnce());
+it.each(["succeeds", "fails"])(
+  "discards saved audio when consent changes while storage reads it and the read %s",
+  async (outcome) => {
+    using _state = setup();
+    mocks.retainRecording = true;
+    mocks.exclusiveRecording = true;
+    mocks.recoveredOwner = "draft";
+    const restored = deferred<void>();
+    mocks.restoring = restored.promise;
+    await using screen = await mountProbe();
+    await vi.waitFor(() => expect(mocks.restoreStarted).toHaveBeenCalledOnce());
 
-  selectTranscriptionEnvironment("another-environment" as EnvironmentId);
-  await screen.rerender(<Probe input={probeInput()} />);
-  restored.resolve();
+    selectTranscriptionEnvironment("another-environment" as EnvironmentId);
+    await screen.rerender(<Probe input={probeInput()} />);
+    if (outcome === "succeeds") restored.resolve();
+    else restored.reject(new Error("audio read failed"));
 
-  await vi.waitFor(() => expect(mocks.deletedRecordings).toHaveBeenCalledWith("draft"));
-  expect(mocks.voice!.state.hasRecording).not.toBe(true);
-});
+    await vi.waitFor(() => expect(mocks.deletedRecordings).toHaveBeenCalledWith("draft"));
+    await expectReleasedForNextRecording();
+  },
+);
 
 it("checks for newly recoverable audio before opening the microphone", async () => {
   using _state = setup();

@@ -525,7 +525,12 @@ function createSpeechSession(
           session.revision.revision = saved.draft.revision;
           controller.restoreRecording(uri, saved.draft, transcription);
         })
-        .catch((error: unknown) => {
+        .catch(async (error: unknown) => {
+          if (session.consentWithdrawn) {
+            await platform.discardSavedRecording().catch(() => undefined);
+            notifySavedDictationDiscarded();
+            return;
+          }
           toastManager.add({
             type: "error",
             title: "Could not restore saved dictation",
