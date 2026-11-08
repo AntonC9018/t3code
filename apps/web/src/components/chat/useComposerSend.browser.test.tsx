@@ -222,5 +222,6 @@ it("carries the acknowledgement through a cold plan follow-up", async () => {
   expect(state.turns[0]).toMatchObject({
     threadId,
     message: { allowUncachedRead: true },
+    interactionMode: "plan",
   });
 });

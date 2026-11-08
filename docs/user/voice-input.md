@@ -84,7 +84,9 @@ to resend the saved audio without recording again. After a reload or app restart
 open the original chat to retry its saved recording. Saved audio is removed after
 the text is added to the draft or you explicitly discard it. Keep the browser's
 site data to retain unfinished recordings; they do not sync between devices.
-Retrying needs the audio grant to still be on.
+Changing the transcription environment or turning off sending microphone audio
+also deletes saved recordings, including after a reload; turning sending back on
+does not restore them.
 
 If a question closes before its dictation finishes, the recording stays in the
 original chat. Choose **Recover to draft** to insert it into the chat draft, or

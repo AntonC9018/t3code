@@ -202,7 +202,7 @@ function notifySavedDictationDiscarded() {
   toastManager.add({
     type: "warning",
     title: "Saved dictation discarded",
-    description: "It was recorded for a different transcription destination.",
+    description: "Voice transcription settings changed after it was recorded.",
   });
 }
 
@@ -485,12 +485,6 @@ function createSpeechSession(
         .findRecording()
         .then(async (saved) => {
           if (!saved) return;
-          // Saved audio only ever goes to the destination it was recorded for.
-          if (saved.grantId !== session.grantId || session.consentWithdrawn) {
-            await platform.discardSavedRecording();
-            notifySavedDictationDiscarded();
-            return;
-          }
           if (session.context.retainedDraft?.hasDelivered?.(saved.id)) {
             await platform.discardSavedRecording();
             return;
@@ -510,6 +504,12 @@ function createSpeechSession(
               await platform.discardSavedRecording();
               return;
             }
+          }
+          // Delivered text needs no audio; anything else only goes to the grant it was recorded under.
+          if (saved.grantId !== session.grantId || session.consentWithdrawn) {
+            await platform.discardSavedRecording();
+            notifySavedDictationDiscarded();
+            return;
           }
           // A peer's recording can become recoverable after a failed microphone start.
           if (controller.currentState.phase === "error" && !controller.currentState.hasRecording)
