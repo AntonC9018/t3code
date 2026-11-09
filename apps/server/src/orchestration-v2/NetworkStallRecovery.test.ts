@@ -147,6 +147,8 @@ describe("NetworkStallRecovery", () => {
           type: "message.dispatch",
           threadId: threadA,
           dispatchMode: { type: "queue_after_active" },
+          // A resume after suspend finds Claude's cache cold; the guard must not drop it.
+          allowUncachedRead: true,
         });
         // Run B was silent at the snapshot but is rechecked, and kept, before any interrupt.
         assert.deepStrictEqual(yield* Queue.take(silenceChecks), [runA, true]);

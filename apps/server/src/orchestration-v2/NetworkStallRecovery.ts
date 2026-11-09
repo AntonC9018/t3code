@@ -118,6 +118,8 @@ export const makeRecoverRun = Effect.gen(function* () {
       threadId: input.threadId,
       text: CONTINUE_TEXT,
       attachments: [],
+      // Suspend reads as a network change, and the turn this replaces was already accepted.
+      allowUncachedRead: true,
       dispatchMode: { type: "queue_after_active" },
       createdBy: "user",
       creationSource: "server",
