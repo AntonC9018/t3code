@@ -24,9 +24,8 @@ const CONTINUE_TEXT =
   "The connection to the model was lost after a network change. Continue where you left off.";
 
 /**
- * Active items that only the model stream advances. Anything else, on any run of the thread,
- * is local work an interrupt would kill (Codex stops a provider thread's background commands).
- * Compaction stays excluded: resuming would replace an explicit /compact with a new turn.
+ * Active items that only the model stream advances. Anything else is local work an interrupt
+ * would kill. Compaction stays excluded: resuming would replace an explicit /compact.
  */
 const STREAM_ONLY_ITEM_TYPES: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
   "assistant_message",
@@ -36,7 +35,19 @@ const STREAM_ONLY_ITEM_TYPES: ReadonlySet<OrchestrationV2TurnItem["type"]> = new
   "notification",
   "system_notice",
   "user_message",
+  "error",
 ]);
+
+/**
+ * Codex stops a provider thread's background commands, so commands from any run count. Other
+ * items of an ended run are leftovers its projection never closed, and must not block recovery.
+ */
+const isLocalWork = (
+  item: Pick<OrchestrationV2TurnItem, "type" | "runId">,
+  endedRunIds: ReadonlySet<RunId | null>,
+) =>
+  !STREAM_ONLY_ITEM_TYPES.has(item.type) &&
+  (item.type === "command_execution" || !endedRunIds.has(item.runId));
 
 export type RecoverRunOutcome = "skipped" | "interrupted" | "resumed";
 
@@ -65,7 +76,12 @@ export const makeRecoverRun = Effect.gen(function* () {
     );
     const run = records.runs.find((candidate) => candidate.id === input.runId);
     if (run?.status !== "running") return yield* skip("not-running");
-    const localWork = records.turnItems.find((item) => !STREAM_ONLY_ITEM_TYPES.has(item.type));
+    const endedRunIds = new Set(
+      records.runs
+        .filter((candidate) => ThreadManagement.isTerminalRunStatus(candidate.status))
+        .map((candidate) => candidate.id),
+    );
+    const localWork = records.turnItems.find((item) => isLocalWork(item, endedRunIds));
     if (localWork !== undefined) return yield* skip("local-work", { itemType: localWork.type });
     // Interrupting disposes delegated-completion cohorts and the tasks this run launched.
     const { messages } = yield* threads.getThreadRecords(input.threadId, ["messages"], {

@@ -30,6 +30,7 @@ interface ThreadState {
   readonly delegatedMessage?: boolean;
   readonly appOwnedTask?: boolean;
   readonly activeItems?: ReadonlyArray<{ readonly type: string; readonly runId: RunId }>;
+  readonly endedRuns?: ReadonlyArray<{ readonly id: RunId; readonly status: string }>;
   /** Queued runs before the interrupt, and after it settles. */
   readonly queued?: readonly [before: boolean, after: boolean];
 }
@@ -45,6 +46,7 @@ const projectionOf = (state: ThreadState, interrupted: boolean) =>
           ? { delegatedCompletion: { disposition: "open", nextGeneration: 1, delivery: null } }
           : {}),
       },
+      ...(state.endedRuns ?? []),
       ...((state.queued ?? [false, false])[interrupted ? 1 : 0]
         ? [{ id: RunId.make("run-network-queued"), status: "queued" }]
         : []),
@@ -201,6 +203,33 @@ describe("NetworkStallRecovery", () => {
           state: { runId: runA },
           stillSilent: false,
           outcome: "skipped",
+        },
+        {
+          // A usage-limit failure leaves its error item running after the run fails.
+          name: "failure notice left active by an earlier failed run",
+          state: {
+            runId: runA,
+            endedRuns: [{ id: earlierRun, status: "failed" }],
+            activeItems: [
+              { type: "reasoning", runId: runA },
+              { type: "error", runId: earlierRun },
+            ],
+          },
+          outcome: "resumed",
+        },
+        {
+          name: "approval left waiting by an earlier interrupted run",
+          state: {
+            runId: runA,
+            endedRuns: [{ id: earlierRun, status: "interrupted" }],
+            activeItems: [{ type: "approval_request", runId: earlierRun }],
+          },
+          outcome: "resumed",
+        },
+        {
+          name: "provider error notice on the stalled run",
+          state: { runId: runA, activeItems: [{ type: "error", runId: runA }] },
+          outcome: "resumed",
         },
         {
           name: "streaming plan",
