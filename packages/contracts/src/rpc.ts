@@ -34,7 +34,6 @@ import {
   ChatGptHandoffInput,
   ChatGptHandoffState,
 } from "./providerSetup.ts";
-import { WindscribeStatus, WindscribeOperationError } from "./windscribe.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -531,8 +530,6 @@ export const WS_METHODS = {
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetHostResources: "server.getHostResources",
-  serverGetWindscribeStatus: "server.getWindscribeStatus",
-  serverSetWindscribeEnabled: "server.setWindscribeEnabled",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverGetResourceTelemetryHistory: "server.getResourceTelemetryHistory",
   serverRetryResourceTelemetry: "server.retryResourceTelemetry",
@@ -924,18 +921,6 @@ const WsServerGetProcessDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetProcessDia
   payload: Schema.Struct({}),
   success: ServerProcessDiagnosticsResult,
   error: EnvironmentAuthorizationError,
-});
-
-const WsServerGetWindscribeStatusRpc = Rpc.make(WS_METHODS.serverGetWindscribeStatus, {
-  payload: Schema.Struct({}),
-  success: WindscribeStatus,
-  error: EnvironmentAuthorizationError,
-});
-
-const WsServerSetWindscribeEnabledRpc = Rpc.make(WS_METHODS.serverSetWindscribeEnabled, {
-  payload: Schema.Struct({ enabled: Schema.Boolean }),
-  success: WindscribeStatus,
-  error: Schema.Union([WindscribeOperationError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetHostResourcesRpc = Rpc.make(WS_METHODS.serverGetHostResources, {
@@ -2089,8 +2074,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,
-  WsServerGetWindscribeStatusRpc,
-  WsServerSetWindscribeEnabledRpc,
   WsServerGetProcessResourceHistoryRpc,
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,

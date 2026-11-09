@@ -1602,17 +1602,6 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
-    windscribeStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:windscribe-status",
-      idleTtlMs: 0,
-      staleTimeMs: 0,
-      tag: WS_METHODS.serverGetWindscribeStatus,
-    }),
-    setWindscribeEnabled: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:set-windscribe-enabled",
-      tag: WS_METHODS.serverSetWindscribeEnabled,
-      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
-    }),
     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,

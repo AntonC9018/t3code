@@ -83,8 +83,6 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverGetTraceDiagnostics]: "server",
   [WS_METHODS.serverGetProcessDiagnostics]: "server",
   [WS_METHODS.serverGetHostResources]: "server",
-  [WS_METHODS.serverGetWindscribeStatus]: "server",
-  [WS_METHODS.serverSetWindscribeEnabled]: "server",
   [WS_METHODS.serverGetProcessResourceHistory]: "server",
   [WS_METHODS.serverGetResourceTelemetryHistory]: "server",
   [WS_METHODS.serverRetryResourceTelemetry]: "server",
