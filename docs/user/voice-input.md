@@ -13,8 +13,8 @@ to a named environment on that phone, open **Settings → Voice → Transcribe o
 ## Choose where audio goes
 
 On web and desktop, transcription runs on one of your T3 Code environments.
-Nothing is sent until you choose one: open **Settings → Voice** and turn on
-**Send microphone audio**. The audio goes to the environment shown under
+Nothing is sent until you choose one: press the microphone and allow it, or open
+**Settings → Voice** and turn on **Send microphone audio**. The audio goes to the environment shown under
 **Transcription environment**, which defaults to the primary environment.
 Microphone audio recorded on this device is sent to that environment over your
 authenticated connection, transcribed there, and discarded. The choice is saved

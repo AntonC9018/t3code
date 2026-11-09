@@ -97,7 +97,9 @@ export function VoiceInputSetup(props: {
   model: EnvironmentSpeechModel | null;
   downloading: boolean;
   error: string | null;
+  consent: boolean;
   onOpenChange(open: boolean): void;
+  onAllowAudio(): void;
   onDownload(): void;
   onCancelDownload(): void;
   onStartRecording(): void;
@@ -113,6 +115,30 @@ export function VoiceInputSetup(props: {
     props.onOpenChange(false);
     void navigate({ to: "/settings/voice", hash });
   };
+
+  const environmentLabel = environment?.label ?? "your transcription environment";
+
+  if (props.consent) {
+    return (
+      <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+        <WizardPopup>
+          <WizardHeader
+            title="Turn on voice input"
+            description={`Microphone audio is sent to ${environmentLabel} to transcribe, then discarded. This choice is saved on this device only.`}
+          />
+          <WizardFooter>
+            <Button
+              variant="outline"
+              onClick={() => openSettings("voice-transcription-destination")}
+            >
+              Choose in Voice settings
+            </Button>
+            <Button onClick={props.onAllowAudio}>Send audio to {environmentLabel}</Button>
+          </WizardFooter>
+        </WizardPopup>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>

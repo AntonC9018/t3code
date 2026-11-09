@@ -188,7 +188,7 @@ and use **Attach again** or remove the missing file before sending.
 
 Use the composer's microphone or `mod+shift+d` to dictate into your draft. Audio
 is transcribed on an environment you choose in **Settings → Voice**; nothing is
-sent until you choose one. See [Voice input](./voice-input.md).
+sent until you allow it, which the microphone asks the first time. See [Voice input](./voice-input.md).
 
 ## Voice input on mobile
 

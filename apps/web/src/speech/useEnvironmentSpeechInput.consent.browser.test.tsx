@@ -236,18 +236,51 @@ function expectNoAudioSent() {
 }
 
 it.each([
-  ["nothing is configured", {}],
+  ["nothing is configured", {}, "primary-env"],
   // A transcription host picked by an earlier PoC build is not consent.
-  ["a legacy transcription host is configured", { voiceTranscriptionEnvironmentId: "env-a" }],
-])("stays local-only when %s, even with voice-capable environments", async (_, legacy) => {
+  [
+    "a legacy transcription host is configured",
+    { voiceTranscriptionEnvironmentId: "env-a" },
+    "env-a",
+  ],
+])(
+  "asks before sending audio when %s, even with voice-capable environments",
+  async (_, legacy, offered) => {
+    setup();
+    mocks.settings = { ...legacy, speechSilenceFiltering: true };
+    await using _screen = await render(<Probe />);
+    expect(mocks.voice.available).toBe(true);
+    expect(mocks.voice.transcriptionEnvironmentId).toBe(offered);
+    await act(() => mocks.voice.start());
+    expectNoAudioSent();
+    expect(mocks.committed).not.toHaveBeenCalled();
+    expect(mocks.voice.setup).toMatchObject({ open: true, consent: true });
+  },
+);
+
+it("hides voice input without consent when no offered environment can transcribe", async () => {
   setup();
-  mocks.settings = { ...legacy, speechSilenceFiltering: true };
+  mocks.voiceCapable.delete("primary-env");
   await using _screen = await render(<Probe />);
+  expect(mocks.voice.available).toBe(false);
   await act(() => mocks.voice.start());
   expectNoAudioSent();
-  expect(mocks.committed).not.toHaveBeenCalled();
-  expect(mocks.voice.available).toBe(false);
-  expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
+  expect(mocks.voice.setup.open).toBe(false);
+});
+
+it("sends audio to the offered environment only after the user allows it", async () => {
+  setup();
+  await using screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  await act(() => mocks.voice.setup.allowAudio());
+  await screen.rerender(<Probe />);
+  expect(mocks.voice.setup.open).toBe(false);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("recording");
+  await act(() => mocks.voice.stop());
+  expect(new Set([...mocks.microphoneRequests, ...mocks.transcribeCalls])).toEqual(
+    new Set(["primary-env"]),
+  );
 });
 
 it.each([true, false])(
@@ -378,7 +411,8 @@ it("revokes across windows even before the storage event and survives stale pref
     storage.removeItem(key);
     expect(canSend()).toBe(false);
     writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, wordWrap: false });
-    await vi.waitFor(() => expect(mocks.voice.available).toBe(false));
+    // Without the grant the mic falls back to offering the primary, which asks first.
+    await vi.waitFor(() => expect(mocks.voice.transcriptionEnvironmentId).toBe("primary-env"));
     expect(mocks.voice.state.phase).toBe("idle");
     await act(() => mocks.voice.stop());
     expect(mocks.transcribeCalls).toEqual([]);

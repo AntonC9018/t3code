@@ -108,6 +108,8 @@ export function TextFieldSpeechControls({
         model={speech.setup.model}
         downloading={speech.setup.downloading}
         error={speech.setup.error}
+        consent={speech.setup.consent}
+        onAllowAudio={speech.setup.allowAudio}
         onOpenChange={speech.setup.setOpen}
         onDownload={() => void speech.setup.download()}
         onCancelDownload={() => void speech.setup.cancelDownload()}

@@ -37,7 +37,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { toastManager } from "../components/ui/toast";
 import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
 import { runtime } from "../lib/runtime";
-import { useEnvironment } from "../state/environments";
+import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../state/session";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { isVoiceRecordingLocked, recordingStorage } from "./recordingStorage";
@@ -45,7 +45,12 @@ import {
   notifyVoiceRecordingRecoveryChange,
   subscribeVoiceRecordingRecovery,
 } from "./recordingRecoveryEvents";
-import { bindAudioGrant, readCleanupGrant, useAudioGrant } from "./voiceConsent";
+import {
+  bindAudioGrant,
+  chooseAudioDestination,
+  readCleanupGrant,
+  useAudioGrant,
+} from "./voiceConsent";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 const WAITING_STATE: VoiceInputState = { phase: "preparing", error: null, errorAction: null };
@@ -55,6 +60,7 @@ const INITIAL_SETUP = {
   model: null as EnvironmentSpeechModel | null,
   downloading: false,
   error: null as string | null,
+  consent: false,
 };
 
 // Every mounted editor shares one status probe per destination; starting a recording refreshes it.
@@ -136,24 +142,32 @@ type SpeechSessionContext = {
 };
 
 /**
- * Microphone audio leaves this device only for the environment the person chose in
- * Voice settings. Nothing is inferred from the primary or the draft's environment, and
- * the recording is abandoned the moment that choice changes. A dropped connection abandons it
- * too, unless the recording is retained: that audio waits to retry on the next connection.
+ * Audio goes only to the environment chosen on this device, never a fallback; changing that
+ * choice or losing the connection abandons the recording unless it is retained for retry.
+ * Without a choice, the Voice settings environment is only offered so the mic can ask first.
  */
 export function useVoiceTranscriptionDestination() {
   const hydrated = useClientSettingsHydrated();
   const grant = useAudioGrant();
+  const configuredEnvironmentId = useClientSettings(
+    (settings) => settings.voiceTranscriptionEnvironmentId,
+  );
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environmentId = hydrated && grant ? grant.destination.environmentId : null;
-  const environment = useEnvironment(environmentId);
-  const connection = Option.getOrNull(usePreparedConnection(environmentId));
-  const canDictate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const offeredEnvironmentId =
+    hydrated && !grant ? (configuredEnvironmentId ?? primaryEnvironmentId) : null;
+  const shownEnvironmentId = environmentId ?? offeredEnvironmentId;
+  const environment = useEnvironment(shownEnvironmentId);
+  const connection = Option.getOrNull(usePreparedConnection(shownEnvironmentId));
+  const canDictate = useEnvironmentScope(shownEnvironmentId, AuthOrchestrationOperateScope);
   const supported = environment?.serverConfig?.environment.capabilities.voiceTranscription === true;
+  const ready = supported && canDictate ? connection : null;
   return {
     environmentId,
+    offeredEnvironmentId: ready ? offeredEnvironmentId : null,
     grantId: grant?.id ?? null,
     label: environment?.label ?? null,
-    prepared: supported && canDictate ? connection : null,
+    prepared: environmentId ? ready : null,
   };
 }
 
@@ -860,6 +874,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   });
 
   const start = useStableCallback(async () => {
+    if (destination.offeredEnvironmentId && !latestInputRef.current.disabled) {
+      setSetup({ ...INITIAL_SETUP, open: true, consent: true });
+      return;
+    }
     const request = ++startRequestRef.current;
     const expectedController = sessionRef.current?.controller;
     const expectedOwner = latestInputRef.current.ownerKey;
@@ -976,20 +994,26 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   return {
     available:
-      ((status?.prepared === prepared && status.value?.supported !== false) ||
+      (destination.offeredEnvironmentId !== null ||
+        (status?.prepared === prepared && status.value?.supported !== false) ||
         (retainedKey !== null && state.phase !== "idle")) &&
       typeof navigator !== "undefined" &&
       Boolean(navigator.mediaDevices?.getUserMedia) &&
       typeof AudioWorkletNode !== "undefined",
     canStart: prepared !== null,
     status: currentStatus,
-    transcriptionEnvironmentId: destination.environmentId,
+    transcriptionEnvironmentId: destination.environmentId ?? destination.offeredEnvironmentId,
     transcriptionEnvironmentLabel: destination.label,
     setup: {
       ...setup,
       setOpen: (open: boolean) => setSetup((current) => ({ ...current, open })),
       download: downloadSetupModel,
       cancelDownload: cancelSetupDownload,
+      allowAudio: () => {
+        const environmentId = destination.offeredEnvironmentId;
+        if (environmentId) chooseAudioDestination({ kind: "environment", environmentId });
+        setSetup(INITIAL_SETUP);
+      },
       startRecording: async () => {
         setSetup((current) => ({ ...current, open: false }));
         await start();
