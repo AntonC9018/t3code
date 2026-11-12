@@ -33,10 +33,12 @@ import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as DelegationCooldowns from "../persistence/DelegationCooldowns.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
+  Layer.provide(Layer.mock(DelegationCooldowns.DelegationCooldowns)({})),
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );

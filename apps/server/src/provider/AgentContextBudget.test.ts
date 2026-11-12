@@ -1,3 +1,4 @@
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -109,6 +110,7 @@ const codexAdditionalContext = () =>
     .join("");
 
 const layerAdvertisedTools = McpHttpServer.layerTools.pipe(
+  Layer.provide(SqlitePersistence.layerMemory.pipe(Layer.provide(NodeServices.layer))),
   Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provide(toolHandlerServices),
 );

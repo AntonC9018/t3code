@@ -462,7 +462,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
       ),
   });
   return Layer.merge(
-    McpHttpServer.layerOrchestratorToolkit,
+    McpHttpServer.layerOrchestratorToolkit.pipe(Layer.provide(SqlitePersistence.layerMemory)),
     McpHttpServer.layerProjectRegistration,
   ).pipe(
     Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
@@ -565,6 +565,7 @@ const makeLaptop = (
       Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
     );
     const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
+      Layer.provide(SqlitePersistence.layerMemory),
       Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
       Layer.provideMerge(
         RemoteDelegation.layer.pipe(

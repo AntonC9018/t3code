@@ -8818,7 +8818,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.completionWake === "always" &&
       isTerminalDelegatedTaskStatus(task.status) &&
       parentRun !== undefined &&
-      hasLiveRun({ runs: [parentRun] })
+      (task.completionWake === "never" || hasLiveRun({ runs: [parentRun] }))
         ? yield* planDelegatedCompletionDelivery({
             parentProjection,
             parentRun,
@@ -12582,8 +12582,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     // settled_only relies on a blocking wait that ends with the spawning turn; later results need another delivery path.
     if (
-      (input.task.completionWake ?? "settled_only") === "settled_only" &&
-      hasLiveRun({ runs: [input.parentRun] })
+      input.updatedTask.completionWake === "never" ||
+      ((input.task.completionWake ?? "settled_only") === "settled_only" &&
+        hasLiveRun({ runs: [input.parentRun] }))
     ) {
       return {
         task: input.updatedTask,
@@ -13182,6 +13183,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (task) =>
           task.origin === "app_owned" &&
           task.runId === parentRun.id &&
+          task.completionWake !== "never" &&
           isTerminalDelegatedTaskStatus(task.status) &&
           (task.completionDelivery?.state === "pending" ||
             nextTaskStates.get(task.id)?.state === "pending"),
@@ -13298,6 +13300,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               (task) =>
                 task.origin === "app_owned" &&
                 task.runId === parentRun.id &&
+                task.completionWake !== "never" &&
                 task.completionDelivery?.state === "pending" &&
                 isTerminalDelegatedTaskStatus(task.status) &&
                 (!parentIsLive || task.completionWake === "always"),

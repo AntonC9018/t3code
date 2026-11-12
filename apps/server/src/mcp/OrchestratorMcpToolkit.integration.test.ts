@@ -56,6 +56,7 @@ import * as PeerLinkRequests from "../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
+  Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );
@@ -216,17 +217,36 @@ describe("orchestrator MCP toolkit", () => {
           },
           CodexOrchestratorReplayHarness,
         );
+        const disabledInstanceId = ProviderInstanceId.make("codex-disabled");
+        const layerSettings = ServerSettings.layerTest({
+          delegationRoutes: {
+            replay: [
+              { instanceId: disabledInstanceId, model: codexModel, allowPrivate: true },
+              { instanceId: codexInstanceId, model: codexModel, allowPrivate: true },
+            ],
+          },
+        });
         const layerOrchestration = Layer.merge(
           layerOrchestrator,
           ThreadManagementService.layer.pipe(
             Layer.provide(layerOrchestrator),
-            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(layerSettings),
             Layer.provide(
               CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
             ),
           ),
         );
         const layerProviderRegistry = ProviderRegistryMock.layer([
+          {
+            ...makeProviderSnapshot({
+              instanceId: disabledInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: codexModel,
+            }),
+            enabled: false,
+            installed: false,
+            status: "disabled",
+          },
           makeProviderSnapshot({
             instanceId: codexInstanceId,
             driver: ProviderDriverKind.make("codex"),
@@ -242,7 +262,7 @@ describe("orchestrator MCP toolkit", () => {
             ),
           ),
           Layer.provide(layerProviderRegistry),
-          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(layerSettings),
           Layer.provide(layerUnusedScheduledTaskStub),
           Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
           Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
@@ -332,10 +352,7 @@ describe("orchestrator MCP toolkit", () => {
             yield* orchestrator.getThreadEventSequence(parentThreadId);
           const delegatedCall = yield* invoke("delegate_task", {
             task: delegatedPrompt,
-            target: {
-              providerInstanceId: codexInstanceId,
-              model: codexModel,
-            },
+            target: { route: "replay" },
             mode: "async",
             clientRequestId: "delegate-codex-replay-1",
           });
@@ -343,6 +360,11 @@ describe("orchestrator MCP toolkit", () => {
             delegatedCall.structuredContent,
           ).pipe(Effect.orDie);
           expect(delegatedStart.childRunId).not.toBeNull();
+          expect(delegatedStart.providerInstanceId).toBe(codexInstanceId);
+          expect(delegatedStart.route?.name).toBe("replay");
+          expect(delegatedStart.route?.skipped).toHaveLength(1);
+          expect(delegatedStart.route?.skipped[0]?.providerInstanceId).toBe(disabledInstanceId);
+          expect(delegatedStart.route?.skipped[0]?.reason).toContain("disabled");
           yield* orchestrator
             .streamStoredEventsFrom({
               threadId: parentThreadId,

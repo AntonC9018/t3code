@@ -71,7 +71,7 @@ const threadMetadataDependencies = [
 
 const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description:
-    "List providers, models, options, and runtime modes for `delegate_task`. Short list. `search` finds others. Any catalog model works.",
+    "List providers, models, options, and runtime modes for `delegate_task`. Routes list ordered entries and the next eligible model for private work. `search` finds other models. Any catalog model works.",
   parameters: OrchestratorMcpCapabilitiesInput,
   success: OrchestratorMcpCapabilitiesResult,
   failure: OrchestratorMcpFailure,
@@ -85,7 +85,7 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Start one child agent with only `task`. No parent history. Separate checkout or PR per child: `isolation:'worktree'`. Keep `taskId` for `task_status` and `task_cancel`. No secrets in `task`.",
+    "Start one child agent with only `task`. No parent history. Separate checkout or PR per child: `isolation:'worktree'`. Use `target.route` for a configured fallback chain; async waits until an entry responds before returning its stable `taskId`. `target.privacy` defaults to private; public permits third-party entries. Keep `taskId` for `task_status` and `task_cancel`. No secrets in `task`.",
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,

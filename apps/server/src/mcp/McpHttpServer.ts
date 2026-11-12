@@ -25,6 +25,7 @@ import {
 
 import packageJson from "../../package.json" with { type: "json" };
 import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
+import * as DelegationCooldowns from "../persistence/DelegationCooldowns.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceService from "../device/DeviceService.ts";
@@ -1153,7 +1154,10 @@ export const layerPreviewToolkit = Layer.mergeAll(
 export const layerOrchestratorToolkit = toolkitRegistration(
   OrchestratorToolkit,
   OrchestratorHandlers.layer,
-).pipe(Layer.provide(OrchestratorMcpService.layer), Layer.provide(ThreadMetadataMcpService.layer));
+).pipe(
+  Layer.provide(OrchestratorMcpService.layer.pipe(Layer.provide(DelegationCooldowns.layer))),
+  Layer.provide(ThreadMetadataMcpService.layer),
+);
 
 export const layerThreadToolkit = toolkitRegistration(ThreadToolkit, ThreadHandlers.layer);
 

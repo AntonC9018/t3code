@@ -300,7 +300,11 @@ it.effect.each([
 it.effect("lets a cut blocking delegate_task wake its parent like an async task", () =>
   Effect.gen(function* () {
     const base = makeProjection();
-    const task = (id: string, completionWake: "settled_only" | "always", status: string) => ({
+    const task = (
+      id: string,
+      completionWake: "settled_only" | "always" | "never",
+      status: string,
+    ) => ({
       id: NodeId.make(id),
       threadId,
       runId,
@@ -317,6 +321,8 @@ it.effect("lets a cut blocking delegate_task wake its parent like an async task"
         task("task:waited", "settled_only", "running"),
         task("task:async", "always", "running"),
         task("task:finished", "settled_only", "completed"),
+        task("task:selecting", "never", "running"),
+        task("task:selected-terminal", "never", "completed"),
       ],
     } as unknown as OrchestrationV2ThreadProjection;
     let committed: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | undefined;
@@ -348,7 +354,11 @@ it.effect("lets a cut blocking delegate_task wake its parent like an async task"
     );
     assert.deepEqual(
       upgraded.map((row) => ({ id: row.id, completionWake: row.completionWake })),
-      [{ id: NodeId.make("task:waited"), completionWake: "always" }],
+      [
+        { id: NodeId.make("task:waited"), completionWake: "always" },
+        { id: NodeId.make("task:selecting"), completionWake: "always" },
+        { id: NodeId.make("task:selected-terminal"), completionWake: "always" },
+      ],
     );
   }),
 );

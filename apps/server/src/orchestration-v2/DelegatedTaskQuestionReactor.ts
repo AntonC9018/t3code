@@ -137,6 +137,7 @@ const make = Effect.gen(function* () {
       );
       if (
         task === undefined ||
+        task.completionWake === "never" ||
         parent.thread.archivedAt !== null ||
         parent.thread.deletedAt !== null
       ) {

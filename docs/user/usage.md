@@ -200,3 +200,18 @@ Use `Ctrl+Shift+1/2/3/4` (`Cmd+Shift+1/2/3/4` on macOS) for the past
 24 hours, 7 days, 30 days, or 90 days. Period shortcuts do nothing on Limits.
 Press `Escape` to return to the previous page. Customize these shortcuts in
 **Settings → Keybindings**.
+
+## Delegation routes
+
+Ask an agent in a T3 thread to delegate using a configured route, such as `cheap-scan`.
+Routes try their models in order, skipping unavailable accounts, exhausted usage windows,
+and models that recently failed. `orchestrator_capabilities` lists configured routes and
+which entry is eligible for private work.
+
+A route can replace a child that fails or stays silent before its first response. Once
+it responds or starts a tool, automatic fallback ends. Even an async delegation waits for
+this initial selection before returning its task ID. The result names the chosen model
+and explains skipped entries.
+
+Work is private by default. Use `target.privacy: "public"` only when the task and checkout
+contain no private data, or you have explicitly allowed the route's third-party models.

@@ -43,6 +43,7 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
+import * as DelegationCooldowns from "../persistence/DelegationCooldowns.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 
 const driver = ProviderDriverKind.make("claudeAgent");
@@ -174,6 +175,7 @@ it.effect.each([
         );
         const layerTest = Layer.merge(
           OrchestratorMcpService.layer.pipe(
+            Layer.provide(Layer.mock(DelegationCooldowns.DelegationCooldowns)({})),
             Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
             Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
           ),

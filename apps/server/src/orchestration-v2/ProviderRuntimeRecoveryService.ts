@@ -583,8 +583,8 @@ export const make = Effect.gen(function* () {
           task.origin !== "app_owned" ||
           task.runId === null ||
           !cutRunIds.has(task.runId) ||
-          task.completionWake !== "settled_only" ||
-          !isOrchestrationV2WorkActive(task.status)
+          (task.completionWake !== "settled_only" && task.completionWake !== "never") ||
+          (!isOrchestrationV2WorkActive(task.status) && task.completionWake !== "never")
         )
           continue;
         events.push({

@@ -37,6 +37,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
@@ -45,6 +46,7 @@ import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1Thre
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as DelegationCooldowns from "../persistence/DelegationCooldowns.ts";
 import {
   DispatchModeLimit,
   type DispatchModeRefusal,
@@ -74,6 +76,13 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
+  Layer.provide(
+    Layer.succeed(DelegationCooldowns.DelegationCooldowns, {
+      routePlan: (_key, entries) => Effect.succeed(entries),
+      listActive: () => Effect.succeed([]),
+      record: () => Effect.void,
+    }),
+  ),
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );
@@ -1833,6 +1842,234 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect.each([
+    "early failure",
+    "rejected first",
+    "no output",
+    "work before failure",
+    "user stop",
+    "disabled first entry",
+  ] as const)("route selection handles %s and replays the same public task", (scenario) =>
+    Effect.gen(function* () {
+      const alternate = ProviderInstanceId.make("route-alternate");
+      const subscribed = yield* Deferred.make<void>();
+      const children = new Map<ThreadId, OrchestrationV2ThreadProjection>();
+      const tasks: Array<OrchestrationV2ThreadProjection["subagents"][number]> = [];
+      const receipts = new Map<CommandId, unknown>();
+      const commands: Array<OrchestrationV2ServerCommand> = [];
+      const cooldownRecords: Array<DelegationCooldowns.DelegationCooldown> = [];
+      const firstProvider = providerSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        model: "gpt-5.4",
+        enabled: scenario !== "disabled first entry",
+      });
+      const savedPlans = new Map<
+        string,
+        ReadonlyArray<import("@t3tools/contracts").DelegationRouteEntry>
+      >();
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(DelegationCooldowns.DelegationCooldowns, {
+          routePlan: (key, entries) =>
+            Effect.sync(() => {
+              if (!savedPlans.has(key)) savedPlans.set(key, entries);
+              return savedPlans.get(key)!;
+            }),
+          listActive: () => Effect.succeed(cooldownRecords),
+          record: (entry) =>
+            Effect.sync(() => {
+              cooldownRecords.push(entry);
+            }),
+        }),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: (id) => Effect.sync(() => receipts.has(id)),
+          getThreadRecords: (id) =>
+            Effect.sync(() =>
+              id === parentThreadId ? parentProjection(tasks) : children.get(id)!,
+            ),
+          getThreadEventSequence: () => Effect.succeed(0),
+          delegatedTaskResultPending: () => Effect.succeed(false),
+          streamStoredEventsFrom: () =>
+            Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+              Stream.drain,
+              Stream.concat(Stream.never),
+            ),
+          dispatch: (command) =>
+            command.type === "delegated_task.request" &&
+            command.modelSelection.instanceId === codexInstanceId &&
+            scenario === "rejected first"
+              ? Effect.gen(function* () {
+                  receipts.set(command.commandId, { rejected: true });
+                  return yield* new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause: "Provider failed to start",
+                  });
+                })
+              : Effect.sync(() => {
+                  commands.push(command);
+                  const receipt = receipts.get(command.commandId);
+                  if (receipt !== undefined) return receipt as never;
+                  if (command.type === "thread.stop") {
+                    const child = children.get(command.threadId)!;
+                    children.set(command.threadId, {
+                      ...child,
+                      runs: child.runs.map((run) => ({ ...run, status: "interrupted" })),
+                    });
+                  }
+                  if (command.type === "delegated_task.completion-delivery.dispose") {
+                    const task = tasks.find((candidate) => candidate.id === command.taskId)!;
+                    tasks.splice(tasks.indexOf(task), 1, {
+                      ...task,
+                      completionDelivery: { state: "disposed" },
+                    } as typeof task);
+                  }
+                  if (command.type !== "delegated_task.request")
+                    return { sequence: 1, storedEvents: [] } as never;
+                  const index = tasks.length;
+                  const childId = ThreadId.make(`route-child-${index}`);
+                  const runId = RunId.make(`route-run-${index}`);
+                  const id = NodeId.make(`route-task-${index}`);
+                  const first = command.modelSelection.instanceId === codexInstanceId;
+                  const status =
+                    (first && scenario === "early failure") ||
+                    (first && scenario === "work before failure")
+                      ? "failed"
+                      : first && scenario === "user stop"
+                        ? "interrupted"
+                        : "running";
+                  const task = {
+                    id,
+                    threadId: parentThreadId,
+                    runId: parentRunId,
+                    parentNodeId,
+                    origin: "app_owned",
+                    providerInstanceId: command.modelSelection.instanceId,
+                    driver: "codex",
+                    childThreadId: childId,
+                    model: command.modelSelection.model,
+                    status,
+                    result: null,
+                  } as OrchestrationV2ThreadProjection["subagents"][number];
+                  tasks.push(task);
+                  children.set(childId, {
+                    ...childProjection,
+                    thread: { ...childProjection.thread, id: childId },
+                    nodes: [],
+                    runs: [
+                      {
+                        id: runId,
+                        ordinal: 1,
+                        status,
+                        delegatedTaskId: id,
+                        modelSelection: command.modelSelection,
+                        startedAt: DateTime.makeUnsafe(0),
+                        completedAt: null,
+                      },
+                    ],
+                    turnItems:
+                      (status === "running" && !(first && scenario === "no output")) ||
+                      scenario === "work before failure"
+                        ? [
+                            {
+                              id: "work",
+                              runId,
+                              type: "command_execution",
+                              input: "write file",
+                              output: "",
+                              status: "running",
+                            },
+                          ]
+                        : [],
+                  } as unknown as OrchestrationV2ThreadProjection);
+                  const accepted = {
+                    sequence: 1,
+                    storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                  };
+                  receipts.set(command.commandId, accepted);
+                  return accepted as never;
+                }),
+        }),
+        providerRegistryLayer([
+          firstProvider,
+          providerSnapshot({
+            instanceId: alternate,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId, alternate]),
+        ServerSettings.layerTest({
+          providerInstances: { [alternate]: { driver: "codex", enabled: true, config: {} } },
+          delegationRoutes: {
+            cheap: [
+              { instanceId: codexInstanceId, model: "gpt-5.4", allowPrivate: true },
+              { instanceId: alternate, model: "gpt-5.4", allowPrivate: true },
+            ],
+          },
+        }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const input = {
+          task: "Check the source.",
+          target: { route: "cheap" },
+          mode: "async",
+          clientRequestId: "route-replay",
+        } as const;
+        const pending = yield* service.delegateTask(scope, input).pipe(Effect.forkChild);
+        if (scenario === "no output") {
+          yield* Deferred.await(subscribed);
+          yield* TestClock.adjust(90_000);
+        }
+        const selected = yield* Fiber.join(pending);
+        const fallback =
+          scenario === "early failure" ||
+          scenario === "rejected first" ||
+          scenario === "no output" ||
+          scenario === "disabled first entry";
+        assert.equal(selected.providerInstanceId, fallback ? alternate : codexInstanceId);
+        assert.equal(selected.route?.skipped.length, fallback ? 1 : 0);
+        assert.equal(
+          cooldownRecords.length,
+          scenario === "early failure" || scenario === "no output" || scenario === "rejected first"
+            ? 1
+            : 0,
+        );
+        if (scenario === "disabled first entry") {
+          Object.assign(firstProvider, {
+            enabled: true,
+            installed: true,
+            status: "ready",
+            auth: { status: "authenticated" },
+          });
+          const settings = yield* ServerSettings.ServerSettingsService;
+          yield* settings.updateSettings({ delegationRoutes: {} });
+        }
+        assert.equal((yield* service.delegateTask(scope, input)).taskId, selected.taskId);
+        assert.equal(
+          tasks.length,
+          scenario === "early failure" || scenario === "no output" ? 2 : 1,
+        );
+        if (scenario === "early failure") {
+          const stop = commands.findIndex((command) => command.type === "thread.stop");
+          const requests = commands.flatMap((command, index) =>
+            command.type === "delegated_task.request" ? [index] : [],
+          );
+          assert.isTrue(stop > requests[0]! && stop < requests[1]!);
+        }
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provideMerge(dependencies))));
+    }),
+  );
+
   it.effect("driver-only delegation skips an instance the project turned off", () =>
     Effect.gen(function* () {
       const altInstanceId = ProviderInstanceId.make("codex-alt");
@@ -2781,6 +3018,13 @@ describe("OrchestratorMcpService provider resolution", () => {
       modes?: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput["threadMode"]>>,
     ) =>
       OrchestratorMcpService.layer.pipe(
+        Layer.provide(
+          Layer.succeed(DelegationCooldowns.DelegationCooldowns, {
+            routePlan: (_key, entries) => Effect.succeed(entries),
+            listActive: () => Effect.succeed([]),
+            record: () => Effect.void,
+          }),
+        ),
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
         Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)(git)),
         Layer.provide(

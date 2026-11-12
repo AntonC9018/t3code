@@ -574,6 +574,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       const runId = RunId.make("mailbox-mixed-parent");
       const taskId = NodeId.make("mailbox-mixed-always");
       const siblingId = NodeId.make("mailbox-mixed-settled-only");
+      const suppressedSiblingId = NodeId.make("mailbox-mixed-never");
       const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
       yield* seedParentWithTerminalTask({
         threadId,
@@ -624,20 +625,23 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
               delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [taskId] },
             },
           },
-          {
-            id: EventId.make(`event:${siblingId}`),
+          ...[
+            { id: siblingId, completionWake: "settled_only" as const },
+            { id: suppressedSiblingId, completionWake: "never" as const },
+          ].map(({ id, completionWake }) => ({
+            id: EventId.make(`event:${id}`),
             type: "subagent.updated" as const,
             threadId,
             runId,
-            nodeId: siblingId,
+            nodeId: id,
             occurredAt: now,
             payload: {
               ...task,
-              id: siblingId,
-              completionWake: "settled_only" as const,
+              id,
+              completionWake,
               completionDelivery: { state: "pending" as const, observedByRunId: null },
             },
-          },
+          })),
         ],
       });
       yield* orchestrator.dispatch({
@@ -649,6 +653,10 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       const accepted = yield* orchestrator.getThreadProjection(threadId);
       const cohort = accepted.runs.find((row) => row.id === runId)?.delegatedCompletion;
       assert.deepEqual(cohort?.delivery?.taskIds, [siblingId]);
+      assert.equal(
+        accepted.subagents.find((row) => row.id === suppressedSiblingId)?.completionDelivery?.state,
+        "pending",
+      );
       assert.equal(
         accepted.subagents.find((row) => row.id === siblingId)?.completionDelivery?.state,
         "claimed",
@@ -1272,7 +1280,7 @@ const seedRestartCancelledChild = (input: {
   readonly parentRunId: RunId;
   readonly rootNodeId: NodeId;
   readonly name: string;
-  readonly completionWake: "always" | "settled_only";
+  readonly completionWake: "always" | "settled_only" | "never";
   readonly continuationPending: boolean;
   readonly runStatus?: "cancelled" | "completed";
   readonly lostWork?: OrchestrationV2Run["restartCancelledBackgroundWork"];
@@ -3422,70 +3430,72 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       }),
   );
 
-  it.effect("wakes the parent for a settled_only task once its spawning turn ended", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const now = yield* DateTime.now;
-      const threadId = ThreadId.make("thread:settled-only-restart");
-      const projectId = ProjectId.make("project:settled-only-restart");
-      const runId = RunId.make("run:settled-only-restart");
-      const rootNodeId = NodeId.make("node:settled-only-restart-root");
-      yield* seedParentWithTerminalTask({
-        threadId,
-        projectId,
-        runId,
-        rootNodeId,
-        taskId: NodeId.make("node:settled-only-restart-settled"),
-        deliveryState: "delivered",
-        now,
-      });
-      yield* eventSink.write({
-        commandId: reconcileCommandId("settled-only-restart"),
-        events: [
-          runEvent({
-            threadId,
-            runId,
-            ordinal: 1,
-            status: "cancelled",
-            now,
-            providerThreadId: parentProviderThreadId(threadId),
-            userMessageId: MessageId.make(`message:seed-user:${threadId}`),
-            delegatedCompletion: { disposition: "open", nextGeneration: 2, delivery: null },
-          }),
-          runEvent({
-            threadId,
-            runId: RunId.make("run:settled-only-restart:continuation"),
-            ordinal: 2,
-            status: "running",
-            now,
-            providerThreadId: parentProviderThreadId(threadId),
-          }),
-        ],
-      });
-      const child = yield* seedRestartCancelledChild({
-        parentThreadId: threadId,
-        projectId,
-        parentRunId: runId,
-        rootNodeId,
-        name: "settled-only-restart-child",
-        completionWake: "settled_only",
-        continuationPending: false,
-        now,
-      });
+  it.effect.each(["settled_only", "never"] as const)(
+    "handles %s completion after its spawning turn ended",
+    (completionWake) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`thread:settled-only-restart-${completionWake}`);
+        const projectId = ProjectId.make(`project:settled-only-restart-${completionWake}`);
+        const runId = RunId.make(`run:settled-only-restart-${completionWake}`);
+        const rootNodeId = NodeId.make(`node:settled-only-restart-root-${completionWake}`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId,
+          runId,
+          rootNodeId,
+          taskId: NodeId.make(`node:settled-only-restart-settled-${completionWake}`),
+          deliveryState: "delivered",
+          now,
+        });
+        yield* eventSink.write({
+          commandId: reconcileCommandId(`settled-only-restart-${completionWake}`),
+          events: [
+            runEvent({
+              threadId,
+              runId,
+              ordinal: 1,
+              status: "cancelled",
+              now,
+              providerThreadId: parentProviderThreadId(threadId),
+              userMessageId: MessageId.make(`message:seed-user:${threadId}`),
+              delegatedCompletion: { disposition: "open", nextGeneration: 2, delivery: null },
+            }),
+            runEvent({
+              threadId,
+              runId: RunId.make(`run:settled-only-restart:continuation-${completionWake}`),
+              ordinal: 2,
+              status: "running",
+              now,
+              providerThreadId: parentProviderThreadId(threadId),
+            }),
+          ],
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId: threadId,
+          projectId,
+          parentRunId: runId,
+          rootNodeId,
+          name: `settled-only-restart-child-${completionWake}`,
+          completionWake,
+          continuationPending: false,
+          now,
+        });
 
-      yield* orchestrator.recoverDelegatedTasks;
+        yield* orchestrator.recoverDelegatedTasks;
 
-      const projection = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(
-        projection.subagents.find((row) => row.id === child.taskId)?.completionDelivery?.state,
-        "claimed",
-      );
-      assert.deepEqual(
-        projection.runs.find((row) => row.id === runId)?.delegatedCompletion?.delivery?.taskIds,
-        [child.taskId],
-      );
-    }),
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          projection.subagents.find((row) => row.id === child.taskId)?.completionDelivery?.state,
+          completionWake === "never" ? undefined : "claimed",
+        );
+        assert.deepEqual(
+          projection.runs.find((row) => row.id === runId)?.delegatedCompletion?.delivery?.taskIds,
+          completionWake === "never" ? undefined : [child.taskId],
+        );
+      }),
   );
 
   it.effect.each(["a background command", "a nested subagent"] as const)(
