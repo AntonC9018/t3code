@@ -41,6 +41,7 @@ import {
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
+import { DelegationRouteEntry } from "./delegationRoute.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
@@ -126,6 +127,48 @@ export const OrchestratorMcpTarget = Schema.Struct({
 });
 export type OrchestratorMcpTarget = typeof OrchestratorMcpTarget.Type;
 
+const ROUTE_EXCLUSIVE_TARGET_KEYS = [
+  "providerInstanceId",
+  "driverKind",
+  "model",
+  "environmentId",
+  "projectId",
+] as const;
+
+export const OrchestratorMcpDelegateTarget = Schema.Struct({
+  ...OrchestratorMcpTarget.fields,
+  route: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description:
+        "Route from `orchestrator_capabilities` `routes`. T3 tries its models in order and falls back on early failure. `options` still override.",
+    }),
+  ),
+  privacy: Schema.optional(
+    Schema.Literals(["public", "private"]).annotate({
+      description:
+        "With `route`. 'public': task and checkout hold no private data, or the user allowed free third-party models. Default 'private' skips them.",
+    }),
+  ),
+}).check(
+  Schema.makeFilter((target) => {
+    if (target.route === undefined) {
+      return target.privacy === undefined ? true : "target.privacy needs target.route.";
+    }
+    const conflicting = ROUTE_EXCLUSIVE_TARGET_KEYS.filter((key) => target[key] !== undefined);
+    return conflicting.length === 0
+      ? true
+      : `target.route picks the provider and model; omit ${conflicting.join(", ")}.`;
+  }),
+);
+export type OrchestratorMcpDelegateTarget = typeof OrchestratorMcpDelegateTarget.Type;
+
+export const OrchestratorMcpRouteSkip = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  model: Schema.String,
+  reason: Schema.String,
+});
+export type OrchestratorMcpRouteSkip = typeof OrchestratorMcpRouteSkip.Type;
+
 export const OrchestratorMcpRuntimeMode = Schema.Union([Schema.Literal("inherit"), RuntimeMode]);
 export type OrchestratorMcpRuntimeMode = typeof OrchestratorMcpRuntimeMode.Type;
 
@@ -167,7 +210,7 @@ export type OrchestratorMcpTerminalDelegatedTaskStatus =
 
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   task: OrchestratorMcpPrompt,
-  target: Schema.optional(OrchestratorMcpTarget),
+  target: Schema.optional(OrchestratorMcpDelegateTarget),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
   isolation: Schema.optional(
@@ -236,6 +279,10 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   waitTimedOut: Schema.Boolean.annotate({
     description: "True only on the timed-out wait call. The child keeps running.",
   }),
+  /** Set by `delegate_task` with `target.route`: entries passed over before the one that runs. */
+  route: Schema.optional(
+    Schema.Struct({ name: Schema.String, skipped: Schema.Array(OrchestratorMcpRouteSkip) }),
+  ),
   next: Schema.optional(OrchestratorMcpRunningTaskNext),
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
@@ -642,6 +689,19 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
+  /** Routes for `target.route`; `next` is the entry a private task would start now. */
+  routes: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        entries: Schema.Array(DelegationRouteEntry),
+        next: Schema.NullOr(
+          Schema.Struct({ providerInstanceId: ProviderInstanceId, model: Schema.String }),
+        ),
+        skipped: Schema.Array(OrchestratorMcpRouteSkip),
+      }),
+    ),
+  ),
   features: Schema.Struct({
     appOwnedSubagents: Schema.Boolean,
     asyncPolling: Schema.Boolean,

@@ -33,6 +33,28 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
+describe("delegation route settings", () => {
+  it("persists and clears route patches without resetting omitted limits", () => {
+    const patch = decodeServerSettingsPatch({
+      delegationRoutes: { scan: [{ instanceId: "codex", model: "model" }] },
+      delegationRouteFirstOutputTimeoutMs: 123,
+      delegationRouteFailureCooldownMs: 456,
+    });
+    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, patch);
+    expect(settings.delegationRoutes.scan?.[0]?.allowPrivate).toBe(true);
+    expect(settings.delegationRouteFirstOutputTimeoutMs).toBe(123);
+    expect(settings.delegationRouteFailureCooldownMs).toBe(456);
+    const cleared = applyServerSettingsPatch(
+      settings,
+      decodeServerSettingsPatch({ delegationRoutes: {} }),
+    );
+    expect(cleared.delegationRoutes).toEqual({});
+    expect(cleared.delegationRouteFirstOutputTimeoutMs).toBe(123);
+    expect(cleared.delegationRouteFailureCooldownMs).toBe(456);
+    expect(() => decodeServerSettingsPatch({ delegationRouteFirstOutputTimeoutMs: 0 })).toThrow();
+  });
+});
+
 describe("fallbackTextGenerationModelSelection", () => {
   it("uses Big Pickle when only OpenCode is enabled", () => {
     expect(

@@ -656,6 +656,13 @@ export function applyServerSettingsPatch(
     ...(patch.fallbackModelSelection !== undefined
       ? { fallbackModelSelection: patch.fallbackModelSelection }
       : {}),
+    ...(patch.delegationRoutes !== undefined ? { delegationRoutes: patch.delegationRoutes } : {}),
+    ...(patch.delegationRouteFirstOutputTimeoutMs !== undefined
+      ? { delegationRouteFirstOutputTimeoutMs: patch.delegationRouteFirstOutputTimeoutMs }
+      : {}),
+    ...(patch.delegationRouteFailureCooldownMs !== undefined
+      ? { delegationRouteFailureCooldownMs: patch.delegationRouteFailureCooldownMs }
+      : {}),
     ...(patch.speechPostProcessingModelSelection !== undefined
       ? { speechPostProcessingModelSelection: patch.speechPostProcessingModelSelection }
       : {}),

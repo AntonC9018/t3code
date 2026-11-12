@@ -10,6 +10,29 @@ const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegate
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);
 
 describe("orchestrator MCP contracts", () => {
+  it("validates route targets without silently combining explicit destinations", () => {
+    expect(
+      decodeDelegateTaskInput({
+        task: "Inspect",
+        target: { route: "cheap-scan", privacy: "public", options: { effort: "medium" } },
+      }).target?.route,
+    ).toBe("cheap-scan");
+    for (const explicit of [
+      { model: "m" },
+      { providerInstanceId: "codex" },
+      { driverKind: "codex" },
+      { environmentId: "remote" },
+      { projectId: "project" },
+    ]) {
+      expect(() =>
+        decodeDelegateTaskInput({ task: "Inspect", target: { route: "cheap-scan", ...explicit } }),
+      ).toThrow();
+    }
+    expect(() =>
+      decodeDelegateTaskInput({ task: "Inspect", target: { privacy: "public" } }),
+    ).toThrow();
+  });
+
   it("decodes cross-provider delegated task requests and durable results", () => {
     const request = decodeDelegateTaskInput({
       task: "Inspect the workspace and report the result.",
