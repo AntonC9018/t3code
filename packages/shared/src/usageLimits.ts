@@ -26,10 +26,11 @@ export function exhaustedUsageWindow(
   provider: ServerProvider | undefined,
   now: number,
   model?: string,
+  usedPercentAtLeast = 100,
 ) {
   const exhausted = (provider?.usageLimits?.windows ?? []).filter(
     (window) =>
-      (window.usedPercent ?? 0) >= 100 &&
+      (window.usedPercent ?? 0) >= usedPercentAtLeast &&
       (!window.resetsAt ||
         !Number.isFinite(Date.parse(window.resetsAt)) ||
         Date.parse(window.resetsAt) > now),

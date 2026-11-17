@@ -69,6 +69,19 @@ describe("delegation routes", () => {
     );
     assert.equal(planRoute({ ...input, unavailableReason: () => "disabled" }).candidates.length, 0);
     assert.equal(planRoute({ ...input, privacy: "public" }).candidates.length, 0);
+    const nearlySpent = (usedPercent: number) =>
+      planRoute({
+        ...input,
+        entries: [entries[3]!],
+        providers: [
+          {
+            ...provider,
+            usageLimits: { windows: [{ id: "usage-quota", usedPercent, resetsAt: null }] },
+          } as unknown as ServerProvider,
+        ],
+      }).candidates.length;
+    assert.equal(nearlySpent(98), 0);
+    assert.equal(nearlySpent(97), 1);
   });
 
   it.each([
@@ -82,5 +95,13 @@ describe("delegation routes", () => {
     const item = { type, runId } as OrchestrationV2TurnItem;
     assert.deepEqual(firstPhaseItemOutcome(item, runId), { type: "healthy" });
     assert.isUndefined(firstPhaseItemOutcome(item, RunId.make("other")));
+  });
+
+  it("treats chat alone as tentative, since a provider may relay an error as chat", () => {
+    const runId = RunId.make("child");
+    const item = { type: "assistant_message", runId, text: "Quota reached." };
+    assert.deepEqual(firstPhaseItemOutcome(item as OrchestrationV2TurnItem, runId), {
+      type: "text",
+    });
   });
 });

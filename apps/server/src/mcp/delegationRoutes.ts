@@ -14,6 +14,9 @@ import type { DelegationCooldown } from "../persistence/DelegationCooldowns.ts";
 
 export type DelegationPrivacy = "public" | "private";
 
+/** A nearly spent window would likely fail mid-task, so a route moves on before it is empty. */
+const ROUTE_SKIP_USED_PERCENT = 98;
+
 export function routeSkip(entry: DelegationRouteEntry, reason: string): OrchestratorMcpRouteSkip {
   return { providerInstanceId: entry.instanceId, model: entry.model, reason };
 }
@@ -49,9 +52,9 @@ function entrySkipReason(
   if (provider === undefined) return "provider instance is not registered";
   const unavailable = input.unavailableReason(provider);
   if (unavailable !== null) return unavailable;
-  const window = exhaustedUsageWindow(provider, input.nowMs, entry.model);
+  const window = exhaustedUsageWindow(provider, input.nowMs, entry.model, ROUTE_SKIP_USED_PERCENT);
   if (window !== undefined) {
-    return `usage limit reached${window.resetsAt ? ` until ${window.resetsAt}` : ""}`;
+    return `usage ${Math.round(window.usedPercent)}% used${window.resetsAt ? ` until ${window.resetsAt}` : ""}`;
   }
   const cooldown = input.cooldowns.find(
     (candidate) =>
@@ -65,10 +68,8 @@ function entrySkipReason(
   return null;
 }
 
-/** Items that show the provider answered; the first one ends the fallback window. */
+/** Items that show the provider is working; the first one ends the fallback window. */
 const OUTPUT_ITEM_TYPES: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
-  "assistant_message",
-  "reasoning",
   "proposed_plan",
   "todo_list",
   "user_input_request",
@@ -88,6 +89,12 @@ const OUTPUT_ITEM_TYPES: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set(
 
 export type FirstPhaseOutcome =
   | { readonly type: "healthy" }
+  /**
+   * Text alone, which may be an upstream error the provider relays as chat before failing the
+   * run (Antigravity does this for quota errors). It counts as healthy only if the run does not
+   * fail before the first-output timeout.
+   */
+  | { readonly type: "text" }
   /** Someone stopped the child; starting another model would override them. */
   | { readonly type: "stopped" }
   /** Null failure: the run failed and its cause must be read from its error items. */
@@ -137,8 +144,8 @@ export function firstPhaseItemOutcome(
     item.providerTurnId === null
   )
     return undefined;
-  if ((item.type === "assistant_message" || item.type === "reasoning") && item.text.length === 0)
-    return undefined;
+  if (item.type === "assistant_message" || item.type === "reasoning")
+    return item.text.length === 0 ? undefined : { type: "text" };
   if (OUTPUT_ITEM_TYPES.has(item.type)) return { type: "healthy" };
   if (
     item.type === "error" &&

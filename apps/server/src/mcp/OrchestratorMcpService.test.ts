@@ -1849,6 +1849,8 @@ describe("OrchestratorMcpService provider resolution", () => {
     "work before failure",
     "user stop",
     "disabled first entry",
+    "chat before failure",
+    "chat only",
   ] as const)("route selection handles %s and replays the same public task", (scenario) =>
     Effect.gen(function* () {
       const alternate = ProviderInstanceId.make("route-alternate");
@@ -1936,8 +1938,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                   const id = NodeId.make(`route-task-${index}`);
                   const first = command.modelSelection.instanceId === codexInstanceId;
                   const status =
-                    (first && scenario === "early failure") ||
-                    (first && scenario === "work before failure")
+                    first &&
+                    (scenario === "early failure" ||
+                      scenario === "work before failure" ||
+                      scenario === "chat before failure")
                       ? "failed"
                       : first && scenario === "user stop"
                         ? "interrupted"
@@ -1972,19 +1976,28 @@ describe("OrchestratorMcpService provider resolution", () => {
                       },
                     ],
                     turnItems:
-                      (status === "running" && !(first && scenario === "no output")) ||
-                      scenario === "work before failure"
+                      first && (scenario === "chat before failure" || scenario === "chat only")
                         ? [
                             {
-                              id: "work",
+                              id: "chat",
                               runId,
-                              type: "command_execution",
-                              input: "write file",
-                              output: "",
-                              status: "running",
+                              type: "assistant_message",
+                              text: "You have reached your quota.",
                             },
                           ]
-                        : [],
+                        : (status === "running" && !(first && scenario === "no output")) ||
+                            scenario === "work before failure"
+                          ? [
+                              {
+                                id: "work",
+                                runId,
+                                type: "command_execution",
+                                input: "write file",
+                                output: "",
+                                status: "running",
+                              },
+                            ]
+                          : [],
                   } as unknown as OrchestrationV2ThreadProjection);
                   const accepted = {
                     sequence: 1,
@@ -2026,13 +2039,14 @@ describe("OrchestratorMcpService provider resolution", () => {
           clientRequestId: "route-replay",
         } as const;
         const pending = yield* service.delegateTask(scope, input).pipe(Effect.forkChild);
-        if (scenario === "no output") {
+        if (scenario === "no output" || scenario === "chat only") {
           yield* Deferred.await(subscribed);
           yield* TestClock.adjust(90_000);
         }
         const selected = yield* Fiber.join(pending);
         const fallback =
           scenario === "early failure" ||
+          scenario === "chat before failure" ||
           scenario === "rejected first" ||
           scenario === "no output" ||
           scenario === "disabled first entry";
@@ -2040,7 +2054,10 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(selected.route?.skipped.length, fallback ? 1 : 0);
         assert.equal(
           cooldownRecords.length,
-          scenario === "early failure" || scenario === "no output" || scenario === "rejected first"
+          scenario === "early failure" ||
+            scenario === "chat before failure" ||
+            scenario === "no output" ||
+            scenario === "rejected first"
             ? 1
             : 0,
         );
@@ -2054,10 +2071,17 @@ describe("OrchestratorMcpService provider resolution", () => {
           const settings = yield* ServerSettings.ServerSettingsService;
           yield* settings.updateSettings({ delegationRoutes: {} });
         }
-        assert.equal((yield* service.delegateTask(scope, input)).taskId, selected.taskId);
+        const replay = yield* service.delegateTask(scope, input).pipe(Effect.forkChild);
+        // Chat alone stays tentative on replay too, until the first-output timeout.
+        if (scenario === "chat only") yield* TestClock.adjust(90_000);
+        assert.equal((yield* Fiber.join(replay)).taskId, selected.taskId);
         assert.equal(
           tasks.length,
-          scenario === "early failure" || scenario === "no output" ? 2 : 1,
+          scenario === "early failure" ||
+            scenario === "chat before failure" ||
+            scenario === "no output"
+            ? 2
+            : 1,
         );
         if (scenario === "early failure") {
           const stop = commands.findIndex((command) => command.type === "thread.stop");

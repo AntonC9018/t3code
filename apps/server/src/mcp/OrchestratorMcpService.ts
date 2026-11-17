@@ -2192,11 +2192,10 @@ const make = Effect.gen(function* () {
       .getThreadEventSequence(threadId)
       .pipe(Effect.mapError(threadManagementFailure));
     const initial = yield* loadThreadRecords(threadId, ["runs", "turnItems"]);
-    for (const item of initial.turnItems) {
-      if (item.runId !== runId) continue;
-      const outcome = firstPhaseItemOutcome(item, runId);
-      if (outcome?.type === "healthy") return outcome;
-    }
+    const initialOutcomes = initial.turnItems.map((item) => firstPhaseItemOutcome(item, runId));
+    if (initialOutcomes.some((outcome) => outcome?.type === "healthy"))
+      return { type: "healthy" } as const;
+    const answered = yield* Ref.make(initialOutcomes.some((outcome) => outcome?.type === "text"));
     const run = initial.runs.find((candidate) => candidate.id === runId);
     if (run !== undefined) {
       const outcome = firstPhaseOutcome(
@@ -2208,23 +2207,24 @@ const make = Effect.gen(function* () {
       );
       if (outcome !== undefined) return outcome;
     }
-    const failedItem = initial.turnItems.find(
-      (item) =>
-        item.runId === runId && item.type === "error" && item.failure.class === "usage_limit",
-    );
-    if (failedItem?.type === "error")
-      return { type: "failed", failure: failedItem.failure } as const;
+    const failedItem = initialOutcomes.find((outcome) => outcome?.type === "failed");
+    if (failedItem !== undefined) return failedItem;
     const observed = yield* threadManagement
       .streamStoredEventsFrom({ threadId, afterSequence })
       .pipe(
         Stream.mapError(threadManagementFailure),
         Stream.map(({ event }) => firstPhaseOutcome(event, runId)),
         Stream.filter((outcome) => outcome !== undefined),
+        Stream.tap((outcome) => (outcome.type === "text" ? Ref.set(answered, true) : Effect.void)),
+        Stream.filter((outcome) => outcome.type !== "text"),
         Stream.runHead,
         Effect.timeoutOption(Duration.millis(timeoutMs)),
         Effect.map(Option.flatten),
       );
-    return Option.getOrElse(observed, () => ({ type: "failed", failure: null }) as const);
+    if (Option.isSome(observed)) return observed.value;
+    return (yield* Ref.get(answered))
+      ? ({ type: "healthy" } as const)
+      : ({ type: "failed", failure: null } as const);
   });
 
   const delegateOnRoute = Effect.fn("OrchestratorMcpService.delegateOnRoute")(function* (
