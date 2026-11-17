@@ -1851,6 +1851,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     "disabled first entry",
     "chat before failure",
     "chat only",
+    "chat then unstreamed failure",
   ] as const)("route selection handles %s and replays the same public task", (scenario) =>
     Effect.gen(function* () {
       const alternate = ProviderInstanceId.make("route-alternate");
@@ -1930,8 +1931,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                       completionDelivery: { state: "disposed" },
                     } as typeof task);
                   }
-                  if (command.type !== "delegated_task.request")
+                  if (command.type !== "delegated_task.request") {
+                    receipts.set(command.commandId, { sequence: 1, storedEvents: [] });
                     return { sequence: 1, storedEvents: [] } as never;
+                  }
                   const index = tasks.length;
                   const childId = ThreadId.make(`route-child-${index}`);
                   const runId = RunId.make(`route-run-${index}`);
@@ -1976,7 +1979,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                       },
                     ],
                     turnItems:
-                      first && (scenario === "chat before failure" || scenario === "chat only")
+                      first &&
+                      (scenario === "chat before failure" ||
+                        scenario === "chat only" ||
+                        scenario === "chat then unstreamed failure")
                         ? [
                             {
                               id: "chat",
@@ -2039,14 +2045,27 @@ describe("OrchestratorMcpService provider resolution", () => {
           clientRequestId: "route-replay",
         } as const;
         const pending = yield* service.delegateTask(scope, input).pipe(Effect.forkChild);
-        if (scenario === "no output" || scenario === "chat only") {
+        if (
+          scenario === "no output" ||
+          scenario === "chat only" ||
+          scenario === "chat then unstreamed failure"
+        ) {
           yield* Deferred.await(subscribed);
+          if (scenario === "chat then unstreamed failure") {
+            const childId = ThreadId.make("route-child-0");
+            const child = children.get(childId)!;
+            children.set(childId, {
+              ...child,
+              runs: child.runs.map((run) => ({ ...run, status: "failed" })),
+            });
+          }
           yield* TestClock.adjust(90_000);
         }
         const selected = yield* Fiber.join(pending);
         const fallback =
           scenario === "early failure" ||
           scenario === "chat before failure" ||
+          scenario === "chat then unstreamed failure" ||
           scenario === "rejected first" ||
           scenario === "no output" ||
           scenario === "disabled first entry";
@@ -2056,6 +2075,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           cooldownRecords.length,
           scenario === "early failure" ||
             scenario === "chat before failure" ||
+            scenario === "chat then unstreamed failure" ||
             scenario === "no output" ||
             scenario === "rejected first"
             ? 1
@@ -2071,14 +2091,12 @@ describe("OrchestratorMcpService provider resolution", () => {
           const settings = yield* ServerSettings.ServerSettingsService;
           yield* settings.updateSettings({ delegationRoutes: {} });
         }
-        const replay = yield* service.delegateTask(scope, input).pipe(Effect.forkChild);
-        // Chat alone stays tentative on replay too, until the first-output timeout.
-        if (scenario === "chat only") yield* TestClock.adjust(90_000);
-        assert.equal((yield* Fiber.join(replay)).taskId, selected.taskId);
+        assert.equal((yield* service.delegateTask(scope, input)).taskId, selected.taskId);
         assert.equal(
           tasks.length,
           scenario === "early failure" ||
             scenario === "chat before failure" ||
+            scenario === "chat then unstreamed failure" ||
             scenario === "no output"
             ? 2
             : 1,

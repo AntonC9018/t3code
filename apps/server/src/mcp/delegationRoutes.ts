@@ -2,6 +2,7 @@ import type {
   DelegationRouteEntry,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderFailure,
+  OrchestrationV2Run,
   OrchestrationV2TurnItem,
   OrchestratorMcpRouteSkip,
   RunId,
@@ -109,27 +110,47 @@ export function describeFirstPhaseFailure(failure: OrchestrationV2ProviderFailur
   };
 }
 
+/** The verdict already in a child's stored records, and whether it has produced any text. */
+export function recordedFirstPhase(
+  records: {
+    readonly runs: ReadonlyArray<OrchestrationV2Run>;
+    readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
+  },
+  runId: RunId,
+): { readonly outcome: FirstPhaseOutcome | undefined; readonly answered: boolean } {
+  const outcomes = records.turnItems.map((item) => firstPhaseItemOutcome(item, runId));
+  if (outcomes.some((outcome) => outcome?.type === "healthy"))
+    return { outcome: { type: "healthy" }, answered: true };
+  const run = records.runs.find((candidate) => candidate.id === runId);
+  const outcome =
+    (run === undefined ? undefined : runOutcome(run)) ??
+    outcomes.find((candidate) => candidate?.type === "failed");
+  return { outcome, answered: outcomes.some((candidate) => candidate?.type === "text") };
+}
+
 /** Folds one child-thread event into the first-phase verdict, if it settles one. */
 export function firstPhaseOutcome(
   event: OrchestrationV2DomainEvent,
   runId: RunId,
 ): FirstPhaseOutcome | undefined {
   if (event.type === "turn-item.updated") return firstPhaseItemOutcome(event.payload, runId);
-  if (event.type === "run.updated" && event.payload.id === runId) {
-    switch (event.payload.status) {
-      case "completed":
-        return { type: "healthy" };
-      case "failed":
-        return { type: "failed", failure: null };
-      case "cancelled":
-      case "interrupted":
-      case "rolled_back":
-        return { type: "stopped" };
-      default:
-        return undefined;
-    }
-  }
+  if (event.type === "run.updated" && event.payload.id === runId) return runOutcome(event.payload);
   return undefined;
+}
+
+function runOutcome(run: OrchestrationV2Run): FirstPhaseOutcome | undefined {
+  switch (run.status) {
+    case "completed":
+      return { type: "healthy" };
+    case "failed":
+      return { type: "failed", failure: null };
+    case "cancelled":
+    case "interrupted":
+    case "rolled_back":
+      return { type: "stopped" };
+    default:
+      return undefined;
+  }
 }
 
 export function firstPhaseItemOutcome(

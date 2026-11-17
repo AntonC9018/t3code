@@ -113,6 +113,7 @@ import * as DelegationCooldowns from "../persistence/DelegationCooldowns.ts";
 import {
   firstPhaseOutcome,
   firstPhaseItemOutcome,
+  recordedFirstPhase,
   describeFirstPhaseFailure,
   planRoute,
   routeSkip,
@@ -2191,40 +2192,33 @@ const make = Effect.gen(function* () {
     const afterSequence = yield* threadManagement
       .getThreadEventSequence(threadId)
       .pipe(Effect.mapError(threadManagementFailure));
-    const initial = yield* loadThreadRecords(threadId, ["runs", "turnItems"]);
-    const initialOutcomes = initial.turnItems.map((item) => firstPhaseItemOutcome(item, runId));
-    if (initialOutcomes.some((outcome) => outcome?.type === "healthy"))
-      return { type: "healthy" } as const;
-    const answered = yield* Ref.make(initialOutcomes.some((outcome) => outcome?.type === "text"));
-    const run = initial.runs.find((candidate) => candidate.id === runId);
-    if (run !== undefined) {
-      const outcome = firstPhaseOutcome(
-        {
-          type: "run.updated",
-          payload: run,
-        } as import("@t3tools/contracts").OrchestrationV2DomainEvent,
-        runId,
-      );
-      if (outcome !== undefined) return outcome;
-    }
-    const failedItem = initialOutcomes.find((outcome) => outcome?.type === "failed");
-    if (failedItem !== undefined) return failedItem;
+    const initial = recordedFirstPhase(
+      yield* loadThreadRecords(threadId, ["runs", "turnItems"]),
+      runId,
+    );
+    if (initial.outcome !== undefined) return initial.outcome;
     const observed = yield* threadManagement
       .streamStoredEventsFrom({ threadId, afterSequence })
       .pipe(
         Stream.mapError(threadManagementFailure),
         Stream.map(({ event }) => firstPhaseOutcome(event, runId)),
-        Stream.filter((outcome) => outcome !== undefined),
-        Stream.tap((outcome) => (outcome.type === "text" ? Ref.set(answered, true) : Effect.void)),
-        Stream.filter((outcome) => outcome.type !== "text"),
+        Stream.filter((outcome) => outcome !== undefined && outcome.type !== "text"),
         Stream.runHead,
         Effect.timeoutOption(Duration.millis(timeoutMs)),
         Effect.map(Option.flatten),
       );
     if (Option.isSome(observed)) return observed.value;
-    return (yield* Ref.get(answered))
-      ? ({ type: "healthy" } as const)
-      : ({ type: "failed", failure: null } as const);
+    // Reread: a failure stored just before the deadline may not have been streamed yet.
+    const final = recordedFirstPhase(
+      yield* loadThreadRecords(threadId, ["runs", "turnItems"]),
+      runId,
+    );
+    return (
+      final.outcome ??
+      (final.answered
+        ? ({ type: "healthy" } as const)
+        : ({ type: "failed", failure: null } as const))
+    );
   });
 
   const delegateOnRoute = Effect.fn("OrchestratorMcpService.delegateOnRoute")(function* (
@@ -2372,11 +2366,16 @@ const make = Effect.gen(function* () {
         const current = yield* readTask(scope, started.taskId);
         if (current.childThreadId === null || current.childRunId === null)
           return yield* failure("orchestration_error", "Route child has no local run.");
-        const outcome = yield* observeFirstPhase(
-          current.childThreadId,
-          current.childRunId,
-          settings.delegationRouteFirstOutputTimeoutMs,
-        );
+        // A retry must not re-judge a child this route already handed to the caller.
+        const accepted =
+          replay && (yield* threadManagement.hasReceipt(CommandId.make(`${commandId}:wake`)));
+        const outcome = accepted
+          ? ({ type: "healthy" } as const)
+          : yield* observeFirstPhase(
+              current.childThreadId,
+              current.childRunId,
+              settings.delegationRouteFirstOutputTimeoutMs,
+            );
         if (outcome.type !== "failed") {
           yield* threadManagement
             .dispatch({
