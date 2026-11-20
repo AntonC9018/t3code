@@ -1,16 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import type { ReactNode, RefObject } from "react";
+import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 
-import { useLatestRef } from "~/hooks/useLatestRef";
-import { primaryServerKeybindingsAtom } from "~/state/server";
-import { useDictationShortcut } from "./useDictationShortcut";
-import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 import {
   ComposerSpeechButton,
   ComposerSpeechRecordingPill,
 } from "~/components/chat/ComposerSpeechButton";
 import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
+import { primaryServerKeybindingsAtom } from "~/state/server";
+import { useDictationShortcut } from "./useDictationShortcut";
+import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 
 /** Binds dictation to a plain textarea draft; the shortcut targets it only while it has focus. */
 export function useTextFieldSpeech(input: {
@@ -22,7 +21,11 @@ export function useTextFieldSpeech(input: {
   readonly onTextChange: (text: string) => void;
   readonly disabled?: boolean | undefined;
 }) {
-  const latest = useLatestRef(input);
+  const latest = useRef(input);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed field callbacks to the asynchronous recording controller
+  useEffect(() => {
+    latest.current = input;
+  });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const speech = useEnvironmentSpeechInput({
     environmentId: input.environmentId,
@@ -110,8 +113,6 @@ export function TextFieldSpeechControls({
         language={speech.setup.language}
         downloading={speech.setup.downloading}
         error={speech.setup.error}
-        consent={speech.setup.consent}
-        onAllowAudio={speech.setup.allowAudio}
         onOpenChange={speech.setup.setOpen}
         onRetryCatalog={speech.setup.retryCatalog}
         onDownload={() => void speech.setup.download()}

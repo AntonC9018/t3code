@@ -26,14 +26,7 @@ const native = vi.hoisted(() => ({
   supportsTranslation: true,
   supportsVocabulary: false,
   languages: ["en", "fr"] as readonly string[],
-  begin: vi.fn(
-    async (
-      _options?: unknown,
-      _filterSilence?: boolean,
-      _vadPath?: string,
-      _customWords?: unknown,
-    ) => {},
-  ),
+  begin: vi.fn(async (_options?: unknown, _filterSilence?: boolean, _vadPath?: string) => {}),
   feed: vi.fn(async (_pcm: Float32Array) => ({
     revision: 1,
     text: { committed: "", tentative: "hello" },
@@ -145,16 +138,6 @@ it("decodes a pooled Node Buffer without reading adjacent bytes", () => {
   expect([...SpeechService.decodeSpeechPcm(pool.subarray(20, 24))]).toEqual([0.25]);
 });
 
-it("copies valid PCM and treats a silent batch capture as an empty transcript", () => {
-  const input = new Float32Array([0.25, -0.5]);
-  const decoded = SpeechService.decodeSpeechPcm(new Uint8Array(input.buffer));
-  input[0] = 1;
-  expect([...decoded]).toEqual([0.25, -0.5]);
-  const silence = new Uint8Array(new Float32Array(16_000).buffer);
-  expect(SpeechService.decodeSpeechPcm(silence)).toHaveLength(0);
-  expect(SpeechService.decodeSpeechPcm(silence, true)).toHaveLength(16_000);
-});
-
 it("rejects empty, misaligned, non-finite, and oversized PCM as invalid audio", () => {
   for (const input of [
     new Uint8Array(),
@@ -196,7 +179,6 @@ it.effect.each(["CPU", "Vulkan0"])(
           { timestamps: "none", language: "fr", task: "translate", targetLanguage: "en" },
           false,
           "test.gguf",
-          { customWords: [], dictionary: [] },
         );
         expect(yield* stream.finish).toBe("hello");
       }).pipe(Effect.scoped);
@@ -219,7 +201,6 @@ it.effect("sends the chosen language in the spelling the loaded model advertises
         { timestamps: "none", language: "fr-FR" },
         true,
         "test.gguf",
-        expect.anything(),
       );
       expect(yield* stream.finish).toBe("hello");
     }).pipe(Effect.scoped);
@@ -447,12 +428,7 @@ it.effect("bounds missing Silero recovery during recording and continues with ra
     yield* TestClock.adjust("1 millis");
     yield* Deferred.await(helperInterrupted);
     const stream = yield* Fiber.join(recording);
-    expect(native.begin).toHaveBeenLastCalledWith(
-      expect.anything(),
-      true,
-      undefined,
-      expect.anything(),
-    );
+    expect(native.begin).toHaveBeenLastCalledWith(expect.anything(), true, undefined);
     yield* stream.feed(pcm());
     expect(yield* stream.finish).toBe("hello");
   }).pipe(Effect.scoped, Effect.provide(layer)),
@@ -535,12 +511,10 @@ it.effect("honors exact aliases and phrase boundaries in batch and streamed text
       "GitHub's API, GitHub’s API, git’s hub, McDonald’s menu, King’s Cross. vitamin c and plan c. " +
       "我用GitHub和React，部署到Kubernetes上。Bob用GitHub。GitHubで管理する。";
     native.transcribe.mockResolvedValueOnce({ text: spoken });
+    native.finish.mockResolvedValueOnce(spoken);
     expect(yield* speech.transcribe(pcm(), options)).toBe(expected);
-    yield* speech.startStream(options);
-    expect(native.begin.mock.lastCall?.[3]).toEqual({
-      customWords: options.speechCustomWords.map(({ term }) => term),
-      dictionary: options.speechCustomWords,
-    });
+    const stream = yield* speech.startStream(options);
+    expect(yield* stream.finish).toBe(expected);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
@@ -583,17 +557,13 @@ it.effect("uses vocabulary only for supported transcription and always applies a
           const stream = yield* speech.startStream(options);
           expect(yield* stream.feed(pcm())).toEqual({
             revision: 1,
-            text: { committed: "git hub", tentative: "Robert" },
+            text: { committed: vocabulary ? "git hub" : "GitHub", tentative: "Bob" },
           });
-          expect(yield* stream.finish).toBe("git hub and Robert");
+          expect(yield* stream.finish).toBe(vocabulary ? "git hub and Bob" : "GitHub and Bob");
           expect(native.begin.mock.lastCall).toEqual([
             { timestamps: "none", language: "fr", ...(vocabulary ? { vocabulary } : {}) },
             true,
             "test.gguf",
-            {
-              customWords: vocabulary ? [] : ["GitHub", "Bob", "T3 Code"],
-              dictionary: options.speechCustomWords,
-            },
           ]);
         }).pipe(Effect.scoped, Effect.provide(layer));
       }
@@ -872,6 +842,7 @@ it.effect("replays streamed audio on CPU after an Auto-placed feed crashes, once
         native.supportsVocabulary = true;
         const feedCalls = native.feed.mock.calls.length;
         const text = { committed: "", tentative: "git hub Robert" };
+        const corrected = { committed: "", tentative: "git hub Bob" };
         const options = {
           ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
           speechCustomWords: [
@@ -893,8 +864,12 @@ it.effect("replays streamed audio on CPU after an Auto-placed feed crashes, once
         }));
         const speech = yield* SpeechService.SpeechService;
         const stream = yield* speech.startStream(options);
-        expect(yield* stream.feed(pcm())).toEqual({ revision: 3, text });
-        expect(yield* stream.feed(pcm())).toEqual({ revision: 5, text });
+        expect(yield* stream.feed(pcm())).toEqual({ revision: 3, text: corrected });
+        const recovered = {
+          committed: "",
+          tentative: cpuSupportsVocabulary ? "git hub Bob" : "GitHub Bob",
+        };
+        expect(yield* stream.feed(pcm())).toEqual({ revision: 5, text: recovered });
         expect(loadNative.mock.calls.slice(-2).map((call) => call[3])).toEqual(["auto", "cpu"]);
         expect(native.begin.mock.calls.slice(-2).map(([options]) => options)).toEqual([
           { timestamps: "none", language: "en", vocabulary: ["GitHub", "Bob"] },
@@ -904,11 +879,8 @@ it.effect("replays streamed audio on CPU after an Auto-placed feed crashes, once
             ...(cpuSupportsVocabulary ? { vocabulary: ["GitHub", "Bob"] } : {}),
           },
         ]);
-        expect(native.begin.mock.lastCall?.[3]).toMatchObject({
-          customWords: cpuSupportsVocabulary ? [] : ["GitHub", "Bob"],
-        });
         expect(native.feed).toHaveBeenCalledTimes(feedCalls + 4);
-        expect(yield* stream.feed(pcm())).toEqual({ revision: 6, text });
+        expect(yield* stream.feed(pcm())).toEqual({ revision: 6, text: recovered });
         const loads = loadNative.mock.calls.length;
         native.finish.mockRejectedValueOnce(new Error("CPU finish failed"));
         expect(Result.isFailure(yield* Effect.result(stream.finish))).toBe(true);
@@ -950,7 +922,7 @@ it.effect.each([false, true])(
           speechCustomWords: [{ term: "Bob", aliases: ["Robert"] }],
         });
         for (const chunk of chunks) yield* stream.feed(new Uint8Array(chunk.buffer));
-        expect(yield* stream.finish).toBe("Robert");
+        expect(yield* stream.finish).toBe("Bob");
         expect(cpu.feed.mock.calls.map(([chunk]) => [...chunk])).toEqual(
           chunks.map((chunk) => [...chunk]),
         );
@@ -958,10 +930,6 @@ it.effect.each([false, true])(
           { timestamps: "none", language: "fr" },
           true,
           "test.gguf",
-          {
-            customWords: ["Bob"],
-            dictionary: [{ term: "Bob", aliases: ["Robert"] }],
-          },
         );
         expect(gpu.dispose).toHaveBeenCalledOnce();
         expect(cpu.dispose).not.toHaveBeenCalled();

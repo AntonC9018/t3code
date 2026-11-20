@@ -17,18 +17,13 @@ export type SpeechModel = {
   readonly supportsStreaming: boolean;
   readonly supportsLanguageDetection: boolean;
   readonly supportsTranslation: boolean;
-  readonly supportsRecognitionHints: boolean;
 };
-
-// The worker probes `supports("vocabulary")` once a model is loaded; this labels the catalog.
-const VOCABULARY_MODEL = /^handy-computer\/(whisper-|Breeze-ASR-25-gguf$)/;
 
 // Scores remain required by the wire schema but are not displayed.
 export const SPEECH_MODELS: readonly SpeechModel[] = catalog.models.map((model) => ({
   ...model,
   accuracy: 0,
   speed: 0,
-  supportsRecognitionHints: VOCABULARY_MODEL.test(model.id),
 }));
 
 export const DEFAULT_SPEECH_MODEL_ID = "handy-computer/parakeet-unified-en-0.6b-gguf";

@@ -517,7 +517,9 @@ describe("requiredScopesForProjectMutation", () => {
 describe("voice settings", () => {
   it("does not import voice consent from ordinary device preferences", () => {
     const imported = {
+      voiceTranscriptionEnvironmentId: "env-1",
       voiceTranscriptionDestination: { kind: "environment", environmentId: "env-1" },
+      speechPostProcessingEnabled: true,
     };
     expect(decodeClientSettings({}).speechSilenceFiltering).toBe(true);
     expect(decodeClientSettings({}).speechStreaming).toBe(true);
@@ -551,55 +553,5 @@ describe("server model preferences", () => {
     const input = { favorites: [], providerModelPreferences: {} };
     expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
     expect(decodeServerSettingsPatch(input)).toEqual(input);
-  });
-});
-
-describe("ClientSettings microphone", () => {
-  it("defaults to auto dictation and accepts the other shortcut modes", () => {
-    expect(decodeClientSettings({}).voiceShortcutMode).toBe("auto");
-    expect(decodeClientSettingsPatch({ voiceShortcutMode: "hold" }).voiceShortcutMode).toBe("hold");
-    expect(decodeClientSettingsPatch({ voiceShortcutMode: "toggle" }).voiceShortcutMode).toBe(
-      "toggle",
-    );
-    expect(() => decodeClientSettingsPatch({ voiceShortcutMode: "invalid" })).toThrow();
-  });
-  it("accepts microphone selection patches", () => {
-    expect(decodeClientSettingsPatch({ voiceMicrophone: "studio-mic" }).voiceMicrophone).toBe(
-      "studio-mic",
-    );
-  });
-
-  it("follows the primary transcription environment by default", () => {
-    expect(decodeClientSettings({}).voiceTranscriptionEnvironmentId).toBeNull();
-  });
-
-  it("accepts a transcription environment selection", () => {
-    expect(
-      decodeClientSettingsPatch({ voiceTranscriptionEnvironmentId: "environment-2" })
-        .voiceTranscriptionEnvironmentId,
-    ).toBe("environment-2");
-  });
-});
-
-describe("ServerSettings speech model", () => {
-  it("uses the recommended local transcription model by default", () => {
-    expect(DEFAULT_SERVER_SETTINGS.speechModelId).toBe(
-      "handy-computer/parakeet-unified-en-0.6b-gguf",
-    );
-  });
-
-  it("starts with no custom transcription words", () => {
-    expect(DEFAULT_SERVER_SETTINGS.speechAcceleration).toBe("auto");
-    expect(DEFAULT_SERVER_SETTINGS.speechModelUnloadTimeout).toBe("min_15");
-    expect(decodeClientSettings({}).speechLanguage).toBe("auto");
-    expect(decodeClientSettings({}).speechCustomWords).toEqual([]);
-    expect(decodeClientSettings({}).speechRemoveFillerWords).toBe(true);
-    expect(decodeClientSettings({}).speechPostProcessingEnabled).toBe(false);
-    expect(decodeClientSettings({}).speechCorrectionWord).toBe("");
-    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingModelSelection).toBeNull();
-    expect(decodeClientSettings({}).speechPostProcessingPrompt).toEqual({
-      mode: "default",
-      customInstructions: "",
-    });
   });
 });

@@ -79,7 +79,14 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
         discard: true,
       });
     }
-  }).pipe(Effect.ignore);
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: "10 minutes",
+      // The socket read loop is already interrupted here; its writer can no longer send.
+      orElse: () => Effect.void,
+    }),
+    Effect.ignore,
+  );
 });
 
 export const speechStreamRouteLayer = Layer.unwrap(

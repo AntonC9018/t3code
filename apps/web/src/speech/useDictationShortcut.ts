@@ -3,17 +3,13 @@ import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useEffect, useRef, type RefObject } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
-import { useLatestRef } from "../hooks/useLatestRef";
 import { useClientSettings } from "../hooks/useSettings";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 
 const HOLD_THRESHOLD_MS = 300;
 
-export function shouldFinishDictationOnRelease(
-  mode: "auto" | "hold" | "toggle",
-  elapsedMs: number,
-) {
+function shouldFinishDictationOnRelease(mode: "auto" | "hold" | "toggle", elapsedMs: number) {
   return mode === "hold" || (mode === "auto" && elapsedMs >= HOLD_THRESHOLD_MS);
 }
 
@@ -93,7 +89,11 @@ export function useDictationShortcut(input: ShortcutInput) {
   const id = useRef(Symbol("dictation-target"));
   const subscribeKeys = input.subscribeKeys;
   const mode = useClientSettings((settings) => settings.voiceShortcutMode);
-  const current = useLatestRef(input);
+  const current = useRef(input);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed actions to the window keyboard listener and shortcut registry
+  useEffect(() => {
+    current.current = input;
+  });
   const generation = useRef(0);
   const pressed = useRef<{
     generation: number;
@@ -104,7 +104,7 @@ export function useDictationShortcut(input: ShortcutInput) {
     starting: Promise<void>;
   } | null>(null);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- adds window keyboard listeners and a shortcut target registry entry until unmount
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the window keyboard listeners and dictation target registry entry
   useEffect(() => {
     if (typeof window === "undefined") return;
     let disposed = false;
@@ -198,7 +198,7 @@ export function useDictationShortcut(input: ShortcutInput) {
       window.removeEventListener("keyup", finish, true);
       window.removeEventListener("blur", onBlur);
     };
-  }, [current, mode, subscribeKeys]);
+  }, [mode, subscribeKeys]);
 
   return shortcutLabelForCommand(input.keybindings, "composer.dictation", {
     context: { terminalFocus: false, terminalOpen: input.terminalOpen },

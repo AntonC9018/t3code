@@ -1,7 +1,6 @@
-import { useEffect, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
-import { useLatestRef } from "../hooks/useLatestRef";
 
 /** Keep submission shortcuts reachable when the frozen composer loses focus to the page. */
 export function useDictationSubmissionShortcut(input: {
@@ -9,8 +8,12 @@ export function useDictationSubmissionShortcut(input: {
   formRef: RefObject<HTMLFormElement | null>;
   onKeyDown(event: KeyboardEvent): void;
 }) {
-  const latest = useLatestRef(input);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- adds a window keydown listener while enabled and removes it on disable or unmount
+  const latest = useRef(input);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed inputs to the window keydown listener
+  useEffect(() => {
+    latest.current = input;
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown while dictation owns submission
   useEffect(() => {
     if (!input.enabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -26,5 +29,5 @@ export function useDictationSubmissionShortcut(input: {
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [input.enabled, latest]);
+  }, [input.enabled]);
 }

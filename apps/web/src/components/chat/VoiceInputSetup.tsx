@@ -6,11 +6,10 @@ import {
   updateMicrophoneOrder,
   type BrowserMicrophone,
 } from "../../speech/browserMicrophones";
-import {
-  AuthSettingsWriteScope,
-  type EnvironmentId,
-  type EnvironmentSpeechModel,
-  type EnvironmentSpeechStatus,
+import type {
+  EnvironmentId,
+  EnvironmentSpeechModel,
+  EnvironmentSpeechStatus,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { CircleAlertIcon, MicIcon, RefreshCwIcon } from "lucide-react";
@@ -24,6 +23,7 @@ import {
   preferredMicrophoneId,
 } from "../../speech/microphoneOrder";
 import { useEnvironment } from "../../state/environments";
+import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { useEnvironmentScope } from "../../state/session";
 import { languageLabel } from "../settings/SpeechLanguageSelect";
 import { Button } from "../ui/button";
@@ -41,9 +41,7 @@ export function VoiceInputSetup(props: {
   language: string | null;
   downloading: boolean;
   error: string | null;
-  consent: boolean;
   onOpenChange(open: boolean): void;
-  onAllowAudio(): void;
   onRetryCatalog: (() => void) | null;
   onDownload(): void;
   onCancelDownload(): void;
@@ -99,45 +97,6 @@ export function VoiceInputSetup(props: {
     props.onOpenChange(false);
     void navigate({ to: "/settings/voice", hash });
   };
-
-  if (props.consent) {
-    return (
-      <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-        <WizardPopup>
-          <WizardHeader
-            title={gt("Turn on voice input")}
-            description={
-              environment?.label != null
-                ? gt(
-                    "Microphone audio is sent to {destination} to transcribe, then discarded. This choice is saved on this device only.",
-                    { destination: environment.label },
-                  )
-                : gt(
-                    "Microphone audio is sent to your transcription environment to transcribe, then discarded. This choice is saved on this device only.",
-                  )
-            }
-          />
-          <WizardFooter>
-            <Button
-              variant="outline"
-              onClick={() => openSettings("voice-transcription-destination")}
-            >
-              <T>Choose in Voice settings</T>
-            </Button>
-            <Button onClick={props.onAllowAudio}>
-              {environment?.label != null ? (
-                <T>
-                  Send audio to <Var>{environment.label}</Var>
-                </T>
-              ) : (
-                <T>Send audio to your transcription environment</T>
-              )}
-            </Button>
-          </WizardFooter>
-        </WizardPopup>
-      </Dialog>
-    );
-  }
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>

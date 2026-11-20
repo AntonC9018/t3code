@@ -188,8 +188,6 @@ export function PreviewAnnotationSpeech({
       language={speech.setup.language}
       downloading={speech.setup.downloading}
       error={speech.setup.error}
-      consent={speech.setup.consent}
-      onAllowAudio={speech.setup.allowAudio}
       onOpenChange={speech.setup.setOpen}
       onRetryCatalog={speech.setup.retryCatalog}
       onDownload={() => void speech.setup.download()}

@@ -13,14 +13,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type DownloadProgress = { downloaded: number; total: number } | null;
 
-export function shouldShowComposerFooter(
-  collapsed: boolean,
-  approval: boolean,
-  phase: VoiceInputState["phase"],
-): boolean {
-  return phase !== "idle" || (!collapsed && !approval);
-}
-
 const keepFocus = (event: PointerEvent) => event.preventDefault();
 
 /** One short status line per phase; also mirrored into the preview annotation editor. */
@@ -157,7 +149,6 @@ export function ComposerSpeechRecordingPill(props: {
   size?: "default" | "compact";
   onStart(): void;
   disabled?: boolean;
-  recoveringClosedQuestion?: boolean | undefined;
   onStop(): void;
   onCancel(): void;
   onSkipPostProcessing(): void;
@@ -172,8 +163,6 @@ export function ComposerSpeechRecordingPill(props: {
         size={props.size}
         error={props.state.error}
         errorAction={props.state.errorAction}
-        hasRecording={props.state.hasRecording}
-        recoveringClosedQuestion={props.recoveringClosedQuestion}
         errorCode={props.state.errorCode}
         disabled={props.disabled ?? false}
         cancelShortcutLabel={props.cancelShortcutLabel ?? null}

@@ -269,13 +269,3 @@ describe("findEsmImportsOfExternalPackages", () => {
     assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), []);
   });
 });
-
-it("keeps native speech modules in the packaged server runtime", () => {
-  assert.deepEqual(
-    selectCliRuntimeExternalDependencies({
-      "transcribe-cpp": "0.2.4",
-      effect: "4.0.5",
-    }),
-    { "transcribe-cpp": "0.2.4" },
-  );
-});

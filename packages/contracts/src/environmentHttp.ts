@@ -116,12 +116,10 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "scope_not_granted",
   "invalid_command",
   "invalid_history_cursor",
+  "thread_transcript_too_large",
   "invalid_audio",
-  "dictionary_conflict",
-  "dictionary_limit",
   "speech_unavailable",
   "speech_busy",
-  "thread_transcript_too_large",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 

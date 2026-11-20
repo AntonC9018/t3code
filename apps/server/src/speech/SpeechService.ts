@@ -10,7 +10,6 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -19,11 +18,9 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
-import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient } from "effect/http";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { makeSpeechTextCorrector, normalizeSpeechCustomWords } from "./customWords.ts";
@@ -45,14 +42,13 @@ const SAMPLE_RATE = 16_000;
 const MAX_SPEECH_DURATION_SECONDS = 5 * 60;
 export const MAX_SPEECH_BYTES =
   SAMPLE_RATE * Float32Array.BYTES_PER_ELEMENT * MAX_SPEECH_DURATION_SECONDS;
-const MIN_CAPTURE_RMS = 0.0005;
 
 export class SpeechInvalidAudioError extends Schema.TaggedError<SpeechInvalidAudioError>()(
   "SpeechInvalidAudioError",
   { byteLength: Schema.Number, message: Schema.String },
 ) {}
 
-export function decodeSpeechPcm(pcmBytes: Uint8Array, preserveSilence = false): Float32Array {
+export function decodeSpeechPcm(pcmBytes: Uint8Array): Float32Array {
   if (
     pcmBytes.byteLength === 0 ||
     pcmBytes.byteLength > MAX_SPEECH_BYTES ||
@@ -66,7 +62,6 @@ export function decodeSpeechPcm(pcmBytes: Uint8Array, preserveSilence = false): 
   // WebSocket frames can be pooled Node Buffers whose backing storage is larger
   // than the frame. Copy the view so only the received bytes are decoded.
   const pcm = new Float32Array(Uint8Array.from(pcmBytes).buffer);
-  let energy = 0;
   for (const sample of pcm) {
     if (!Number.isFinite(sample) || sample < -1 || sample > 1) {
       throw new SpeechInvalidAudioError({
@@ -74,11 +69,8 @@ export function decodeSpeechPcm(pcmBytes: Uint8Array, preserveSilence = false): 
         message: "audio contains an invalid PCM sample",
       });
     }
-    energy += sample * sample;
   }
-  return !preserveSilence && Math.sqrt(energy / pcm.length) < MIN_CAPTURE_RMS
-    ? new Float32Array()
-    : pcm;
+  return pcm;
 }
 
 export class SpeechOperationError extends Schema.TaggedError<SpeechOperationError>()(
@@ -178,14 +170,6 @@ const UNLOAD_MILLISECONDS: Record<Exclude<SpeechModelUnloadTimeout, "never">, nu
 };
 
 const make = Effect.gen(function* () {
-  const handyUrl = yield* Config.String("T3_SPEECH_HANDY_URL").pipe(Config.withDefault(""));
-  if (handyUrl) {
-    const token = yield* Config.Redacted("T3_SPEECH_HANDY_TOKEN");
-    const HandySpeechService = yield* Effect.promise(() => import("./HandySpeechService.ts"));
-    return yield* HandySpeechService.make(handyUrl, Redacted.value(token)).pipe(
-      Effect.provide(FetchHttpClient.layer),
-    );
-  }
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -527,7 +511,6 @@ const make = Effect.gen(function* () {
               supportsStreaming: definition.supportsStreaming,
               supportsLanguageDetection: definition.supportsLanguageDetection,
               supportsTranslation: definition.supportsTranslation,
-              supportsRecognitionHints: definition.supportsRecognitionHints,
               active: ready && selected.id === definition.id,
               state: operation
                 ? operation.verifying
@@ -770,6 +753,7 @@ const make = Effect.gen(function* () {
     const language = effectiveSpeechLanguage(definition, options.speechLanguage);
     const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
     const customWords = dictionary.map(({ term }) => term);
+    let correct = makeSpeechTextCorrector(customWords, dictionary);
     const modelPath = yield* installedModelPath(definition);
     let streamModel = yield* attempt(operation, () =>
       loadModel(modelPath, definition, signal, settings.speechAcceleration),
@@ -797,12 +781,11 @@ const make = Effect.gen(function* () {
         },
         options.speechSilenceFiltering,
         vadPath,
-        // Live text grows with the recording, so correction stays off the server's event loop.
-        { customWords: vocabulary ? [] : customWords, dictionary },
       );
+      correct = makeSpeechTextCorrector(vocabulary ? [] : customWords, dictionary);
       started = true;
     };
-    // Audio already fed is kept so a CPU restart can replay it.
+    // Audio already fed is kept so a CPU restart can replay it; the limit caps it at one recording.
     const received: Float32Array[] = [];
     let retriedOnCpu = false;
     const recoverOnCpu = async (cause: unknown) => {
@@ -831,6 +814,7 @@ const make = Effect.gen(function* () {
         await recoverOnCpu(cause);
       }
     });
+    let byteLength = 0;
     let busy = false;
     // Client revisions stay monotonic across a native restart, whose own counter resets.
     let revisionBase = 0;
@@ -849,12 +833,16 @@ const make = Effect.gen(function* () {
     return {
       feed: (bytes: Uint8Array) =>
         run(async () => {
-          if (bytes.byteLength > SPEECH_STREAM_MAX_CHUNK_BYTES)
+          if (
+            bytes.byteLength > SPEECH_STREAM_MAX_CHUNK_BYTES ||
+            byteLength + bytes.byteLength > MAX_SPEECH_BYTES
+          )
             throw new SpeechInvalidAudioError({
               byteLength: bytes.byteLength,
-              message: "Speech stream chunk size limit exceeded.",
+              message: "Speech stream audio limit exceeded.",
             });
-          const pcm = decodeSpeechPcm(bytes, true);
+          const pcm = decodeSpeechPcm(bytes);
+          byteLength += bytes.byteLength;
           received.push(pcm);
           let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
           try {
@@ -867,7 +855,12 @@ const make = Effect.gen(function* () {
           if (update) lastNativeRevision = update.revision;
           return {
             revision: revisionBase + (update?.revision ?? lastNativeRevision),
-            text: update?.text ?? null,
+            text: update?.text
+              ? {
+                  committed: correct(update.text.committed),
+                  tentative: correct(update.text.tentative),
+                }
+              : null,
           };
         }),
       finish: run(async () => {
@@ -884,7 +877,7 @@ const make = Effect.gen(function* () {
         }
         finished = true;
         return finalizeTranscript(
-          text,
+          correct(text),
           options,
           translateToEnglish ? "en" : language === "auto" ? undefined : language,
         );

@@ -258,7 +258,7 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(fallback.scope, "environment")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "all")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "project")).toBe(false);
-    for (const id of ["response-streaming", "dictionary"]) {
+    for (const id of ["response-streaming", "speech-project-dictionary"]) {
       expect(getSettingsSearchTargetScope(id)?.scope).toBe("project-defaults");
     }
     for (const scope of ["all", "environment", "project"] as const) {
@@ -324,23 +324,6 @@ describe("auto-settlement search availability", () => {
       }).isTargetAvailable,
     ).toBe(true);
   });
-});
-
-it("finds browser voice settings through search", () => {
-  const ids = [
-    "transcription-environment",
-    "local-voice-input",
-    "dictionary",
-    "remove-filler-words",
-    "speech-post-processing",
-    "speech-post-processing-model",
-    "speech-correction-word",
-    "speech-post-processing-prompt",
-  ];
-  for (const id of ids) {
-    const item = SETTINGS_SEARCH_ITEMS.find((entry) => entry.id === id)!;
-    expect(searchSettings(item.title).map((entry) => entry.id)).toContain(id);
-  }
 });
 
 describe("source control host search items", () => {

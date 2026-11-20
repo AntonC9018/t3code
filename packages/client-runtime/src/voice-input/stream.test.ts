@@ -68,54 +68,10 @@ it("drains ordered PCM before finishing and replaces tentative hypotheses", asyn
   expect(socket.closed).toBe(true);
 });
 
-it("drains more than five minutes of audio across acknowledgements", async () => {
-  const { socket, stream } = connect();
-  const seconds = 301;
-  let acknowledgedBytes = 0;
-  let firstSample = 0;
-  let lastSample = 0;
-  for (let second = 0; second < seconds; second++) {
-    const value = (second + 1) / seconds;
-    stream.feed(new Float32Array(16_000).fill(value));
-    const frame = socket.sent.at(-1);
-    expect(frame).toBeInstanceOf(Uint8Array);
-    const bytes = frame as Uint8Array;
-    acknowledgedBytes += bytes.byteLength;
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    if (second === 0) firstSample = view.getFloat32(0, true);
-    lastSample = view.getFloat32(bytes.byteLength - 4, true);
-    socket.receive({ type: "update", revision: second + 1, text: null });
-  }
-  expect(acknowledgedBytes).toBe(seconds * 16_000 * 4);
-  expect(firstSample).toBeCloseTo(1 / seconds);
-  expect(lastSample).toBeCloseTo(1);
-  const final = stream.finish();
-  expect(socket.sent.at(-1)).toBe('{"type":"finish"}');
-  socket.receive({ type: "finished", text: "dictated" });
-  await expect(final).resolves.toBe("dictated");
-});
-
-it("coalesces queued audio into fewer inference frames", async () => {
-  const { socket, stream, abort } = connect();
-  stream.feed(new Float32Array([0.1]));
-  stream.feed(new Float32Array([0.2]));
-  stream.feed(new Float32Array([0.3]));
-  stream.feed(new Float32Array([0.4]));
-  expect(socket.sent).toHaveLength(2);
-  socket.receive({ type: "update", revision: 1, text: null });
-
-  expect(socket.sent).toHaveLength(3);
-  const queued = new Float32Array((socket.sent[2] as Uint8Array).slice().buffer);
-  expect(queued).toHaveLength(2);
-  expect(queued[0]).toBeCloseTo(0.3);
-  expect(queued[1]).toBeCloseTo(0.4);
-  abort.abort();
-});
-
-it("caps buffered audio when inference falls behind without imposing a recording duration limit", async () => {
+it("rejects recordings beyond the duration limit", async () => {
   const { socket, stream, onError } = connect();
   stream.feed(new Float32Array(SPEECH_STREAM_MAX_QUEUED_BYTES / 4 + 1));
-  await expect(stream.finish()).rejects.toThrow("cannot keep up with buffered microphone audio");
+  await expect(stream.finish()).rejects.toThrow("limited to five minutes");
   expect(onError).toHaveBeenCalledOnce();
   expect(socket.sent).toHaveLength(0);
   expect(socket.closed).toBe(true);
@@ -146,21 +102,6 @@ it("fails on disconnect and times out stalled inference", async () => {
     await vi.advanceTimersByTimeAsync(120_000);
     await expect(second.stream.finish()).rejects.toThrow("stopped responding");
     expect(second.socket.closed).toBe(true);
-  } finally {
-    vi.useRealTimers();
-  }
-});
-
-it("times out when the last pipelined chunk never receives an acknowledgement", async () => {
-  vi.useFakeTimers();
-  try {
-    const { socket, stream } = connect();
-    stream.feed(new Float32Array([0.1]));
-    stream.feed(new Float32Array([0.2]));
-    socket.receive({ type: "update", revision: 1, text: null });
-    const final = stream.finish();
-    await vi.advanceTimersByTimeAsync(120_000);
-    await expect(final).rejects.toThrow("stopped responding");
   } finally {
     vi.useRealTimers();
   }

@@ -1,7 +1,6 @@
 import {
   DEFAULT_SPEECH_POST_PROCESSING_PROMPT,
   type EnvironmentSpeechPostProcessingRequest,
-  type ServerSettings as ServerSettingsSnapshot,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -16,37 +15,6 @@ import { buildTranscriptionPostProcessingPrompt } from "../textGeneration/Transc
 import { applySpeechAliases } from "./customWords.ts";
 import { SpeechOperationError } from "./SpeechService.ts";
 
-export const postProcessTranscript = Effect.fn("speech.postProcessTranscript")(function* (
-  input: EnvironmentSpeechPostProcessingRequest & {
-    readonly cwd: string;
-    readonly settings: ServerSettingsSnapshot;
-  },
-) {
-  if (input.transcript.trim().length === 0) return input.transcript;
-  const { mode, customInstructions } = input.options.speechPostProcessingPrompt;
-  const instructions =
-    (mode === "custom" ? customInstructions.trim() : "") || DEFAULT_SPEECH_POST_PROCESSING_PROMPT;
-  const textGeneration = yield* TextGeneration.TextGeneration;
-  const registry = yield* ProviderRegistry.ProviderRegistry;
-  const generated = yield* textGeneration.generateTranscriptionPostProcessing({
-    cwd: input.cwd,
-    prompt: buildTranscriptionPostProcessingPrompt(
-      instructions,
-      input.transcript,
-      input.draft,
-      input.options.speechCorrectionWord,
-    ),
-    modelSelection: resolveSpeechPostProcessingModelSelection(
-      input.settings,
-      yield* registry.getProviders,
-    ),
-  });
-  const text = generated.transcription.trim();
-  return text.length > 0
-    ? applySpeechAliases(text, input.options.speechCustomWords)
-    : input.transcript;
-});
-
 export class SpeechPostProcessing extends Context.Service<
   SpeechPostProcessing,
   {
@@ -60,18 +28,36 @@ const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const fileSystem = yield* FileSystem.FileSystem;
   const textGeneration = yield* TextGeneration.TextGeneration;
-  const registry = yield* ProviderRegistry.ProviderRegistry;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   return SpeechPostProcessing.of({
     process: Effect.fn("SpeechPostProcessing.process")(
       function* (input) {
+        if (input.transcript.trim().length === 0) return { text: input.transcript };
         const settings = yield* settingsService.getSettings;
+        const providers = yield* providerRegistry.getProviders;
+        const { mode, customInstructions } = input.options.speechPostProcessingPrompt;
+        const instructions =
+          (mode === "custom" ? customInstructions.trim() : "") ||
+          DEFAULT_SPEECH_POST_PROCESSING_PROMPT;
         // Providers run in a working directory; cleanup must not read a checkout.
         const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-voice-cleanup-" });
-        const text = yield* postProcessTranscript({ ...input, settings, cwd }).pipe(
-          Effect.provideService(TextGeneration.TextGeneration, textGeneration),
-          Effect.provideService(ProviderRegistry.ProviderRegistry, registry),
-        );
-        return { text };
+        const generated = yield* textGeneration.generateTranscriptionPostProcessing({
+          cwd,
+          prompt: buildTranscriptionPostProcessingPrompt(
+            instructions,
+            input.transcript,
+            input.draft,
+            input.options.speechCorrectionWord,
+          ),
+          modelSelection: resolveSpeechPostProcessingModelSelection(settings, providers),
+        });
+        const text = generated.transcription.trim();
+        return {
+          text:
+            text.length > 0
+              ? applySpeechAliases(text, input.options.speechCustomWords)
+              : input.transcript,
+        };
       },
       Effect.scoped,
       Effect.mapError((cause) => new SpeechOperationError({ operation: "post-processing", cause })),

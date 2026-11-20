@@ -12,19 +12,23 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
   private length = 0;
   private recording = false;
   private flushed = false;
+  private samples = 0;
   private levelSamples = 0;
   private levelEnergy = 0;
   private level = 0;
+  private readonly meterOnly: boolean;
 
-  constructor() {
+  constructor(options?: { readonly processorOptions?: { readonly meterOnly?: boolean } }) {
     super();
+    this.meterOnly = options?.processorOptions?.meterOnly === true;
     this.port.onmessage = ({ data }) => {
       if (data === "start") this.recording = true;
       if (data === "stop") {
         this.recording = false;
-        if (!this.flushed) this.append(this.resampler.flush());
+        if (!this.meterOnly && !this.flushed) this.append(this.resampler.flush());
         this.flushed = true;
         if (this.length) this.publish();
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- AudioWorklet MessagePorts do not accept a target origin
         this.port.postMessage("stopped");
       }
     };
@@ -38,7 +42,14 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
 
   private append(pcm: Float32Array) {
     for (const sample of pcm) {
+      if (this.samples === 16_000 * 300) {
+        this.recording = false;
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- AudioWorklet MessagePorts do not accept a target origin
+        this.port.postMessage("limit");
+        break;
+      }
       this.chunk[this.length++] = sample;
+      this.samples++;
       if (this.length === this.chunk.length) this.publish();
     }
   }
@@ -65,7 +76,7 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
         this.levelSamples = 0;
       }
     }
-    this.append(this.resampler.push(mono));
+    if (!this.meterOnly) this.append(this.resampler.push(mono));
     return true;
   }
 }

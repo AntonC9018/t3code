@@ -6,20 +6,13 @@ import {
   recommendSpeechModels,
   decodeSpeechPcmRequest,
   encodeSpeechPcmRequest,
-  mergeSpeechCustomWords,
   resolveSpeechVocabulary,
 } from "./speech.ts";
 
-const word = (term: string, aliases: string[] = []) => ({ term, aliases });
-
 describe("speech PCM request framing", () => {
-  it("round-trips Unicode vocabulary and unaligned PCM without changing audio bytes", () => {
+  it("round-trips options and unaligned PCM without changing audio bytes", () => {
     const pcm = new Uint8Array(new Float32Array([0.25, -0.5]).buffer);
-    const options = {
-      ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-      speechLanguage: "fr",
-      speechCustomWords: [word("Éclair", ["e clair"])],
-    };
+    const options = { ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechLanguage: "fr" };
     const body = encodeSpeechPcmRequest(pcm, options);
     const pool = new Uint8Array(body.length + 3);
     pool.set(body, 3);
@@ -46,7 +39,7 @@ describe("speech PCM request framing", () => {
     });
   });
 
-  it("rejects truncated frames, oversized option lengths, invalid preferences and missing audio", () => {
+  it("rejects truncated frames, oversized option lengths and missing audio", () => {
     expect(() => decodeSpeechPcmRequest(new Uint8Array(3))).toThrow();
     const oversized = new Uint8Array(5);
     new DataView(oversized.buffer).setUint32(0, SPEECH_MAX_OPTIONS_BYTES + 1, true);
@@ -55,39 +48,6 @@ describe("speech PCM request framing", () => {
       decodeSpeechPcmRequest(
         encodeSpeechPcmRequest(new Uint8Array(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS),
       ),
-    ).toThrow();
-    expect(() =>
-      encodeSpeechPcmRequest(new Uint8Array(4), {
-        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-        speechCustomWords: [word("Same"), word("same")],
-      }),
-    ).toThrow();
-  });
-});
-
-describe("mergeSpeechCustomWords", () => {
-  it("gives project terms and aliases precedence over personal spellings", () => {
-    expect(
-      mergeSpeechCustomWords(
-        [word("MiniMax", ["mini max", "small max"]), word("Other", ["MINI MAX", "other name"])],
-        [word("ProjectMax", ["mini max"])],
-      ),
-    ).toEqual([
-      word("ProjectMax", ["mini max"]),
-      word("MiniMax", ["small max"]),
-      word("Other", ["other name"]),
-    ]);
-  });
-
-  it("reports oversized combined vocabulary without silently dropping words", () => {
-    const personal = Array.from({ length: 100 }, (_, index) => word(`Word ${index}`));
-    const combined = mergeSpeechCustomWords(personal, [word("Project term")]);
-    expect(combined).toHaveLength(101);
-    expect(() =>
-      encodeSpeechPcmRequest(new Uint8Array(4), {
-        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-        speechCustomWords: combined,
-      }),
     ).toThrow();
   });
 });

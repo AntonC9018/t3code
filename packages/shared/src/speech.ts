@@ -158,24 +158,6 @@ export function chooseSetupSpeechModel<
 
 const vocabularyKey = (value: string) => value.trim().normalize("NFC").toLocaleLowerCase();
 
-/** Project spellings take precedence. Request validation enforces the combined size limit. */
-export function mergeSpeechCustomWords(
-  personal: SpeechCustomWords,
-  project: SpeechCustomWords,
-): SpeechCustomWords {
-  const seen = new Set<string>();
-  return [...project, ...personal].flatMap(({ term, aliases }) => {
-    if (seen.has(vocabularyKey(term))) return [];
-    seen.add(vocabularyKey(term));
-    const uniqueAliases = aliases.filter((alias) => {
-      if (seen.has(vocabularyKey(alias))) return false;
-      seen.add(vocabularyKey(alias));
-      return true;
-    });
-    return [{ term, aliases: uniqueAliases }];
-  });
-}
-
 /**
  * Project spellings win over personal ones. Hint terms, such as the project name or the
  * correction cue, come first so the 100-entry wire limit cannot drop them.
@@ -197,7 +179,19 @@ export function resolveSpeechVocabulary(input: {
       ? [{ term, aliases: [] }]
       : [];
   });
-  return mergeSpeechCustomWords([...input.project, ...input.personal], hints).slice(0, 100);
+  const seen = new Set<string>();
+  return [...hints, ...input.project, ...input.personal]
+    .flatMap(({ term, aliases }) => {
+      if (seen.has(vocabularyKey(term))) return [];
+      seen.add(vocabularyKey(term));
+      const uniqueAliases = aliases.filter((alias) => {
+        if (seen.has(vocabularyKey(alias))) return false;
+        seen.add(vocabularyKey(alias));
+        return true;
+      });
+      return [{ term, aliases: uniqueAliases }];
+    })
+    .slice(0, 100);
 }
 
 /** Binary requests contain a four-byte JSON length, UTF-8 options, then unencoded PCM. */

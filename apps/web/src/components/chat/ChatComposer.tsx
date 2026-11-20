@@ -21,10 +21,6 @@ import {
   trackOpenQuestionAttachmentDraft,
   useQuestionAttachmentPreparation,
 } from "../../questionAttachments";
-import {
-  makeClosedQuestionRecordingRecovery,
-  makeRetainedQuestionAnswerDraft,
-} from "../../questionAnswerDrafts";
 import type {
   KeybindingCommand,
   AssistantCitation,
@@ -113,7 +109,6 @@ import {
   composerFileNeedsReattach,
   composerDraftHasUserContent,
   composerTargetKey,
-  makeRetainedComposerDraft,
   readComposerDraftPrompt,
   resolveLiveComposerDraftTarget,
   useComposerDraftStore,
@@ -151,11 +146,7 @@ import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
 import { useDictationShortcut } from "../../speech/useDictationShortcut";
 import { useDictationSubmissionShortcut } from "../../speech/useDictationSubmissionShortcut";
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
-import {
-  ComposerSpeechButton,
-  ComposerSpeechRecordingPill,
-  shouldShowComposerFooter,
-} from "./ComposerSpeechButton";
+import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand, type ShortcutMatchContext } from "../../keybindings";
 import {
@@ -1902,33 +1893,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerApprovalState ||
     activePendingIsResponding ||
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
-  const speechDraftOwnerKey = questionAttachmentTarget ?? composerDraftTargetKey;
-  const speechDraftOwnerKeyRef = useRef<string | null>(speechDraftOwnerKey);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keeps the owner guard current before speech-hook passive cleanup, so late completion cannot update a different draft.
-  useLayoutEffect(() => {
-    speechDraftOwnerKeyRef.current = speechDraftOwnerKey;
-    return () => {
-      speechDraftOwnerKeyRef.current = null;
-    };
-  }, [speechDraftOwnerKey]);
-  const retainedDraft =
-    questionAttachmentTarget && activePendingProgress?.activeQuestion
-      ? makeRetainedQuestionAnswerDraft(
-          questionAttachmentTarget,
-          activePendingProgress.activeQuestion,
-        )
-      : makeRetainedComposerDraft(composerDraftTarget);
   const speechInput = useEnvironmentSpeechInput({
     environmentId,
     projectId: activeProjectId,
     projectName,
-    ownerKey: speechDraftOwnerKey,
-    draftText: activePendingProgress?.customAnswer ?? prompt,
+    ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
     disabled: dictationDisabled,
-    retainedDraft,
-    closedQuestionRecordings: questionAttachmentTarget
-      ? undefined
-      : makeClosedQuestionRecordingRecovery(routeThreadRef),
     label: activeThread?.title ?? null,
     presented: !hiddenThread,
     // A question's answer lives only in this composer, so only the thread draft outlives it.
@@ -1953,8 +1923,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 })),
         },
     readDraft: () => {
-      if (speechDraftOwnerKeyRef.current !== speechDraftOwnerKey) return retainedDraft.read();
-      const snapshot = readComposerSnapshotStable();
+      const snapshot = readComposerSnapshot();
       return {
         text: snapshot.value,
         selection: composerEditorRef.current?.readSelectionRange() ?? {
@@ -1964,16 +1933,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       };
     },
     commitDraft: (text, selection) => {
-      if (speechDraftOwnerKeyRef.current !== speechDraftOwnerKey) return;
-      const snapshot = readComposerSnapshotStable();
-      const applied = applyPromptReplacementStable(0, snapshot.value.length, text, {
+      const snapshot = readComposerSnapshot();
+      const applied = applyPromptReplacement(0, snapshot.value.length, text, {
         expectedText: snapshot.value,
         focusEditorAfterReplace: false,
       });
-      if (!applied) {
-        if (!activePendingUserInput) setComposerDraftPrompt(composerDraftTarget, text);
-        return;
-      }
+      if (!applied) return;
       const cursor = collapseExpandedComposerCursor(text, selection.start, isLiteralPendingAnswer);
       setComposerCursor(cursor);
       window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));
@@ -3880,11 +3845,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               </div>
             ) : null}
 
-            {!shouldShowComposerFooter(
-              isComposerCollapsedMobile,
-              isComposerApprovalState,
-              speechInput.state.phase,
-            ) ? null : (
+            {isComposerCollapsedMobile && speechInput.state.phase === "idle" ? null : (
               <div
                 data-chat-composer-footer="true"
                 className={cn(
@@ -3988,13 +3949,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       <>
                         <ComposerSpeechRecordingPill
                           state={speechInput.state}
-                          progress={speechInput.progress}
-                          recoveringClosedQuestion={speechInput.recoveringClosedQuestion}
+                          progress={null}
                           finishShortcutLabel={dictationShortcutLabel}
                           cancelShortcutLabel="Esc"
                           level={speechInput.level}
                           recordingStartedAt={speechInput.recordingStartedAt}
-                          disabled={dictationDisabled || !speechInput.canStart}
+                          disabled={dictationDisabled}
                           onStart={() => void speechInput.start()}
                           onStop={() => void speechInput.stop()}
                           onCancel={() => speechInput.cancel()}
@@ -4017,8 +3977,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       language={speechInput.setup.language}
                       downloading={speechInput.setup.downloading}
                       error={speechInput.setup.error}
-                      consent={speechInput.setup.consent}
-                      onAllowAudio={speechInput.setup.allowAudio}
                       onOpenChange={speechInput.setup.setOpen}
                       onRetryCatalog={speechInput.setup.retryCatalog}
                       onDownload={() => void speechInput.setup.download()}

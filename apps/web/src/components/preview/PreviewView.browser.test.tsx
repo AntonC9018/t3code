@@ -58,8 +58,8 @@ vi.mock(import("./previewBridge"), async (original) => ({
   previewBridge: {
     navigate: mocks.navigate,
     pickElement: mocks.pickElement,
+    annotationVoice: { onEvent: () => () => {}, update: async () => {} },
     setAnnotationSendEnabled: mocks.setAnnotationSendEnabled,
-    annotationVoice: { onEvent: () => () => {}, update: vi.fn(async () => undefined) },
     cancelPickElement: mocks.cancelPickElement,
     refresh: vi.fn(async () => undefined),
     goBack: vi.fn(async () => undefined),

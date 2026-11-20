@@ -1080,16 +1080,12 @@ describe("synchronized model preferences", () => {
 });
 
 describe("resolveSpeechPostProcessingModelSelection", () => {
-  it("follows the text generation model when cleanup is unpinned, and honors a usable pin", () => {
-    const textGeneration = createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-sol");
+  it("follows the text generation model until a usable cleanup model is set", () => {
+    const textGeneration = createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna");
     const cleanup = createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-haiku", [
       { id: "effort", value: "low" },
     ]);
-    const base = {
-      ...DEFAULT_SERVER_SETTINGS,
-      textGenerationModelSelection: textGeneration,
-      speechPostProcessingModelSelection: null,
-    };
+    const base = { ...DEFAULT_SERVER_SETTINGS, textGenerationModelSelection: textGeneration };
     expect(resolveSpeechPostProcessingModelSelection(base)).toBe(textGeneration);
     const pinned = applyServerSettingsPatch(base, { speechPostProcessingModelSelection: cleanup });
     expect(resolveSpeechPostProcessingModelSelection(pinned)).toEqual(cleanup);
@@ -1104,7 +1100,7 @@ describe("resolveSpeechPostProcessingModelSelection", () => {
           },
         },
       }),
-    ).toEqual(textGeneration);
+    ).toBe(textGeneration);
     expect(
       resolveSpeechPostProcessingModelSelection(pinned, [
         {
@@ -1113,15 +1109,8 @@ describe("resolveSpeechPostProcessingModelSelection", () => {
           installed: true,
           supportsTextGeneration: false,
         },
-        {
-          instanceId: "codex",
-          enabled: true,
-          installed: true,
-          supportsTextGeneration: true,
-          models: [],
-        },
       ] as never),
-    ).toEqual(textGeneration);
+    ).toBe(textGeneration);
     expect(
       applyServerSettingsPatch(pinned, { speechPostProcessingModelSelection: null })
         .speechPostProcessingModelSelection,

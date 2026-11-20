@@ -20,8 +20,8 @@ import type { ResolvedSettingsScope } from "./settingsScope";
 export type SettingsPath =
   | "/settings/projects"
   | "/settings/general"
-  | "/settings/voice"
   | "/settings/diagnostics"
+  | "/settings/voice"
   | "/settings/appearance"
   | "/settings/chat"
   | "/settings/diffs"
@@ -488,45 +488,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
   },
   {
-    id: "transcription-environment",
-    title: msg("Transcription environment"),
-    to: "/settings/voice",
-    searchTerms: [msg("speech voice stt server machine device")],
-  },
-  {
-    id: "local-voice-input",
-    title: msg("Transcription models"),
-    to: "/settings/voice",
-    searchTerms: [msg("speech voice stt download local whisper parakeet canary moonshine")],
-  },
-  {
-    id: "microphone",
-    title: msg("Microphone"),
-    to: "/settings/voice",
-    searchTerms: [msg("mic test record playback input audio")],
-  },
-  {
-    id: "dictionary",
-    title: msg("Dictionary"),
-    to: "/settings/voice",
-    scope: "project-defaults",
-    searchTerms: [
-      msg("speech voice transcription vocabulary names glossary alias shared team environment"),
-    ],
-  },
-  {
-    id: "speech-acceleration",
-    title: msg("Transcription acceleration"),
-    to: "/settings/voice",
-    searchTerms: [msg("voice speech gpu cpu hardware transcription")],
-  },
-  {
-    id: "speech-model-unload",
-    title: msg("Model unload"),
-    to: "/settings/voice",
-    searchTerms: [msg("voice speech transcription memory idle timeout never")],
-  },
-  {
     id: "boring-sidebar",
     title: msg("Boring sidebar (group by project)"),
     to: "/settings/labs",
@@ -963,12 +924,6 @@ export const SETTINGS_SEARCH_ITEMS = [
       msg("prompt cache expired uncached read compaction compact block allow scheduled tasks mcp"),
     ],
     environmentOnly: true,
-  },
-  {
-    id: "speech-post-processing-prompt",
-    title: msg("Voice post-processing prompt"),
-    to: "/settings/voice",
-    searchTerms: [msg("speech transcription instructions cleanup")],
   },
   {
     id: "thread-title-instructions",
@@ -1647,7 +1602,7 @@ export function isSettingsSearchScopeAvailable(
   }
 }
 
-export function searchableSetting(id: SettingsSearchItemId): {
+function searchableSetting(id: SettingsSearchItemId): {
   readonly id: string;
   readonly title: string;
 } {

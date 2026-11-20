@@ -3,7 +3,7 @@ import { msg, useGT, useMessages } from "gt-react";
 
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -19,6 +19,7 @@ const POLICIES = {
 export function AgentColdCacheRow() {
   const gt = useGT();
   const m = useMessages();
+  const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["agentColdCachePolicy"]);

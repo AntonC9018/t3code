@@ -1,15 +1,16 @@
 import type { SpeechCustomWords } from "@t3tools/contracts";
 
+// These scripts are written without spaces, so a neighbor in one of them still ends a word.
+const UNSPACED_SCRIPTS = "\\p{scx=Han}\\p{scx=Hiragana}\\p{scx=Katakana}";
+const LETTER = `[[\\p{L}\\p{M}\\p{N}]--[${UNSPACED_SCRIPTS}]]`;
+const WORD_CHARACTER = `[[\\p{L}\\p{M}\\p{N}\\p{Pc}]--[${UNSPACED_SCRIPTS}]]`;
+const TOKEN = new RegExp(`${LETTER}(?:[^\\s${UNSPACED_SCRIPTS}]*${LETTER})?`, "gv");
+
 /** Fuzzy-matches preferred terms and rewrites aliases to their preferred spelling. */
 export function makeSpeechTextCorrector(
   words: readonly string[],
   dictionary: SpeechCustomWords = [],
 ) {
-  // These scripts are written without spaces, so a neighbor in one of them still ends a word.
-  const UNSPACED_SCRIPTS = "\\p{scx=Han}\\p{scx=Hiragana}\\p{scx=Katakana}";
-  const LETTER = `[[\\p{L}\\p{M}\\p{N}]--[${UNSPACED_SCRIPTS}]]`;
-  const WORD_CHARACTER = `[[\\p{L}\\p{M}\\p{N}\\p{Pc}]--[${UNSPACED_SCRIPTS}]]`;
-  const TOKEN = new RegExp(`${LETTER}(?:[^\\s${UNSPACED_SCRIPTS}]*${LETTER})?`, "gv");
   const MATCH_THRESHOLD = 0.18;
 
   const matchKey = (value: string) =>
@@ -191,10 +192,6 @@ export function makeSpeechTextCorrector(
 
 export function applySpeechAliases(text: string, words: SpeechCustomWords): string {
   return makeSpeechTextCorrector([], words)(text);
-}
-
-export function applySpeechCustomWords(text: string, words: readonly string[]): string {
-  return makeSpeechTextCorrector(words)(text);
 }
 
 const normalizeWord = (word: string) => word.replace(/\s+/g, " ").trim();

@@ -1,15 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - native inference and IPC cleanup need killable Promise boundaries outside the Effect runtime.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeSea from "node:sea";
-import type { SpeechCustomWords, SpeechStreamText } from "@t3tools/contracts";
+import type { SpeechStreamText } from "@t3tools/contracts";
 import { createSpeechAudio } from "./audio.ts";
-import { makeSpeechTextCorrector } from "./customWords.ts";
 
 // Inline the small child entry so the packaged CLI does not need a separate worker artifact.
 const entry = `
 const createSpeechAudio = ${createSpeechAudio.toString()};
-const makeCorrector = ${makeSpeechTextCorrector.toString()};
-let correct = (text) => text;
 let speech;
 let model;
 let vadModel;
@@ -43,7 +40,6 @@ const openAsr = async () => {
 const begin = async (message, live) => {
   resetAsr();
   options = message.options;
-  correct = makeCorrector(message.correction?.customWords ?? [], message.correction?.dictionary ?? []);
   nativeStreaming = live && model.capabilities.supportsStreaming;
   texts = [];
   scored = revision = 0;
@@ -91,11 +87,11 @@ const decode = async (final) => {
       const update = await stream.feed(pcm);
       if (update.committedChanged || update.tentativeChanged) {
         const text = stream.text;
-        preview = { committed: correct(text.committed), tentative: correct(text.tentative) };
+        preview = { committed: text.committed, tentative: text.tentative };
       }
     } else {
       await transcribe(pcm);
-      preview = { committed: correct(texts.join(" ").trim()), tentative: "" };
+      preview = { committed: texts.join(" ").trim(), tentative: "" };
     }
   }
   return preview;
@@ -165,7 +161,7 @@ process.on("message", async (message) => {
     } else if (message.kind === "finish") {
       await feed(undefined, true);
       if (nativeStreaming && heardAudio) await stream.finalize();
-      const text = correct(nativeStreaming ? (heardAudio ? stream.text.full : "") : texts.join(" ").trim());
+      const text = nativeStreaming ? (heardAudio ? stream.text.full : "") : texts.join(" ").trim();
       resetAsr();
       audio = undefined;
       process.send({ type: "t3-speech-reply", ok: true, text });
@@ -405,13 +401,8 @@ async function loadNativeSpeechModelOnce(
     supportsLongForm: loaded.supportsLongForm === true,
     supportsTranslation: loaded.supportsTranslation === true,
     supportsVocabulary: loaded.supportsVocabulary === true,
-    begin: async (
-      options: NativeSpeechOptions,
-      filterSilence: boolean,
-      vadPath?: string,
-      correction?: NativeSpeechCorrection,
-    ) => {
-      await send({ kind: "begin", options, filterSilence, vadPath, correction });
+    begin: async (options: NativeSpeechOptions, filterSilence: boolean, vadPath?: string) => {
+      await send({ kind: "begin", options, filterSilence, vadPath });
     },
     feed: async (pcm: Float32Array) => {
       const reply = await send({ kind: "feed", pcm });
@@ -464,9 +455,4 @@ type NativeSpeechOptions = {
   readonly targetLanguage?: "en";
   readonly language?: string;
   readonly vocabulary?: readonly string[];
-};
-
-type NativeSpeechCorrection = {
-  readonly customWords: readonly string[];
-  readonly dictionary: SpeechCustomWords;
 };

@@ -15,9 +15,7 @@ function wizard(open: boolean) {
       language={null}
       downloading={false}
       error={null}
-      consent={false}
       onOpenChange={() => {}}
-      onAllowAudio={() => {}}
       onRetryCatalog={null}
       onDownload={() => {}}
       onCancelDownload={() => {}}

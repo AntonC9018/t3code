@@ -571,21 +571,12 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   voiceShortcutMode: VoiceShortcutMode.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
-  // The environment offered when this device is asked to grant audio; null offers the primary.
-  // Never consent by itself: only the grant in voiceConsent authorizes sending audio.
-  voiceTranscriptionEnvironmentId: Schema.NullOr(EnvironmentId).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
   speechLanguage: SpeechLanguage.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
   speechTranslateToEnglish: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   speechCustomWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   speechSilenceFiltering: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   speechStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   speechRemoveFillerWords: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  // Cleanup needs this preference and its separate grant, so a stale window cannot restore consent.
-  speechPostProcessingEnabled: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(false)),
-  ),
   speechPostProcessingPrompt: SpeechPostProcessingPromptSettings.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({ mode: "default" as const, customInstructions: "" }),
@@ -2151,14 +2142,12 @@ export const ClientSettingsPatch = Schema.Struct({
   voiceMicrophone: Schema.optionalKey(Schema.String),
   voiceMicrophones: Schema.optionalKey(Schema.Array(VoiceMicrophoneEntry)),
   voiceShortcutMode: Schema.optionalKey(VoiceShortcutMode),
-  voiceTranscriptionEnvironmentId: Schema.optionalKey(Schema.NullOr(EnvironmentId)),
   speechLanguage: Schema.optionalKey(SpeechLanguage),
   speechTranslateToEnglish: Schema.optionalKey(Schema.Boolean),
   speechCustomWords: Schema.optionalKey(SpeechCustomWords),
   speechSilenceFiltering: Schema.optionalKey(Schema.Boolean),
   speechStreaming: Schema.optionalKey(Schema.Boolean),
   speechRemoveFillerWords: Schema.optionalKey(Schema.Boolean),
-  speechPostProcessingEnabled: Schema.optionalKey(Schema.Boolean),
   speechPostProcessingPrompt: Schema.optionalKey(SpeechPostProcessingPromptSettings),
   speechCorrectionWord: Schema.optionalKey(SpeechCorrectionCue),
   language: Schema.optionalKey(Schema.String),

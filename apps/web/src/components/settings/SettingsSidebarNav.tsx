@@ -90,8 +90,8 @@ const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
 > = {
   "/settings/general": Settings2Icon,
-  "/settings/voice": MicIcon,
   "/settings/diagnostics": WrenchIcon,
+  "/settings/voice": MicIcon,
   "/settings/appearance": PaletteIcon,
   "/settings/chat": MessageSquareTextIcon,
   "/settings/diffs": FileDiffIcon,

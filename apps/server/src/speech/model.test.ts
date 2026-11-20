@@ -62,25 +62,3 @@ it("uses refreshed default files and preserves forced language choices", () => {
   expect(effectiveSpeechLanguage(nemotron, "auto")).toBe("auto");
   expect(nemotron.languages.filter((language) => language === "fr")).toHaveLength(1);
 });
-
-it("advertises recognition hints only for Whisper-family models", () => {
-  expect(
-    SPEECH_MODELS.filter((model) => model.supportsRecognitionHints).map((model) => model.id),
-  ).toEqual(
-    expect.arrayContaining([
-      "handy-computer/whisper-medium-gguf",
-      "handy-computer/Breeze-ASR-25-gguf",
-    ]),
-  );
-  for (const model of SPEECH_MODELS) {
-    expect(model.supportsRecognitionHints).toBe(
-      model.id.startsWith("handy-computer/whisper-") ||
-        model.id === "handy-computer/Breeze-ASR-25-gguf",
-    );
-  }
-});
-
-it("preserves translation capabilities without advertising streaming translation", () => {
-  expect(getSpeechModel("handy-computer/whisper-medium-gguf")?.supportsTranslation).toBe(true);
-  expect(getSpeechModel(DEFAULT_SPEECH_MODEL_ID)?.supportsTranslation).toBe(false);
-});

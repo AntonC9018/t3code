@@ -19,11 +19,10 @@ On a new device, the microphone or dictation shortcut opens that setting from th
 Microphone audio recorded on this device is sent to that environment over your
 authenticated connection, transcribed there, and discarded. The choice is saved
 on this device only, so every computer and browser you use asks for it once.
-Turn it off at any time; a recording in progress is discarded.
+Set it back to **Off** at any time; a recording in progress is discarded.
 
-Changing the transcription environment while sending is on moves the choice to the
-new environment. If the chosen environment goes offline, voice input waits for it.
-T3 Code never substitutes another environment.
+If the chosen environment goes offline, voice input waits for it. T3 Code never
+substitutes another environment.
 
 For cloud dictation, choose **OpenAI** or **Grok Voice Transcribe** via the environment
 you want to use. If it needs a key, enter one and choose **Save and enable**.
@@ -86,47 +85,24 @@ while you record; models with built-in long-form support transcribe when you sto
 
 Press the microphone in the composer, or `mod+shift+d` (`mod` is Command on
 macOS and Ctrl elsewhere). Press again, or the check mark, to finish; `Esc`
-discards the recording and leaves your draft unchanged. Recording continues until
-you finish or cancel it. Text is inserted at the cursor or replaces the selection
-you had when recording started. You can keep editing while recording; changes that
-reach the draft meanwhile, such as a cited message, are kept and the text then goes
-after your selection instead of replacing it. A live preview is tentative and may
-change as the model hears more; the full recording supplies the completed transcript.
+discards the recording and leaves your draft unchanged. Recordings last up to
+five minutes. Text is inserted at the cursor or replaces the selection you had
+when recording started, and the editor is read-only while dictation runs.
+Changes that reach the draft meanwhile, such as a cited message, are kept;
+the text then goes after your selection instead of replacing it.
 
 Pressing Send while dictating finishes the recording and sends the draft once
-the transcript, and any cleanup, has been inserted. You can also press Send while
-those steps are finishing. Cancelling also cancels that queued send and keeps your
-draft. In the other editors, Save, Comment, Reply, Submit review, or Attach works the
+the transcript has been inserted. Cancelling also cancels that queued send. In
+the other editors, Save, Comment, Reply, Submit review, or Attach works the
 same way, and the shortcut targets the editor that has focus, or the composer
 when none does. In the desktop browser's annotation editor, the microphone and
 the shortcut work while the page has focus; the page you are annotating never
 sees the recording, which runs in T3 Code itself.
 
-In the chat composer, dictation stays with the chat where you started it.
-You can switch chats while recording or transcribing; the completed text goes into
-the original chat's draft. Switching chats cancels a queued Send, so the transcript
-remains available for review.
-
 **Dictation shortcut** in Voice settings picks how the keybinding behaves:
 **Auto** tap-toggles or records while held, **Hold** records only while the keys
 are down, and **Toggle** always needs a second press. Change the chord itself in
 [Keybindings settings](./keybindings.md).
-
-### Saved recordings
-
-Unfinished chat recordings are saved on this device as you speak. If transcription
-fails, reconnect the transcription environment and choose **Retry transcription**
-to resend the saved audio without recording again. After a reload or app restart,
-open the original chat to retry its saved recording. Saved audio is removed after
-the text is added to the draft or you explicitly discard it. Keep the browser's
-site data to retain unfinished recordings; they do not sync between devices.
-Changing the transcription environment or turning off sending microphone audio
-also deletes saved recordings, including after a reload; turning sending back on
-does not restore them.
-
-If a question closes before its dictation finishes, the recording stays in the
-original chat. Choose **Recover to draft** to insert it into the chat draft, or
-explicitly discard it. Closing a question does not delete its recording.
 
 ## Improve recognition
 
@@ -134,9 +110,8 @@ explicitly discard it. Closing a question does not delete its recording.
   it. Models that translate offer **Translate to English**.
 - **Dictionary** holds names and terms the model should get right. Add an alias
   under a term when transcription keeps producing a particular misspelling.
-  Only preferred terms are sent as recognition hints; aliases correct matching
-  words and phrases in the transcript. Your dictionary is saved on this device.
-  The name of the project you dictate in is sent along as a hint.
+  Your dictionary is saved on this device. The name of the project you dictate
+  in is sent along as a hint.
 - **Project dictionary** is vocabulary saved with a project on its environment,
   so everyone who dictates in that project gets the same spellings. Pick the
   project at the top of Settings to edit it; with an environment selected, the
@@ -153,14 +128,14 @@ environment; nothing else about the project is sent.
 
 ## Clean up transcripts
 
-**Voice post-processing** is a separate choice and is off by default. When on, the
+**Transcript cleanup** is a separate choice and is off by default. When on, the
 finished transcript and up to 1,024 characters each from before, inside, and
 after your selection are sent to the cleanup model on the draft's environment,
 which fixes punctuation, numbers, and spoken corrections such as "make it 42,
-sorry, 24". Depending on the model, that can involve an external service. Audio is
-never sent to it. The choice is saved on this device only. Use the built-in
-instructions or write your own, press **Skip** while cleanup runs to insert the raw
-transcript, and if cleanup fails the raw transcript is inserted.
+sorry, 24". Depending on the model, that can involve an external service. Audio is never
+sent to it. Use the built-in instructions or write your own, press **Skip**
+while cleanup runs to insert the raw transcript, and if cleanup fails the raw
+transcript is inserted.
 
 Cleanup uses the environment's text generation model unless you pick a
 **Cleanup model** for that environment, for example a cheaper or faster one.

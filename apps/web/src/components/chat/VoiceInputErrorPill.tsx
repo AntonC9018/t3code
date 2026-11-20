@@ -29,8 +29,6 @@ export function VoiceInputErrorPill(props: {
   errorAction: "retry" | "settings" | null;
   errorCode?: VoiceInputErrorCode | undefined;
   disabled?: boolean;
-  hasRecording?: boolean | undefined;
-  recoveringClosedQuestion?: boolean | undefined;
   cancelShortcutLabel?: string | null;
   size?: "default" | "compact" | undefined;
   onRetry(): void;
@@ -45,18 +43,12 @@ export function VoiceInputErrorPill(props: {
   const errorLabel = props.errorCode ? VOICE_ERROR_LABELS[props.errorCode] : undefined;
   const action = openSettings
     ? { label: gt("Open voice settings"), text: gt("Settings") }
-    : props.recoveringClosedQuestion
-      ? { label: gt("Recover to draft"), text: gt("Recover to draft") }
-      : props.hasRecording || props.errorCode === "transcription-failed"
-        ? {
-            label: gt("Retry transcription"),
-            text: gt("Retry", { $context: "verb, retries transcription" }),
-          }
-        : { label: gt("Record again"), text: gt("Record again") };
-  const dismissLabel = props.hasRecording
-    ? gt("Discard saved recording")
-    : gt("Dismiss voice input error");
-
+    : props.errorCode === "transcription-failed"
+      ? {
+          label: gt("Retry transcription"),
+          text: gt("Retry", { $context: "verb, retries transcription" }),
+        }
+      : { label: gt("Record again"), text: gt("Record again") };
   return (
     <VoiceInputPill tone="error" size={props.size}>
       <Tooltip>
@@ -66,7 +58,7 @@ export function VoiceInputErrorPill(props: {
               type="button"
               size={compact ? "icon-xs" : "icon-sm-pill"}
               variant="ghost"
-              aria-label={dismissLabel}
+              aria-label={gt("Dismiss voice input error")}
               onPointerDown={(event) => event.preventDefault()}
               onClick={props.onDismiss}
               className="shrink-0"
@@ -76,13 +68,9 @@ export function VoiceInputErrorPill(props: {
           }
         />
         <TooltipPopup side="top">
-          {props.hasRecording
-            ? props.cancelShortcutLabel
-              ? gt("Discard saved recording ({shortcut})", { shortcut: props.cancelShortcutLabel })
-              : gt("Discard saved recording")
-            : props.cancelShortcutLabel
-              ? gt("Dismiss ({shortcut})", { shortcut: props.cancelShortcutLabel })
-              : gt("Dismiss")}
+          {props.cancelShortcutLabel
+            ? gt("Dismiss ({shortcut})", { shortcut: props.cancelShortcutLabel })
+            : gt("Dismiss")}
         </TooltipPopup>
       </Tooltip>
       <Tooltip>
@@ -97,13 +85,7 @@ export function VoiceInputErrorPill(props: {
           }
         >
           <CircleAlertIcon aria-hidden className="size-3.5 shrink-0" />
-          <span className="truncate">
-            {props.recoveringClosedQuestion
-              ? gt("Saved question recording")
-              : errorLabel
-                ? m(errorLabel)
-                : gt("Voice input failed")}
-          </span>
+          <span className="truncate">{errorLabel ? m(errorLabel) : gt("Voice input failed")}</span>
         </TooltipTrigger>
         <TooltipPopup side="top">{message}</TooltipPopup>
       </Tooltip>

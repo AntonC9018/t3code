@@ -185,14 +185,14 @@ export function PreviewView({
   const urlInputRef = useRef<HTMLInputElement | null>(null);
   const [find, setFind] = useState<{ tabId: string; requestId: number } | null>(null);
   const [pickActive, setPickActive] = useState(false);
-  const [annotationVoice, setAnnotationVoice] =
-    useState<DesktopPreviewAnnotationVoiceConfig | null>(null);
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const canSendAnnotation =
     useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) &&
     Boolean(onSendAnnotation);
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
   const pickActiveRef = useRef<{ cancelled: boolean } | null>(null);
+  const [annotationVoice, setAnnotationVoice] =
+    useState<DesktopPreviewAnnotationVoiceConfig | null>(null);
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const previewState = useThreadPreviewState(threadRef);
   const recentHistoryEntries = useThreadRecentHistory(
     threadRef,
@@ -843,7 +843,6 @@ export function PreviewView({
         setPickActive(false);
         setAnnotationVoice(null);
       }
-      if (isCurrentPick || submitted) setAnnotationVoice(null);
       if (
         (isCurrentPick || submitted) &&
         previouslyFocused &&
@@ -999,7 +998,7 @@ export function PreviewView({
     >
       {pickActive && runtimeTabId && annotationVoice ? (
         <PreviewAnnotationSpeech
-          key={JSON.stringify([annotationVoice.sessionId, threadRef])}
+          key={annotationVoice.sessionId}
           threadRef={threadRef}
           tabId={runtimeTabId}
           config={annotationVoice}

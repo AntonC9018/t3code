@@ -18,7 +18,7 @@ export interface VoiceRecordingInput {
 export interface NativeVoiceRecorder<TStatus, TRecorderState> {
   readonly uri: string | null;
   prepareToRecordAsync(): Promise<void>;
-  record(options?: { readonly forDuration?: number }): void;
+  record(options: { readonly forDuration: number }): void;
   stop(): Promise<void>;
   getStatus(): TRecorderState;
   addListener(

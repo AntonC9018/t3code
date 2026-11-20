@@ -94,7 +94,6 @@ import {
   composerFileNeedsReattach,
   hydrateImagesFromPersisted,
   partializeComposerDraftStoreState,
-  persistComposerDraftPrompt,
   useComposerDraftStore,
   DraftId,
 } from "./composerDraftStore";
@@ -223,52 +222,6 @@ function draftFor(threadId: ThreadId, environmentId: EnvironmentId = LEGACY_TEST
 function draftByKey(key: string) {
   return useComposerDraftStore.getState().draftsByThreadKey[key] ?? undefined;
 }
-
-it("persists delivered voice text immediately before its recording can be removed", async () => {
-  const target = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("voice-durable-draft"));
-  persistComposerDraftPrompt(target, "Recovered dictation");
-  const storage = useComposerDraftStore.persist.getOptions().storage!;
-  const saved = await storage.getItem(COMPOSER_DRAFT_STORAGE_KEY);
-  expect(saved).toMatchObject({
-    state: {
-      draftsByThreadKey: {
-        [scopedThreadKey(target)]: { prompt: "Recovered dictation" },
-      },
-    },
-  });
-});
-
-it("round-trips separate question answers without replacing the chat prompt", () => {
-  resetComposerDraftStore();
-  const target = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("question-answer-reload"));
-  const questionTarget = DraftId.make("question-answer-sidecar");
-  useComposerDraftStore.getState().setPrompt(target, "Unsent chat prompt");
-  useComposerDraftStore.getState().setPrompt(questionTarget, "Temporary sidecar");
-  const state = useComposerDraftStore.getState();
-  const questionAnswer = { customAnswer: "", selectedOptionValues: [" choice\t"] };
-  useComposerDraftStore.setState({
-    draftsByThreadKey: {
-      ...state.draftsByThreadKey,
-      [questionTarget]: {
-        ...state.draftsByThreadKey[questionTarget]!,
-        prompt: "",
-        questionAnswer,
-      },
-    },
-  });
-
-  const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
-  expect(persisted.draftsByThreadKey[questionTarget]).toMatchObject({
-    prompt: "",
-    questionAnswer,
-  });
-  const restored = useComposerDraftStore.persist.getOptions().merge!(
-    persisted,
-    useComposerDraftStore.getState(),
-  );
-  expect(restored.draftsByThreadKey[questionTarget]).toMatchObject({ questionAnswer });
-  expect(restored.draftsByThreadKey[scopedThreadKey(target)]?.prompt).toBe("Unsent chat prompt");
-});
 
 describe("composerDraftStore addImages", () => {
   const threadId = ThreadId.make("thread-dedupe");

@@ -18,13 +18,8 @@ export function createBrowserPcmCapture(
   input: {
     readonly getMicrophoneId: () => string | Promise<string>;
     readonly onLevel: (level: number) => void;
-    readonly onDurationLimit?: () => void;
+    readonly onDurationLimit: () => void;
     readonly onError: (message: string, code?: VoiceInputErrorCode) => void;
-    /** Keeps the audio for retry even while it also streams. */
-    readonly retainAudio?: boolean;
-    readonly onChunk?: (pcm: Float32Array<ArrayBuffer>) => void;
-    /** Runs once capture has stopped and before the recording becomes available. */
-    readonly onStopped?: () => Promise<void>;
   },
   prepare: (options: VoiceTranscriptionOptions) => Promise<PreparedBrowserTranscription>,
 ) {
@@ -107,16 +102,15 @@ export function createBrowserPcmCapture(
             return;
           }
           if (data === "limit") {
-            input.onDurationLimit?.();
+            input.onDurationLimit();
             return;
           }
           if (typeof data === "number") {
             input.onLevel(data);
             return;
           }
-          input.onChunk?.(data);
-          feed?.(data);
-          if (!feed || input.retainAudio) chunks.push(data);
+          if (feed) feed(data);
+          else chunks.push(data);
         };
         node.onprocessorerror = () => {
           stopped?.reject(new Error(m(msg("Microphone processing failed."))));
@@ -140,11 +134,10 @@ export function createBrowserPcmCapture(
         throw error;
       }
     },
-    record: (options) => {
+    record: ({ forDuration }) => {
       // oxlint-disable-next-line unicorn/require-post-message-target-origin -- AudioWorklet MessagePorts do not accept a target origin
       worklet?.port.postMessage("start");
-      if (options?.forDuration !== undefined && input.onDurationLimit)
-        durationTimer = setTimeout(input.onDurationLimit, options.forDuration * 1_000);
+      durationTimer = setTimeout(input.onDurationLimit, forDuration * 1_000);
     },
     stop: async () => {
       if (!worklet) return;
@@ -163,18 +156,13 @@ export function createBrowserPcmCapture(
       worklet.port.postMessage("stop");
       try {
         await pending;
-      } finally {
-        try {
-          if (chunks.length && (!feed || input.retainAudio)) {
-            recordingUri = URL.createObjectURL(
-              new Blob(chunks, { type: "application/octet-stream" }),
-            );
-          }
-          await input.onStopped?.();
-        } finally {
-          clearTimeout(timeout);
-          cleanupCapture();
+        if (!feed && chunks.length) {
+          const blob = new Blob(chunks, { type: "application/octet-stream" });
+          recordingUri = URL.createObjectURL(blob);
         }
+      } finally {
+        clearTimeout(timeout);
+        cleanupCapture();
       }
     },
   };

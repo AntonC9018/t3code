@@ -1224,7 +1224,6 @@ function TranscriptionTest(props: {
               state={speech.state}
               progress={null}
               level={speech.level}
-              recordingStartedAt={speech.recordingStartedAt}
               onStart={() => void speech.start()}
               onStop={() => void speech.stop()}
               onCancel={() => speech.cancel()}
@@ -1304,9 +1303,7 @@ function TranscriptionTest(props: {
         language={speech.setup.language}
         downloading={speech.setup.downloading}
         error={speech.setup.error}
-        consent={speech.setup.consent}
         onOpenChange={speech.setup.setOpen}
-        onAllowAudio={speech.setup.allowAudio}
         onRetryCatalog={speech.setup.retryCatalog}
         onDownload={() => void speech.setup.download()}
         onCancelDownload={() => void speech.setup.cancelDownload()}

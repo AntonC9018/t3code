@@ -295,7 +295,6 @@ function Probe(props: {
       environmentId={value.transcriptionEnvironmentId}
       status={value.status}
       onOpenChange={value.setup.setOpen}
-      onAllowAudio={value.setup.allowAudio}
       onRetryCatalog={value.setup.retryCatalog}
       onDownload={value.setup.download}
       onCancelDownload={value.setup.cancelDownload}

@@ -21,7 +21,6 @@ import {
   movePreparingComposerImagesToThread,
 } from "./components/chat/preparingComposerImages";
 import { releaseDraftAttachments } from "./lib/attachmentUploadQueue";
-import { notifyVoiceRecordingRecoveryChange } from "./speech/recordingRecoveryEvents";
 import {
   carryDisplacedCustomAnswerIntoPrompt,
   threadContextsReferencedByAnswer,
@@ -121,7 +120,6 @@ export function clearQuestionAttachmentDraft(
     }
   }
   store.clearComposerContent(key);
-  if (draft?.questionAnswer !== undefined) notifyVoiceRecordingRecoveryChange();
   if (countPreparingComposerImages(key) > 0) cancelPreparingComposerImages(key);
   useQuestionAttachmentPreparation.setState(({ counts }) => {
     const next = { ...counts };
