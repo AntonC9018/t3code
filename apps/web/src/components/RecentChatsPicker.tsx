@@ -8,6 +8,7 @@ import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import type { LegendListRef } from "@legendapp/list/react";
+import { useGT, useMessages } from "gt-react";
 import { MessageSquareIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState, type KeyboardEvent } from "react";
 
@@ -50,6 +51,7 @@ import { CommandDialog, CommandDialogPopup } from "./ui/command";
 import { toastManager } from "./ui/toast";
 
 function useRecentChatEntries() {
+  const messages = useMessages();
   const threads = useThreadShells();
   const visits = useRecentChatsStore((state) => state.visits);
   const projects = useProjects();
@@ -69,6 +71,7 @@ function useRecentChatEntries() {
     visits,
     projectTitleByKey,
     environmentLabelById,
+    resolve: messages,
   });
 
   return { entries, showEnvironmentLabels: environmentLabelById.size > 1 };
@@ -161,6 +164,7 @@ function RecentChatsDialog(props: {
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const navigate = useNavigate();
   const { entries, showEnvironmentLabels } = useRecentChatEntries();
   const [query, setQuery] = useState("");
@@ -172,7 +176,7 @@ function RecentChatsDialog(props: {
     const descriptionParts: string[] = [];
     if (entry.projectTitle !== null) descriptionParts.push(entry.projectTitle);
     if (entry.key === props.currentThreadKey) {
-      descriptionParts.push("Current chat");
+      descriptionParts.push(gt("Current chat"));
     } else if (showEnvironmentLabels && entry.environmentLabel !== null) {
       descriptionParts.push(entry.environmentLabel);
     }
@@ -194,8 +198,9 @@ function RecentChatsDialog(props: {
       },
     };
   });
+  const recentChatsLabel = gt("Recent chats");
   const groups: CommandPaletteGroup[] =
-    items.length === 0 ? [] : [{ value: "recent-chats", label: "Recent chats", items }];
+    items.length === 0 ? [] : [{ value: "recent-chats", label: recentChatsLabel, items }];
   const resultRows = buildCommandPaletteRows(groups);
   const visibleKeys = visibleEntries.map((entry) => entry.key);
   const initialKey =
@@ -210,8 +215,8 @@ function RecentChatsDialog(props: {
     void item.run().catch((error: unknown) => {
       toastManager.add({
         type: "error",
-        title: "Could not open chat",
-        description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        title: gt("Could not open chat"),
+        description: error instanceof Error ? error.message : gt("An unexpected error occurred."),
       });
     });
   };
@@ -236,6 +241,7 @@ function RecentChatsDialog(props: {
         scrollCommandPaletteRowIntoView(
           listRef.current,
           resultRows.rowIndexByItemIndex[itemIndex] ?? 0,
+          itemIndex === 0,
         );
       }
       return;
@@ -260,19 +266,21 @@ function RecentChatsDialog(props: {
   return (
     <CommandDialogPopup
       animated={false}
-      aria-label="Recent chats"
+      aria-label={recentChatsLabel}
       className="overflow-hidden"
       data-recent-chats-picker="true"
       data-testid="recent-chats-picker"
       onBackdropPointerDown={props.onClose}
     >
       <CommandPaletteContent
-        aria-label="Recent chats"
+        aria-label={recentChatsLabel}
         autoHighlight={false}
-        escapeLabel="Close"
-        footerActionLabel={items.length > 0 ? "Open" : undefined}
+        escapeLabel={gt("Close")}
+        footerActionLabel={
+          items.length > 0 ? gt("Open", { $context: "verb, opens a thread" }) : undefined
+        }
         inputProps={{
-          placeholder: "Search recent chats...",
+          placeholder: gt("Search recent chats..."),
           onKeyDown: handleKeyDown,
         }}
         mode="none"
@@ -297,7 +305,9 @@ function RecentChatsDialog(props: {
           keybindings={props.keybindings}
           onExecuteItem={executeItem}
           emptyStateMessage={
-            query.trim().length > 0 ? "No matching recent chats." : "No recently visited chats yet."
+            query.trim().length > 0
+              ? gt("No matching recent chats.")
+              : gt("No recently visited chats yet.")
           }
         />
       </CommandPaletteContent>

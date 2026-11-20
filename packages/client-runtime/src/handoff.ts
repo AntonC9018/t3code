@@ -13,6 +13,9 @@ import {
   getProviderOptionCurrentValue,
 } from "@t3tools/shared/model";
 
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+
 import { isTransportConnectionErrorMessage } from "./errors/transport.ts";
 import { isReasoningSelect } from "./modelTraits.ts";
 import type { ThreadStructure } from "./state/models.ts";
@@ -104,7 +107,10 @@ function latestRunModelBefore(
  * Compaction runs on the server even when the waiting client disconnects, so a lost connection
  * does not mean it failed; retrying with the same command id rejoins the running compaction.
  */
-export function describeCustomCompactionFailure(cause: unknown): {
+export function describeCustomCompactionFailure(
+  cause: unknown,
+  resolve: MFunctionType = mFallback,
+): {
   readonly message: string;
   readonly connectionLost: boolean;
   readonly cancelled: boolean;
@@ -123,18 +129,27 @@ export function describeCustomCompactionFailure(cause: unknown): {
     return { message, connectionLost: false, cancelled };
   }
   return {
-    message:
-      "Lost the connection while waiting. The compaction may still finish; check the timeline.",
+    message: resolve(
+      msg(
+        "Lost the connection while waiting. The compaction may still finish; check the timeline.",
+      ),
+    ),
     connectionLost: true,
     cancelled: false,
   };
 }
 
-export function describeCompactionProgress(progress: OrchestrationV2CompactionProgress): string {
-  if (progress.totalParts === 0) return "Reading the conversation…";
+export function describeCompactionProgress(
+  progress: OrchestrationV2CompactionProgress,
+  resolve: MFunctionType = mFallback,
+): string {
+  if (progress.totalParts === 0) return resolve(msg("Reading the conversation…"));
   const part = Math.min(progress.completedParts + 1, progress.totalParts);
-  const step = `part ${part} of ${progress.totalParts}`;
-  return progress.pass === 1 ? `Summarizing ${step}…` : `Merging summaries, ${step}…`;
+  return progress.pass === 1
+    ? resolve(msg("Summarizing part {part} of {total}…", { part, total: progress.totalParts }))
+    : resolve(
+        msg("Merging summaries, part {part} of {total}…", { part, total: progress.totalParts }),
+      );
 }
 
 export interface ModelSwitchChange {

@@ -17,6 +17,7 @@ function Probe(props: { preparing?: boolean; onSubmit(intent: string): void }) {
       const intent = composerSubmissionIntentForKey({
         event,
         keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
+        context: {},
         isSoftwareKeyboardOpen: false,
         isDraftThread: true,
         sendShortcut: "enter",

@@ -1,3 +1,4 @@
+import { T, Var, useGT } from "gt-react";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import type { OrchestrationV2ProviderTurnTokenUsage, ProviderDriverKind } from "@t3tools/contracts";
 import { derivePromptCacheStatus } from "@t3tools/shared/promptCache";
@@ -13,6 +14,7 @@ export function PromptCacheIndicator(props: {
     | undefined;
   hasContext: boolean;
 }) {
+  const gt = useGT();
   const minute = useNowMinute();
   const expiry = Date.parse(props.usage?.promptCacheExpiresAt ?? "");
   const afterDeadline = useNowAfter(Number.isFinite(expiry) ? expiry : null);
@@ -22,9 +24,9 @@ export function PromptCacheIndicator(props: {
   const cold = status.state === "expired" || status.state === "unknown";
   const label = cold
     ? status.state === "unknown"
-      ? "Cache unknown"
-      : "Cache expired"
-    : `Cache ~${Math.ceil((status.remainingMs ?? 0) / 60_000)}m`;
+      ? gt("Cache unknown")
+      : gt("Cache expired")
+    : gt("Cache ~{minutes}m", { minutes: Math.ceil((status.remainingMs ?? 0) / 60_000) });
   return (
     <Tooltip>
       <TooltipTrigger
@@ -41,9 +43,17 @@ export function PromptCacheIndicator(props: {
         {label}
       </TooltipTrigger>
       <TooltipPopup>
-        Estimated prompt-cache lifetime. Changes to the prompt or model can invalidate cached
-        context earlier.
-        {Number.isFinite(expiry) ? ` Estimated expiry: ${new Date(expiry).toLocaleString()}.` : ""}
+        {Number.isFinite(expiry) ? (
+          <T>
+            Estimated prompt-cache lifetime. Changes to the prompt or model can invalidate cached
+            context earlier. Estimated expiry: <Var>{new Date(expiry).toLocaleString()}</Var>.
+          </T>
+        ) : (
+          <T>
+            Estimated prompt-cache lifetime. Changes to the prompt or model can invalidate cached
+            context earlier.
+          </T>
+        )}
       </TooltipPopup>
     </Tooltip>
   );

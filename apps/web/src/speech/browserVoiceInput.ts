@@ -1,12 +1,13 @@
-import { randomUUID } from "../lib/utils";
-import { effectiveSpeechLanguage } from "@t3tools/shared/speech";
+import { cloudSpeechLanguages, effectiveSpeechLanguage } from "@t3tools/shared/speech";
 import {
+  requireCloudSpeechKey,
+  transcribeCloudPcm,
   getEnvironmentSpeechStatus,
   getEnvironmentSpeechStreamUrl,
   openSpeechStream,
-  prepareEnvironmentSpeechModel,
   throwIfVoiceTranscriptionAborted,
   transcribeEnvironmentPcm,
+  type VoiceInputErrorCode,
   VoiceTranscriptionError,
   type VoiceRecorder,
   type VoiceTranscriptionOptions,
@@ -15,22 +16,33 @@ import {
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type {
+  CloudSpeechModelId,
+  CloudSpeechProvider,
   EnvironmentSpeechStatus,
   SpeechPostProcessingOptions,
   SpeechTranscriptionOptions,
   SpeechStreamText,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
 
-import { runtime } from "../lib/runtime";
+import { m } from "../i18n/messages";
+import { randomUUID } from "../lib/utils";
 import { createBrowserPcmCapture } from "./browserPcmCapture";
 import {
   acquireVoiceRecordingLock,
   recordingStorage,
   type SavedVoiceRecording,
 } from "./recordingStorage";
+import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
+
+const isVoiceTranscriptionError = Schema.is(VoiceTranscriptionError);
 
 export function createBrowserVoiceInputPlatform(input: {
   readonly prepared: PreparedConnection;
+  readonly cloudProvider?: CloudSpeechProvider | undefined;
+  /** The exact OpenRouter model the grant names; required with that provider. */
+  readonly cloudModel?: CloudSpeechModelId | undefined;
   readonly hasAudioConsent: () => boolean;
   readonly retainedDraft?: {
     readonly ownerKey: string;
@@ -39,11 +51,12 @@ export function createBrowserVoiceInputPlatform(input: {
   };
   readonly getTranscriptionOptions: () => SpeechTranscriptionOptions;
   readonly getPostProcessingOptions?: () => SpeechPostProcessingOptions | undefined;
-  readonly getMicrophoneId: () => string;
+  readonly getStreamingEnabled?: () => boolean;
+  readonly getMicrophoneId: () => string | Promise<string>;
   readonly onLevel: (level: number) => void;
   readonly onDurationLimit?: () => void;
   readonly onText: (text: SpeechStreamText, locale?: string) => void;
-  readonly onError: (message: string) => void;
+  readonly onError: (message: string, code?: VoiceInputErrorCode) => void;
   readonly onStorageWarning?: (message: string) => void;
   readonly onRecordingRemoved?: (recordingId: string) => void;
 }) {
@@ -60,7 +73,8 @@ export function createBrowserVoiceInputPlatform(input: {
   const claimRecording = async () => {
     if (!input.retainedDraft || unlockRecording) return;
     unlockRecording = await acquireVoiceRecordingLock(input.retainedDraft.ownerKey);
-    if (!unlockRecording) throw new Error("This chat has an unfinished recording in another tab.");
+    if (!unlockRecording)
+      throw new Error(m(msg("This chat has an unfinished recording in another tab.")));
   };
   const releaseRecordingLock = async () => {
     const release = unlockRecording;
@@ -92,7 +106,11 @@ export function createBrowserVoiceInputPlatform(input: {
       .catch((error: unknown) => {
         if (!storageError)
           input.onError(
-            "Could not save microphone audio. The recording is kept in this tab; retry before closing it.",
+            m(
+              msg(
+                "Could not save microphone audio. The recording is kept in this tab; retry before closing it.",
+              ),
+            ),
           );
         storageError = error;
       });
@@ -119,7 +137,7 @@ export function createBrowserVoiceInputPlatform(input: {
         if (!transcriptStorageWarningShown) {
           transcriptStorageWarningShown = true;
           input.onStorageWarning?.(
-            "Could not save the transcript backup. Your dictation is kept in this tab.",
+            m(msg("Could not save the transcript backup. Your dictation is kept in this tab.")),
           );
         }
       }
@@ -127,7 +145,10 @@ export function createBrowserVoiceInputPlatform(input: {
     return text;
   };
 
-  const resolveLocale = (status: Extract<EnvironmentSpeechStatus, { supported: true }>) => {
+  const resolveLocale = (
+    status: Extract<EnvironmentSpeechStatus, { supported: true }>,
+    nativeStreaming: boolean,
+  ) => {
     const language = status.languages
       ? effectiveSpeechLanguage(
           {
@@ -137,7 +158,7 @@ export function createBrowserVoiceInputPlatform(input: {
           recordingOptions.speechLanguage,
         )
       : "auto";
-    return !status.supportsStreaming &&
+    return !nativeStreaming &&
       status.supportsTranslation &&
       recordingOptions.speechTranslateToEnglish
       ? "en"
@@ -152,17 +173,27 @@ export function createBrowserVoiceInputPlatform(input: {
       if (savedRecording?.transcript?.trim()) return savedRecording.transcript;
       const response = await fetch(uri, { signal: transcriptionSignal });
       const pcm = new Uint8Array(await response.arrayBuffer());
-      const result = await runtime.runPromise(
-        transcribeEnvironmentPcm(input.prepared, pcm, recordingOptions, input.hasAudioConsent),
+      const result = await runEnvironmentSpeech(
+        input.cloudProvider
+          ? transcribeCloudPcm(
+              input.prepared,
+              input.cloudProvider,
+              pcm,
+              recordingOptions,
+              input.hasAudioConsent,
+              input.cloudModel,
+            )
+          : transcribeEnvironmentPcm(input.prepared, pcm, recordingOptions, input.hasAudioConsent),
         { signal: transcriptionSignal },
       );
       throwIfVoiceTranscriptionAborted(transcriptionSignal);
       return await saveTranscript(result.text);
     } catch (cause) {
       throwIfVoiceTranscriptionAborted(transcriptionSignal);
+      if (isVoiceTranscriptionError(cause)) throw cause;
       throw new VoiceTranscriptionError({
         code: "transcription-failed",
-        message: "Voice transcription on this environment failed.",
+        message: m(msg("Voice transcription failed. Check the destination in Settings → Voice.")),
         cause,
       });
     }
@@ -181,44 +212,54 @@ export function createBrowserVoiceInputPlatform(input: {
     async (options) => {
       signal = options.signal;
       recordingOptions = input.getTranscriptionOptions();
-      const status = await runtime.runPromise(getEnvironmentSpeechStatus(input.prepared), options);
-      throwIfVoiceTranscriptionAborted(options.signal);
-      if (!status.supported)
-        throw new VoiceTranscriptionError({ code: "unavailable", message: status.reason });
-      locale = resolveLocale(status);
-      if (status.supportsStreaming || status.supportsBufferedStreaming) {
-        const url = await runtime.runPromise(
-          getEnvironmentSpeechStreamUrl(input.prepared),
+      const streamingEnabled = input.getStreamingEnabled?.() ?? true;
+      if (input.cloudProvider) {
+        if (input.cloudProvider === "openrouter" && !input.cloudModel)
+          throw new VoiceTranscriptionError({
+            code: "unavailable",
+            message: m(msg("Choose an OpenRouter model in Settings → Voice.")),
+          });
+        await runEnvironmentSpeech(
+          requireCloudSpeechKey(input.prepared, input.cloudProvider),
           options,
         );
-        const stream = openSpeechStream({
-          url,
-          canSend: input.hasAudioConsent,
-          options: recordingOptions,
-          signal: options.signal,
-          onText: (text) => input.onText(text, locale),
-          onError: (error) => input.onError(error.message),
-        });
+        throwIfVoiceTranscriptionAborted(options.signal);
+        locale = effectiveSpeechLanguage(cloudSpeechLanguages, recordingOptions.speechLanguage);
         return {
           locale,
           transcribe: transcribeRecording,
-          streaming: {
-            feed: stream.feed,
-            finish: async () => saveTranscript(await stream.finish()),
-          },
         };
       }
-      const preparedModel = runtime.runPromise(
-        prepareEnvironmentSpeechModel(input.prepared),
+      const status = await runEnvironmentSpeech(
+        getEnvironmentSpeechStatus(input.prepared),
         options,
       );
-      // A failed warmup should still allow the normal transcription path to retry.
-      void preparedModel.catch(() => undefined);
+      throwIfVoiceTranscriptionAborted(options.signal);
+      if (!status.supported)
+        throw new VoiceTranscriptionError({ code: "unavailable", message: status.reason });
+      const nativeStreaming = Boolean(status.supportsStreaming) && streamingEnabled;
+      locale = resolveLocale(status, nativeStreaming);
+      if (status.supportsStreaming ? !nativeStreaming : !status.supportsBufferedStreaming) {
+        return { locale, transcribe: transcribeRecording };
+      }
+      const url = await runEnvironmentSpeech(
+        getEnvironmentSpeechStreamUrl(input.prepared),
+        options,
+      );
+      const stream = openSpeechStream({
+        url,
+        canSend: input.hasAudioConsent,
+        options: recordingOptions,
+        signal: options.signal,
+        onText: (text) => input.onText(text, locale),
+        onError: (error) => input.onError(error.message),
+      });
       return {
         locale,
-        transcribe: async (uri, transcriptionOptions) => {
-          await preparedModel.catch(() => undefined);
-          return transcribeRecording(uri, transcriptionOptions);
+        transcribe: transcribeRecording,
+        streaming: {
+          feed: stream.feed,
+          finish: async () => saveTranscript(await stream.finish()),
         },
       };
     },

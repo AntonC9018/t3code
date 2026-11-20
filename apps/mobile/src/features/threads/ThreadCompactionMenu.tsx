@@ -30,6 +30,8 @@ import { uuidv4 } from "../../lib/uuid";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { serverEnvironment } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
+import { useGT, useMessages } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
 
@@ -52,6 +54,8 @@ export function ThreadCompactionMenu(props: {
   readonly disabled: boolean;
   readonly cacheReadRequiresAcknowledgement: boolean;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const permitted = useAtomValue(
     orchestrationEnvironment.compactContext.permissionAtom(props.environmentId),
   );
@@ -102,14 +106,14 @@ export function ThreadCompactionMenu(props: {
     failure: { cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"] },
   ) => {
     const error = squashAtomCommandFailure(failure);
-    if (selection !== null && describeCustomCompactionFailure(error).cancelled) return;
+    if (selection !== null && describeCustomCompactionFailure(error, m).cancelled) return;
     Dialog.alert(
-      "Could not compact context",
+      gt("Could not compact context"),
       selection !== null
-        ? describeCustomCompactionFailure(error).message
+        ? describeCustomCompactionFailure(error, m).message
         : error instanceof Error
           ? error.message
-          : "Try again after the current work finishes.",
+          : gt("Try again after the current work finishes."),
     );
   };
   const compactWithModel = async (selection: ModelSelection) => {
@@ -120,7 +124,7 @@ export function ThreadCompactionMenu(props: {
     });
     retryCommandId.current =
       result._tag === "Failure" &&
-      describeCustomCompactionFailure(squashAtomCommandFailure(result)).connectionLost
+      describeCustomCompactionFailure(squashAtomCommandFailure(result), m).connectionLost
         ? commandId
         : null;
     return result;
@@ -152,7 +156,10 @@ export function ThreadCompactionMenu(props: {
         input: { patch: { customCompactionModelSelection: selection } },
       });
       if (saved._tag === "Failure")
-        Dialog.alert("Context compacted", "The compaction model preference could not be saved.");
+        Dialog.alert(
+          gt("Context compacted"),
+          gt("The compaction model preference could not be saved."),
+        );
     }
   };
   const run = async (selection: ModelSelection | null, allowUncachedRead = false) => {
@@ -160,7 +167,7 @@ export function ThreadCompactionMenu(props: {
     pending.current = true;
     const label =
       selection === null
-        ? "Native compaction"
+        ? gt("Native compaction")
         : (options.find((option) => modelSelectionsEqual(option.selection, selection))?.label ??
           selection.model);
     setCompacting(label);
@@ -178,8 +185,8 @@ export function ThreadCompactionMenu(props: {
     });
     if (result._tag === "Failure")
       Dialog.alert(
-        "Could not cancel compaction",
-        describeCustomCompactionFailure(squashAtomCommandFailure(result)).message,
+        gt("Could not cancel compaction"),
+        describeCustomCompactionFailure(squashAtomCommandFailure(result), m).message,
       );
   };
   const choose = (id: string) => {
@@ -193,10 +200,11 @@ export function ThreadCompactionMenu(props: {
         shellCacheNeedsAcknowledgement(props.thread.promptCache)
       ) {
         Dialog.confirm({
-          title: "Compact with an uncached read?",
-          message:
+          title: gt("Compact with an uncached read?"),
+          message: gt(
             "Claude's cache is expired or unknown. Native compaction may reread the full context. Choose another model below to avoid resuming Claude.",
-          confirmText: "Compact anyway once",
+          ),
+          confirmText: gt("Compact anyway once"),
           onConfirm: () => void run(null, true),
         });
       } else {
@@ -211,34 +219,40 @@ export function ThreadCompactionMenu(props: {
   return (
     <View>
       <Menu
-        accessibilityLabel="Compact context"
-        title="Compact context"
+        accessibilityLabel={gt("Compact context")}
+        title={gt("Compact context")}
         actions={[
           ...(running !== null && permitted
-            ? [{ id: "cancel", title: "Cancel compaction", attributes: { destructive: true } }]
+            ? [
+                {
+                  id: "cancel",
+                  title: gt("Cancel compaction"),
+                  attributes: { destructive: true },
+                },
+              ]
             : []),
           {
             id: "native-section",
-            title: "Native compaction",
+            title: gt("Native compaction"),
             displayInline: true,
             subactions: [
               {
                 id: "native",
-                title: "Compact with current model",
+                title: gt("Compact with current model"),
                 attributes: { disabled: disabled || !nativeAvailable },
               },
             ],
           },
           {
             id: "custom-section",
-            title: "Compact with another model",
+            title: gt("Compact with another model"),
             displayInline: true,
             subactions: [
               ...(rememberedOption
                 ? [
                     {
                       id: rememberedOption.key,
-                      title: `Use ${rememberedOption.label}`,
+                      title: gt("Use {model}", { model: rememberedOption.label }),
                       attributes: { disabled },
                     },
                   ]
@@ -268,14 +282,14 @@ export function ThreadCompactionMenu(props: {
       >
         <ComposerInlineControl
           icon="arrow.down.right.and.arrow.up.left"
-          label={compacting || running ? "Compacting…" : "Compact context"}
+          label={compacting || running ? gt("Compacting…") : gt("Compact context")}
           iconOnly
           disabled={props.disabled || !permitted}
         />
       </Menu>
       {running || compacting ? (
         <Text accessibilityLiveRegion="polite" className="text-xs text-foreground-muted">
-          {running ? describeCompactionProgress(running) : `${compacting}…`}
+          {running ? describeCompactionProgress(running, messages) : `${compacting}…`}
         </Text>
       ) : null}
     </View>

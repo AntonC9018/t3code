@@ -81,9 +81,12 @@ it("records the selected mic, stops after ten seconds, and discards playback on 
   resetFakes();
   using _globals = stubRecordingGlobals();
   using _timers = fakeTimers();
-  await using screen = await render(<MicrophoneTest microphoneId="selected" />, {
-    router: false,
-  });
+  await using screen = await render(
+    <MicrophoneTest microphoneId="selected" onMicrophoneAccess={vi.fn()} />,
+    {
+      router: false,
+    },
+  );
   const { container } = screen;
   await click(container, "Test mic");
   expect(getUserMedia).toHaveBeenCalledWith({ audio: { deviceId: { exact: "selected" } } });
@@ -116,7 +119,10 @@ it("releases a microphone granted after leaving the page", async () => {
       grant = resolve;
     }),
   );
-  await using screen = await render(<MicrophoneTest microphoneId="" />, { router: false });
+  await using screen = await render(
+    <MicrophoneTest microphoneId="" onMicrophoneAccess={vi.fn()} />,
+    { router: false },
+  );
   await click(screen.container, "Test mic");
   await screen.unmount();
   await act(async () => grant(stream));
@@ -128,7 +134,10 @@ it("shows permission failures and lets the user try again", async () => {
   resetFakes();
   using _globals = stubRecordingGlobals();
   getUserMedia.mockRejectedValueOnce(new DOMException("Permission denied", "NotAllowedError"));
-  await using screen = await render(<MicrophoneTest microphoneId="" />, { router: false });
+  await using screen = await render(
+    <MicrophoneTest microphoneId="" onMicrophoneAccess={vi.fn()} />,
+    { router: false },
+  );
   const { container } = screen;
   await click(container, "Test mic");
   expect(container.querySelector('[role="status"]')!.getAttribute("aria-label")).toBe(

@@ -6,6 +6,8 @@ import {
 } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "../i18n/messages";
 import { normalizeSearchText } from "../lib/utils";
 import { type RecentChatVisit, isValidRecentChatTimestamp } from "../recentChatsStore";
 
@@ -49,7 +51,9 @@ export function buildRecentChatEntries(input: {
   readonly visits: ReadonlyArray<RecentChatVisit>;
   readonly projectTitleByKey?: ReadonlyMap<string, string>;
   readonly environmentLabelById?: ReadonlyMap<EnvironmentId, string>;
+  readonly resolve?: MessageResolver;
 }): RecentChatEntry[] {
+  const resolve = input.resolve ?? m;
   const localVisitedAtByKey = new Map<string, number>();
   for (const visit of input.visits) {
     if (!isValidRecentChatTimestamp(visit.visitedAt)) continue;
@@ -80,7 +84,7 @@ export function buildRecentChatEntries(input: {
     entries.push({
       key,
       threadRef,
-      title: thread.title.trim() || "Untitled chat",
+      title: thread.title.trim() || resolve(msg("Untitled chat")),
       projectTitle:
         input.projectTitleByKey?.get(
           scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),

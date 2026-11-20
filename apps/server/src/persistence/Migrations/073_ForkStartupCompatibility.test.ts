@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { runMigrations } from "../Migrations.ts";
+import { migrationManifest, runMigrations } from "../Migrations.ts";
 import legacyStartupQueryIndexes from "./startupQueryIndexes.ts";
 
 const isMigrationError = Schema.is(Schema.instanceOf(Migrator.MigrationError));
@@ -114,15 +114,10 @@ it.effect("runs upstream's later migrations on a database at fork migration 74",
       run_count: 0,
     })}`;
 
-    assert.deepEqual(yield* runMigrations(), [
-      [75, "ExcludeAttachmentPlaceholdersFromSearch"],
-      [76, "SubagentDeliveryState"],
-      [77, "ProjectionProjectsPinArchive"],
-      [78, "RepairBooleanSettledOverride"],
-      [79, "DropOrchestrationEventCorrelationIndex"],
-      [80, "DelegatedRecoveryIndexes"],
-      [81, "ScheduledTaskThreadMode"],
-    ]);
+    assert.deepEqual(
+      yield* runMigrations(),
+      migrationManifest.filter(([id]) => id >= 75),
+    );
     assert.deepEqual(yield* sql`SELECT thread_mode FROM scheduled_tasks`, [
       { thread_mode: "continue" },
     ]);

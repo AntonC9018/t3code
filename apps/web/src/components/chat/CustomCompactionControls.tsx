@@ -1,4 +1,6 @@
 import { useContext, useState } from "react";
+import { T, useGT, useMessages } from "gt-react";
+import { m } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
@@ -53,6 +55,8 @@ export function CustomCompactionControls(props: {
   projectId: ProjectId | null;
   disabled: boolean;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const settings = useEnvironmentSettings(props.environmentId);
   const updateSettings = useUpdateEnvironmentSettings(props.environmentId);
   const providers =
@@ -114,10 +118,10 @@ export function CustomCompactionControls(props: {
         input: { threadId: props.threadId, commandId, modelSelection: selection },
       });
       if (result._tag === "Failure") {
-        failure = describeCustomCompactionFailure(squashAtomCommandFailure(result));
+        failure = describeCustomCompactionFailure(squashAtomCommandFailure(result), m);
       }
     } catch (cause) {
-      failure = describeCustomCompactionFailure(cause);
+      failure = describeCustomCompactionFailure(cause, m);
     }
     registry.set(requestAtom, {
       pending: false,
@@ -126,10 +130,10 @@ export function CustomCompactionControls(props: {
     });
     toastManager.add(
       failure === null
-        ? { type: "success", title: "Context compacted" }
+        ? { type: "success", title: gt("Context compacted") }
         : failure.cancelled
-          ? { type: "info", title: "Compaction cancelled", description: failure.message }
-          : { type: "error", title: "Could not compact context", description: failure.message },
+          ? { type: "info", title: gt("Compaction cancelled"), description: failure.message }
+          : { type: "error", title: gt("Could not compact context"), description: failure.message },
     );
   };
   const cancel = async () => {
@@ -141,15 +145,17 @@ export function CustomCompactionControls(props: {
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: "Could not cancel compaction",
-        description: describeCustomCompactionFailure(squashAtomCommandFailure(result)).message,
+        title: gt("Could not cancel compaction"),
+        description: describeCustomCompactionFailure(squashAtomCommandFailure(result), m).message,
       });
     }
   };
   return (
     <>
       <Separator />
-      <div className="text-xs font-medium text-muted-foreground">Compact with another model</div>
+      <div className="text-xs font-medium text-muted-foreground">
+        <T>Compact with another model</T>
+      </div>
       <div className="flex flex-wrap items-center gap-1.5">
         <ProviderModelPicker
           environmentId={props.environmentId}
@@ -158,7 +164,7 @@ export function CustomCompactionControls(props: {
           lockedProvider={null}
           instanceEntries={entries}
           modelOptionsByInstance={modelOptions}
-          triggerAriaLabel="Compaction model"
+          triggerAriaLabel={gt("Compaction model")}
           disabled={busy}
           onInstanceModelChange={(instanceId, model) =>
             saveSelection(createModelSelection(instanceId, model))
@@ -171,7 +177,6 @@ export function CustomCompactionControls(props: {
             model={selection.model}
             modelOptions={selection.options}
             allowPromptInjectedEffort={false}
-            planModeEnabled={false}
             onModelOptionsChange={(options) =>
               saveSelection(createModelSelection(selection.instanceId, selection.model, options))
             }
@@ -181,17 +186,17 @@ export function CustomCompactionControls(props: {
       {busy ? (
         <div className="flex items-center gap-1.5">
           <div role="status" className="min-w-0 flex-1 text-xs text-muted-foreground">
-            {running ? describeCompactionProgress(running) : "Compacting…"}
+            {running ? describeCompactionProgress(running, messages) : gt("Compacting…")}
           </div>
           {running && canCompact ? (
             <Button size="xs" variant="outline" onClick={() => void cancel()}>
-              Cancel
+              <T>Cancel</T>
             </Button>
           ) : null}
         </div>
       ) : (
         <Button size="xs" variant="outline" disabled={disabled} onClick={() => void run()}>
-          Compact with selected model
+          <T>Compact with selected model</T>
         </Button>
       )}
       {error ? (

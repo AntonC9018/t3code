@@ -122,6 +122,11 @@ export const make = Effect.fn("HandySpeechService.make")(function* (url: string,
       supportsLanguageDetection: remote.model?.supports_language_detection ?? true,
       languages: remote.model?.supported_languages ?? [],
       acceleration: remote.acceleration,
+      benchmarkTier:
+        remote.acceleration === "cpu" ||
+        (remote.acceleration === "auto" && remote.gpu_devices.length === 0)
+          ? "cpu"
+          : "accelerated",
       modelUnloadTimeout: remote.model_unload_timeout,
       gpuDevices: remote.gpu_devices,
     })),
@@ -217,7 +222,7 @@ export const make = Effect.fn("HandySpeechService.make")(function* (url: string,
     status,
     models: Effect.fn("HandySpeechService.models")(() => readModels),
     downloadModel: Effect.fn("HandySpeechService.downloadModel")((modelId) =>
-      select(modelId, true),
+      select(modelId, true).pipe(Effect.map((result) => ({ ...result, cancelled: false }))),
     ),
     selectModel: Effect.fn("HandySpeechService.selectModel")((modelId) => select(modelId, false)),
     prepareModel: status.pipe(
@@ -356,6 +361,14 @@ export const make = Effect.fn("HandySpeechService.make")(function* (url: string,
     ),
     removeModel: Effect.fn("HandySpeechService.removeModel")((modelId) =>
       control({ action: "remove_model", model_id: modelId }).pipe(Effect.andThen(readModels)),
+    ),
+    linkModels: Effect.fn("HandySpeechService.linkModels")(() =>
+      Effect.fail(
+        new SpeechService.SpeechOperationError({
+          operation: "Handy model linking",
+          cause: "Linking local model paths is not supported when using Handy.",
+        }),
+      ),
     ),
     updateAcceleration: Effect.fn("HandySpeechService.updateAcceleration")((acceleration) =>
       control({ action: "acceleration", value: acceleration }).pipe(Effect.andThen(status)),

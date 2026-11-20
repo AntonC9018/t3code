@@ -9,12 +9,19 @@ import { ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as TextGeneration from "./TextGeneration.ts";
+import * as TextGenerators from "./TextGenerators.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Layer from "effect/Layer";
 import { buildThreadTitlePrompt } from "@t3tools/provider-core/server/textGenerationPrompts";
+
+const textGenDepsLayer = Layer.mergeAll(
+  ProviderInstallationGate.layer,
+  Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.undefined }),
+);
 
 const makeStubTextGeneration = (
   overrides: Partial<TextGeneration.TextGeneration["Service"]>,
@@ -96,6 +103,7 @@ describe("TextGeneration.make", () => {
         Effect.provide(
           Layer.mergeAll(
             ServerSettings.layerTest(),
+            textGenDepsLayer,
             Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
               resolveLink: () => Effect.die("unused"),
             }),
@@ -133,6 +141,7 @@ describe("TextGeneration.make", () => {
         Effect.provide(
           Layer.mergeAll(
             ServerSettings.layerTest(),
+            textGenDepsLayer,
             Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
               resolveLink: () => Effect.die("Supplied context must not be fetched again"),
             }),
@@ -180,6 +189,7 @@ describe("TextGeneration.make", () => {
         Effect.provide(
           Layer.mergeAll(
             ServerSettings.layerTest(),
+            textGenDepsLayer,
             Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
               resolveLink: () => Effect.die("No link lookup expected"),
             }),
@@ -208,6 +218,7 @@ describe("TextGeneration.make", () => {
         Effect.provide(
           Layer.mergeAll(
             ServerSettings.layerTest(),
+            textGenDepsLayer,
             Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
               resolveLink: () => Effect.die("No link lookup expected"),
             }),

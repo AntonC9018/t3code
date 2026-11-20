@@ -91,6 +91,7 @@ function makeHarness(
             Effect.succeedSome({
               projectId,
               title: "Compaction",
+              hasCustomTitle: false,
               workspaceRoot: "/repo",
               defaultModelSelection: modelSelection,
               defaultThreadEnvMode: null,

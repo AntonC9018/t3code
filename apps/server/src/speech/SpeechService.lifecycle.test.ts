@@ -19,6 +19,7 @@ import * as SpeechService from "./SpeechService.ts";
 
 const native = vi.hoisted(() => ({
   backend: "Vulkan0",
+  languages: ["en", "fr"],
   supportsStreaming: true,
   supportsLongForm: false,
   supportsTranslation: true,
@@ -103,6 +104,8 @@ const store = Layer.succeed(
     installedPath: (model) =>
       Effect.sync(() => (readyModels.has(model.id) ? "test.gguf" : undefined)),
     download,
+    link: () => Effect.succeed([]),
+    linkedFrom: () => Effect.undefined,
     remove: (model) =>
       Effect.sync(() => {
         readyModels.delete(model.id);

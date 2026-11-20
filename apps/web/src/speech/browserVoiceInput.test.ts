@@ -28,7 +28,6 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       languages: mocks.languages,
       supportsLanguageDetection: mocks.supportsLanguageDetection,
     }),
-  prepareEnvironmentSpeechModel: () => Effect.succeed({ supported: true, state: "ready" }),
   getEnvironmentSpeechStreamUrl: () => Effect.succeed("ws://speech.test"),
   openSpeechStream: () => mocks.stream,
   transcribeEnvironmentPcm: () => {

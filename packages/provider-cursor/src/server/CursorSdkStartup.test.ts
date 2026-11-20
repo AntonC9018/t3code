@@ -23,7 +23,7 @@ vi.mock("./sdk.ts", async (importOriginal) => ({
 }));
 
 const decodeSettings = Schema.decodeSync(CursorSettings);
-const layer = Layer.merge(NodeServices.layer, CursorSdk.layer);
+const layer = CursorSdk.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 it.effect("constructs an unused agent runner without loading the SDK", () =>
   Effect.gen(function* () {

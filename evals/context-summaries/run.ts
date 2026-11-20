@@ -4,8 +4,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as ServerConfig from "../../apps/server/src/config.ts";
 import { makeClaudeTextGeneration } from "../../apps/server/src/textGeneration/ClaudeTextGeneration.ts";
 import { contextSummaryCases } from "./cases.ts";
 
@@ -92,5 +94,12 @@ await Effect.runPromise(
     yield* Effect.log(
       `Wrote ${results.length} summaries to ${outputDirectory}; score review.json manually. Local CLI usage counts toward the selected subscription.`,
     );
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  }).pipe(
+    Effect.provide(
+      ServerConfig.ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-context-summary-eval-config-",
+      }).pipe(Layer.provideMerge(NodeServices.layer)),
+    ),
+    Effect.scoped,
+  ),
 );

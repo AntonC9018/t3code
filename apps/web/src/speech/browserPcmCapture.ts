@@ -2,9 +2,13 @@ import type {
   PreparedVoiceTranscription,
   VoiceRecorder,
   VoiceStreamingSession,
+  VoiceInputErrorCode,
   VoiceTranscriptionOptions,
 } from "@t3tools/client-runtime/voice-input";
+import { requestMicrophone } from "./requestMicrophone";
 import workletUrl from "./pcmWorklet.ts?worker&url";
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 
 type PreparedBrowserTranscription = PreparedVoiceTranscription & {
   readonly streaming?: VoiceStreamingSession & { readonly feed: (pcm: Float32Array) => void };
@@ -12,10 +16,10 @@ type PreparedBrowserTranscription = PreparedVoiceTranscription & {
 
 export function createBrowserPcmCapture(
   input: {
-    readonly getMicrophoneId: () => string;
+    readonly getMicrophoneId: () => string | Promise<string>;
     readonly onLevel: (level: number) => void;
     readonly onDurationLimit?: () => void;
-    readonly onError: (message: string) => void;
+    readonly onError: (message: string, code?: VoiceInputErrorCode) => void;
     /** Keeps the audio for retry even while it also streams. */
     readonly retainAudio?: boolean;
     readonly onChunk?: (pcm: Float32Array<ArrayBuffer>) => void;
@@ -59,17 +63,16 @@ export function createBrowserPcmCapture(
     },
     prepareToRecordAsync: async () => {
       const captureSignal = signal;
-      if (!captureSignal) throw new Error("Voice transcription is not prepared.");
+      if (!captureSignal) throw new Error(m(msg("Voice transcription is not prepared.")));
       captureSignal.throwIfAborted();
       if (recordingUri) URL.revokeObjectURL(recordingUri);
       recordingUri = null;
       chunks = [];
-      const microphoneId = input.getMicrophoneId();
+      const microphoneId = await input.getMicrophoneId();
+      captureSignal.throwIfAborted();
       const captured = await new Promise<MediaStream>((resolve, reject) => {
         const onAbort = () => reject(captureSignal.reason);
-        const permission = navigator.mediaDevices.getUserMedia({
-          audio: microphoneId ? { deviceId: { exact: microphoneId } } : true,
-        });
+        const permission = requestMicrophone(microphoneId, captureSignal);
         captureSignal.addEventListener("abort", onAbort, { once: true });
         void permission.then(
           (media) => {
@@ -116,13 +119,17 @@ export function createBrowserPcmCapture(
           if (!feed || input.retainAudio) chunks.push(data);
         };
         node.onprocessorerror = () => {
-          stopped?.reject(new Error("Microphone processing failed."));
-          input.onError("Microphone processing failed.");
+          stopped?.reject(new Error(m(msg("Microphone processing failed."))));
+          input.onError(m(msg("Microphone processing failed.")), "microphone-failed");
         };
         for (const track of captured.getTracks())
-          track.addEventListener("ended", () => input.onError("The microphone disconnected."), {
-            once: true,
-          });
+          track.addEventListener(
+            "ended",
+            () => input.onError(m(msg("The microphone disconnected.")), "microphone-disconnected"),
+            {
+              once: true,
+            },
+          );
         context.createMediaStreamSource(captured).connect(node);
         // The processor emits silence, keeping the graph active without microphone playback.
         node.connect(context.destination);
@@ -149,7 +156,7 @@ export function createBrowserPcmCapture(
         stopped = { resolve, reject };
       });
       const timeout = setTimeout(
-        () => stopped?.reject(new Error("Microphone capture did not stop.")),
+        () => stopped?.reject(new Error(m(msg("Microphone capture did not stop.")))),
         5_000,
       );
       // oxlint-disable-next-line unicorn/require-post-message-target-origin -- AudioWorklet MessagePorts do not accept a target origin

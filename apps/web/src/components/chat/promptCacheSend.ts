@@ -4,6 +4,8 @@ import {
   deriveSendPromptCacheStatus,
   promptCacheNeedsAcknowledgement,
 } from "@t3tools/shared/promptCache";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import { toastManager } from "../ui/toast";
 
 /** Reads the clock at send time; call it from handlers so render stays pure. */
@@ -28,9 +30,12 @@ export function sendNeedsPromptCacheAcknowledgement(
 export function showColdPromptCacheToast(sendAnyway: () => void) {
   toastManager.add({
     type: "warning",
-    title: "Message not sent: Claude cache may be cold",
-    description:
-      "Compact with another model from the context menu, or explicitly send with an uncached read.",
-    actionProps: { children: "Send anyway once", onClick: sendAnyway },
+    title: m(msg("Message not sent: Claude cache may be cold")),
+    description: m(
+      msg(
+        "Compact with another model from the context menu, or explicitly send with an uncached read.",
+      ),
+    ),
+    actionProps: { children: m(msg("Send anyway once")), onClick: sendAnyway },
   });
 }

@@ -1,22 +1,26 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, it } from "@effect/vitest";
 import {
-  DEFAULT_SERVER_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
-  type EnvironmentSpeechPostProcessingRequest,
-  type SpeechPostProcessingOptions,
+  DEFAULT_SERVER_SETTINGS,
   DEFAULT_SPEECH_POST_PROCESSING_PROMPT,
+  type EnvironmentSpeechPostProcessingRequest,
+  type ModelSelection,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
-  type ServerSettings,
+  type ServerSettings as ServerSettingsSnapshot,
+  type SpeechPostProcessingOptions,
 } from "@t3tools/contracts";
-import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import { describe, expect, vi } from "vite-plus/test";
 
-import * as TextGeneration from "../textGeneration/TextGeneration.ts";
-import { postProcessTranscript } from "./postProcessing.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as SpeechPostProcessing from "./postProcessing.ts";
 
 const codexProvider: ServerProvider = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -52,14 +56,14 @@ const runPostProcess = (
   input: {
     readonly transcript: string;
     readonly cwd: string;
-    readonly settings?: ServerSettings;
+    readonly settings?: ServerSettingsSnapshot;
     readonly options?: Partial<SpeechPostProcessingOptions>;
     readonly draft?: EnvironmentSpeechPostProcessingRequest["draft"];
   },
   generate: TextGeneration.TextGeneration["Service"]["generateTranscriptionPostProcessing"],
   providers: ReadonlyArray<ServerProvider> = [codexProvider],
 ) =>
-  postProcessTranscript({
+  SpeechPostProcessing.postProcessTranscript({
     ...input,
     settings: input.settings ?? DEFAULT_SERVER_SETTINGS,
     draft: input.draft ?? { text: "", selection: { start: 0, end: 0 } },
@@ -76,7 +80,7 @@ const runPostProcess = (
   );
 
 describe("postProcessTranscript", () => {
-  it.effect("cleans transcripts through Claude when Codex is not installed", () =>
+  it.effect("uses a pinned Claude model selection when set and usable", () =>
     Effect.gen(function* () {
       const generate = vi.fn(
         (
@@ -100,21 +104,30 @@ describe("postProcessTranscript", () => {
           },
         ],
       };
+      const pinnedClaude: ModelSelection = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-haiku-4-5",
+        options: [{ id: "thinking", value: false }],
+      };
       expect(
         yield* runPostProcess(
-          { transcript: "raw", cwd: "C:/neutral", settings: DEFAULT_SERVER_SETTINGS },
+          {
+            transcript: "raw",
+            cwd: "C:/neutral",
+            settings: {
+              ...DEFAULT_SERVER_SETTINGS,
+              speechPostProcessingModelSelection: pinnedClaude,
+            },
+          },
           generate,
           [{ ...codexProvider, installed: false }, claude],
         ),
       ).toBe("Clean text.");
-      expect(generate.mock.calls[0]?.[0].modelSelection).toEqual({
-        instanceId: "claudeAgent",
-        model: "claude-haiku-4-5",
-        options: [{ id: "thinking", value: false }],
-      });
+      expect(generate.mock.calls[0]?.[0].modelSelection).toEqual(pinnedClaude);
     }),
   );
-  it.effect("uses the dedicated model selection and built-in prompt", () =>
+
+  it.effect("follows textGenerationModelSelection when unpinned and uses built-in prompt", () =>
     Effect.gen(function* () {
       const generate = vi.fn(
         (
@@ -138,7 +151,7 @@ describe("postProcessTranscript", () => {
       expect(generate).toHaveBeenCalledWith(
         expect.objectContaining({
           cwd: "C:/neutral",
-          modelSelection: settings.speechPostProcessingModelSelection,
+          modelSelection: settings.textGenerationModelSelection,
           prompt: expect.stringContaining("<transcript>\nuh clean text\n</transcript>"),
         }),
       );
@@ -270,3 +283,73 @@ describe("postProcessTranscript", () => {
     }),
   );
 });
+
+const textGenerationSelection = {
+  instanceId: ProviderInstanceId.make("fakeapi"),
+  model: "fake-model",
+};
+const acpSelection = { instanceId: ProviderInstanceId.make("acp_local"), model: "default" };
+
+it.effect("cleanup pinned to a provider that cannot generate text uses the text model", () =>
+  Effect.gen(function* () {
+    const used = yield* Ref.make<ModelSelection | null>(null);
+    const layer = SpeechPostProcessing.layer.pipe(
+      Layer.provide(
+        Layer.succeed(TextGeneration.TextGeneration, {
+          generateTranscriptionPostProcessing: (input: { modelSelection: ModelSelection }) =>
+            Ref.set(used, input.modelSelection).pipe(Effect.as({ transcription: "Hello, world." })),
+        } as unknown as TextGeneration.TextGeneration["Service"]),
+      ),
+      Layer.provide(
+        Layer.succeed(ProviderRegistry.ProviderRegistry, {
+          getProviders: Effect.succeed([
+            {
+              instanceId: acpSelection.instanceId,
+              driver: "acpRegistry",
+              enabled: true,
+              installed: true,
+              supportsTextGeneration: false,
+            },
+          ]),
+        } as unknown as ProviderRegistry.ProviderRegistry["Service"]),
+      ),
+      Layer.provide(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [acpSelection.instanceId]: {
+              driver: "acpRegistry",
+              enabled: true,
+              config: { source: "local", commandPath: "acp-agent" },
+            },
+          },
+          textGenerators: {
+            [textGenerationSelection.instanceId]: {
+              kind: "openaiCompatible",
+              baseUrl: "http://127.0.0.1:18999/v1",
+              enabled: true,
+            },
+          },
+          textGenerationModelSelection: textGenerationSelection,
+          speechPostProcessingModelSelection: acpSelection,
+        }),
+      ),
+      Layer.provide(NodeServices.layer),
+    );
+    yield* Effect.gen(function* () {
+      const postProcessing = yield* SpeechPostProcessing.SpeechPostProcessing;
+      yield* postProcessing.process({
+        options: {
+          speechCustomWords: [],
+          speechPostProcessingPrompt: { mode: "default", customInstructions: "" },
+        },
+        transcript: "um hello world",
+        draft: { text: "", selection: { start: 0, end: 0 } },
+      } as never);
+    }).pipe(Effect.provide(layer));
+    const selection = yield* Ref.get(used);
+    assert.deepStrictEqual(
+      { instanceId: selection?.instanceId, model: selection?.model },
+      textGenerationSelection,
+    );
+  }),
+);

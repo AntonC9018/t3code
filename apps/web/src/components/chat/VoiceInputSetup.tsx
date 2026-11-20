@@ -1,93 +1,35 @@
-import type {
-  EnvironmentId,
-  EnvironmentSpeechModel,
-  EnvironmentSpeechStatus,
+import { T, Var, msg, useGT, useLocale } from "gt-react";
+import { m } from "~/i18n/messages";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import {
+  listBrowserMicrophones,
+  updateMicrophoneOrder,
+  type BrowserMicrophone,
+} from "../../speech/browserMicrophones";
+import {
+  AuthSettingsWriteScope,
+  type EnvironmentId,
+  type EnvironmentSpeechModel,
+  type EnvironmentSpeechStatus,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { RefreshCwIcon } from "lucide-react";
+import { CircleAlertIcon, MicIcon, RefreshCwIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
-import { AuthSettingsWriteScope } from "@t3tools/contracts";
-import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings } from "../../hooks/useSettings";
+import {
+  isSystemDefaultDeviceId,
+  microphoneOrder,
+  preferMicrophone,
+  preferredMicrophoneId,
+} from "../../speech/microphoneOrder";
 import { useEnvironment } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
-import { useAudioInputDevices } from "../../speech/useAudioInputDevices";
+import { languageLabel } from "../settings/SpeechLanguageSelect";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
-
-function MicrophoneSelect() {
-  const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
-  const { devices: microphones, failed, loading, refresh } = useAudioInputDevices();
-  const selectedIsUnavailable = Boolean(
-    selectedMicrophone && !microphones.some((device) => device.deviceId === selectedMicrophone),
-  );
-  const selectedMicrophoneLabel = selectedMicrophone
-    ? (microphones.find((device) => device.deviceId === selectedMicrophone)?.label ??
-      "Selected microphone (Unavailable)")
-    : "System default";
-  return (
-    <div className="space-y-2">
-      <label className="font-medium" htmlFor="voice-setup-microphone">
-        Microphone
-      </label>
-      <div className="flex items-center gap-2">
-        <Select
-          value={selectedMicrophone ? `device:${selectedMicrophone}` : "system-default"}
-          disabled={loading}
-          onValueChange={(value) => {
-            if (value)
-              void updateClientSettings({
-                voiceMicrophone: value === "system-default" ? "" : value.slice("device:".length),
-              });
-          }}
-        >
-          <SelectTrigger
-            id="voice-setup-microphone"
-            size="sm"
-            aria-label="Microphone"
-            className="min-w-0 flex-1"
-          >
-            <SelectValue>{selectedMicrophoneLabel}</SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            <SelectItem value="system-default">System default</SelectItem>
-            {selectedIsUnavailable ? (
-              <SelectItem value={`device:${selectedMicrophone}`}>
-                Selected microphone (Unavailable)
-              </SelectItem>
-            ) : null}
-            {microphones.map((device, index) => (
-              <SelectItem key={device.deviceId} value={`device:${device.deviceId}`}>
-                {device.label || `Microphone ${index + 1}`}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          disabled={loading}
-          aria-label="Refresh microphones"
-          onClick={() => refresh()}
-        >
-          <RefreshCwIcon className="size-3.5" />
-        </Button>
-      </div>
-      {selectedIsUnavailable ? (
-        <p className="text-xs text-destructive">
-          The selected microphone is unavailable. Choose another or use the system default.
-        </p>
-      ) : null}
-      {failed ? (
-        <p role="alert" className="text-xs text-muted-foreground">
-          Could not list microphones. You can still use the system default.
-        </p>
-      ) : null}
-    </div>
-  );
-}
+import { WizardFooter, WizardHeader, WizardPanel, WizardPopup } from "../ui/wizard";
 
 export function VoiceInputSetup(props: {
   environmentId: EnvironmentId | null;
@@ -95,18 +37,60 @@ export function VoiceInputSetup(props: {
   step: number;
   status: EnvironmentSpeechStatus | null;
   model: EnvironmentSpeechModel | null;
+  /** The language the offered model was chosen for. */
+  language: string | null;
   downloading: boolean;
   error: string | null;
   consent: boolean;
   onOpenChange(open: boolean): void;
   onAllowAudio(): void;
+  onRetryCatalog: (() => void) | null;
   onDownload(): void;
   onCancelDownload(): void;
   onStartRecording(): void;
 }) {
+  const gt = useGT();
+  const locale = useLocale();
   const navigate = useNavigate();
   const environment = useEnvironment(props.environmentId);
+  const languageName = props.language ? languageLabel(props.language, locale) : null;
   const canManage = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
+  const order = useClientSettings(microphoneOrder);
+  const [microphones, setMicrophones] = useState<BrowserMicrophone[]>([]);
+  const selectedMicrophone = preferredMicrophoneId(order, microphones);
+  const [loadingMicrophones, setLoadingMicrophones] = useState(false);
+  const [microphoneError, setMicrophoneError] = useState<string | null>(null);
+  const microphoneRefreshId = useRef(0);
+  const refreshMicrophones = useStableCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    const requestId = ++microphoneRefreshId.current;
+    setLoadingMicrophones(true);
+    const devices = await listBrowserMicrophones().catch(() => null);
+    if (requestId !== microphoneRefreshId.current) return;
+
+    if (devices === null) {
+      setMicrophoneError(m(msg("Couldn’t list microphones. The system default still works.")));
+    } else {
+      setMicrophones(devices);
+      setMicrophoneError(null);
+    }
+    setLoadingMicrophones(false);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to native microphone changes while the device setup step is visible
+  useEffect(() => {
+    if (!props.open || props.step !== 1) return;
+    queueMicrotask(() => void refreshMicrophones());
+    const mediaDevices = navigator.mediaDevices;
+    mediaDevices?.addEventListener?.("devicechange", refreshMicrophones);
+    return () => mediaDevices?.removeEventListener?.("devicechange", refreshMicrophones);
+  }, [props.open, props.step, refreshMicrophones]);
+  const selectedIsUnavailable = Boolean(
+    selectedMicrophone && !microphones.some((device) => device.deviceId === selectedMicrophone),
+  );
+  const selectedMicrophoneLabel = selectedMicrophone
+    ? (microphones.find((device) => device.deviceId === selectedMicrophone)?.label ??
+      gt("Selected microphone (Unavailable)"))
+    : gt("System default");
   const status = props.status?.supported ? props.status : null;
   const model = props.model;
   const progress =
@@ -116,24 +100,39 @@ export function VoiceInputSetup(props: {
     void navigate({ to: "/settings/voice", hash });
   };
 
-  const environmentLabel = environment?.label ?? "your transcription environment";
-
   if (props.consent) {
     return (
       <Dialog open={props.open} onOpenChange={props.onOpenChange}>
         <WizardPopup>
           <WizardHeader
-            title="Turn on voice input"
-            description={`Microphone audio is sent to ${environmentLabel} to transcribe, then discarded. This choice is saved on this device only.`}
+            title={gt("Turn on voice input")}
+            description={
+              environment?.label != null
+                ? gt(
+                    "Microphone audio is sent to {destination} to transcribe, then discarded. This choice is saved on this device only.",
+                    { destination: environment.label },
+                  )
+                : gt(
+                    "Microphone audio is sent to your transcription environment to transcribe, then discarded. This choice is saved on this device only.",
+                  )
+            }
           />
           <WizardFooter>
             <Button
               variant="outline"
               onClick={() => openSettings("voice-transcription-destination")}
             >
-              Choose in Voice settings
+              <T>Choose in Voice settings</T>
             </Button>
-            <Button onClick={props.onAllowAudio}>Send audio to {environmentLabel}</Button>
+            <Button onClick={props.onAllowAudio}>
+              {environment?.label != null ? (
+                <T>
+                  Send audio to <Var>{environment.label}</Var>
+                </T>
+              ) : (
+                <T>Send audio to your transcription environment</T>
+              )}
+            </Button>
           </WizardFooter>
         </WizardPopup>
       </Dialog>
@@ -144,107 +143,197 @@ export function VoiceInputSetup(props: {
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <WizardPopup>
         <WizardHeader
-          title="Set up voice input"
-          description={`Transcribe speech on ${environment?.label ?? "your transcription environment"} and use voice input across environments.`}
-        >
-          <WizardSteps steps={["Model", "Ready to dictate"]} currentStep={props.step} />
-        </WizardHeader>
+          title={props.step === 0 ? gt("Set up voice input") : gt("Voice input is ready")}
+          description={
+            props.step === 0
+              ? environment?.label != null
+                ? gt("Download a speech model once. Your audio is transcribed on {destination}.", {
+                    destination: environment.label,
+                  })
+                : gt(
+                    "Download a speech model once. Your audio is transcribed on your transcription environment.",
+                  )
+              : gt("Pick a microphone, then start talking.")
+          }
+        />
         <WizardPanel>
           {props.step === 0 ? (
             <section className="space-y-3 text-sm">
-              <div className="rounded-lg border border-border/70 bg-card/60 p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="font-medium">{status?.model ?? "English transcription model"}</h3>
-                  {status?.modelId === "handy-computer/parakeet-unified-en-0.6b-gguf" ? (
-                    <span className="text-xs font-medium text-primary">
-                      Recommended for English
+              {model ? (
+                <div className="space-y-3 rounded-lg border border-border/70 bg-card/60 p-3">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <h3 className="min-w-0 truncate font-medium">{model.name}</h3>
+                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                      {gt("{size} MB", { size: Math.round(model.size / 1024 / 1024) })}
                     </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {model.recommended && props.language ? (
+                      <T>
+                        Recommended for <Var>{languageName}</Var>. Includes a 1.2 MB silence
+                        detector.
+                      </T>
+                    ) : (
+                      <T>Includes a 1.2 MB silence detector.</T>
+                    )}
+                  </p>
+                  {props.downloading ? (
+                    <div role="status" className="space-y-1.5">
+                      <div
+                        role="progressbar"
+                        aria-label={gt("Speech model download progress")}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={progress ?? undefined}
+                        className="h-1 overflow-hidden rounded-full bg-muted"
+                      >
+                        <div
+                          className="h-full bg-primary transition-[width] duration-200"
+                          style={{ width: `${progress ?? 0}%` }}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground tabular-nums">
+                        {model.state === "verifying"
+                          ? gt("Verifying…")
+                          : progress === null
+                            ? gt("Starting download…")
+                            : gt("{progress}% downloaded", { progress })}
+                      </p>
+                    </div>
                   ) : null}
                 </div>
-                <p className="mt-2 text-muted-foreground">
-                  Download the {status ? Math.round(status.size / 1024 / 1024) : 697} MB model to{" "}
-                  {environment?.label ?? "your transcription environment"}. Microphone audio is sent
-                  there for transcription, as chosen in Voice settings.
+              ) : !props.error ? (
+                <p role="status" className="text-muted-foreground">
+                  <T>Loading transcription models…</T>
                 </p>
-                <p className="mt-2 text-muted-foreground">
-                  Silero (1.2 MB), used for silence filtering and pause detection, downloads
-                  alongside the speech model. An installed copy is reused.
-                </p>
-                {props.downloading ? (
-                  <div role="status" className="mt-4 space-y-1 text-muted-foreground">
-                    <div
-                      role="progressbar"
-                      aria-label="Speech model download progress"
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={progress ?? undefined}
-                      className="h-1 overflow-hidden rounded-full bg-muted"
-                    >
-                      <div
-                        className="h-full bg-primary transition-[width] duration-200"
-                        style={{ width: `${progress ?? 0}%` }}
-                      />
-                    </div>
-                    <p className="text-xs">
-                      {model?.state === "verifying"
-                        ? "Verifying download…"
-                        : progress === null
-                          ? "Starting download…"
-                          : `${progress}% downloaded`}
-                    </p>
-                  </div>
-                ) : null}
-              </div>
+              ) : null}
               {props.error ? (
-                <p role="alert" className="text-destructive">
+                <p role="alert" className="flex items-start gap-1.5 text-destructive">
+                  <CircleAlertIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
                   {props.error}
                 </p>
               ) : null}
             </section>
           ) : (
-            <section className="space-y-4 text-sm">
-              <MicrophoneSelect />
-              <p className="text-muted-foreground">
-                Speak and transcribe in multiple languages or translate into English, get names and
-                technical terms right with the dictionary, fix recurring misspellings, and correct
-                yourself as you speak.
-              </p>
+            <section className="space-y-2 text-sm">
+              <label className="sr-only" htmlFor="voice-setup-microphone">
+                <T>Microphone</T>
+              </label>
+              <div className="flex items-center gap-2">
+                <Select
+                  value={selectedMicrophone ? `device:${selectedMicrophone}` : "system-default"}
+                  disabled={loadingMicrophones}
+                  onValueChange={(value) => {
+                    if (!value) return;
+                    const deviceId = value.slice("device:".length);
+                    const label =
+                      microphones.find((device) => device.deviceId === deviceId)?.label ?? "";
+                    updateMicrophoneOrder((order) =>
+                      preferMicrophone(
+                        order,
+                        value === "system-default" || isSystemDefaultDeviceId(deviceId)
+                          ? { kind: "default" }
+                          : { kind: "device", deviceId, label },
+                      ),
+                    );
+                  }}
+                >
+                  <SelectTrigger
+                    id="voice-setup-microphone"
+                    size="sm"
+                    aria-label={gt("Microphone")}
+                    className="min-w-0 flex-1"
+                  >
+                    <MicIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                    <SelectValue>{selectedMicrophoneLabel}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem value="system-default">
+                      <T>System default</T>
+                    </SelectItem>
+                    {selectedIsUnavailable ? (
+                      <SelectItem value={`device:${selectedMicrophone}`}>
+                        <T>Selected microphone (Unavailable)</T>
+                      </SelectItem>
+                    ) : null}
+                    {microphones.map((device) => (
+                      <SelectItem key={device.deviceId} value={`device:${device.deviceId}`}>
+                        {device.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  disabled={loadingMicrophones}
+                  aria-label={gt("Refresh microphones")}
+                  onClick={() => void refreshMicrophones()}
+                >
+                  <RefreshCwIcon className="size-3.5" />
+                </Button>
+              </div>
+              {selectedIsUnavailable ? (
+                <p className="text-xs text-destructive">
+                  <T>That microphone is unplugged. Pick another one.</T>
+                </p>
+              ) : null}
+              {microphoneError ? (
+                <p role="alert" className="text-xs text-muted-foreground">
+                  {microphoneError}
+                </p>
+              ) : null}
             </section>
           )}
         </WizardPanel>
-        <WizardFooter>
-          {props.step === 0 ? (
-            <>
-              <Button variant="outline" onClick={() => openSettings("local-voice-input")}>
-                Choose another model or language
+        {props.step === 0 ? (
+          <WizardFooter
+            leading={
+              <Button variant="ghost" onClick={() => openSettings("speech-models")}>
+                {model ? gt("Other models") : gt("Choose a model")}
               </Button>
-              {props.downloading ? (
-                <Button variant="outline" disabled={!canManage} onClick={props.onCancelDownload}>
-                  Cancel download
-                </Button>
-              ) : null}
+            }
+          >
+            {props.onRetryCatalog ? (
+              <Button onClick={props.onRetryCatalog}>
+                <T>Retry loading models</T>
+              </Button>
+            ) : null}
+            {props.downloading ? (
+              <Button variant="outline" disabled={!canManage} onClick={props.onCancelDownload}>
+                <T>Cancel download</T>
+              </Button>
+            ) : null}
+            {model ? (
               <Button
                 disabled={!canManage || props.downloading || !status}
                 onClick={props.onDownload}
               >
                 {props.downloading
-                  ? "Downloading…"
+                  ? gt("Downloading…")
                   : props.error
-                    ? "Retry download"
+                    ? gt("Try again")
                     : canManage
-                      ? "Download model"
-                      : "Ask an environment admin to download"}
+                      ? gt("Download model")
+                      : gt("Needs an admin to download")}
               </Button>
-            </>
-          ) : (
-            <>
-              <Button variant="outline" onClick={() => openSettings("")}>
-                Customize in Voice settings
+            ) : null}
+          </WizardFooter>
+        ) : (
+          <WizardFooter
+            leading={
+              <Button variant="ghost" onClick={() => openSettings("")}>
+                <T>Voice settings</T>
               </Button>
-              <Button onClick={props.onStartRecording}>Start dictating</Button>
-            </>
-          )}
-        </WizardFooter>
+            }
+          >
+            <Button onClick={props.onStartRecording}>
+              <MicIcon />
+              <T>Start dictating</T>
+            </Button>
+          </WizardFooter>
+        )}
       </WizardPopup>
     </Dialog>
   );

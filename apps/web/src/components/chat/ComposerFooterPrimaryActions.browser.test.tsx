@@ -57,11 +57,10 @@ function Footer(props: {
               pendingAction={null}
               isRunning={false}
               canInterrupt={false}
+              runId={null}
               followUpBehavior="queue"
               canSteer
               alternateShortcutLabel={null}
-              showPlanFollowUpPrompt={false}
-              promptHasText={false}
               isSendBusy={false}
               sendDisabledReason={null}
               isEnvironmentUnavailable={false}
@@ -72,12 +71,12 @@ function Footer(props: {
               onResume={noop}
               onPreviousPendingQuestion={noop}
               onInterrupt={noop}
-              onImplementPlanInNewThread={noop}
               compactDisabled={false}
               compactDisabledReason={null}
               compactBeforeSendTokens={
                 props.compactBeforeSendTokens === undefined ? TOKENS : props.compactBeforeSendTokens
               }
+              hideCompactToggle={false}
               keepFullHistory={false}
               onToggleKeepFullHistory={noop}
             >

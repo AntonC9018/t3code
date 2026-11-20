@@ -6,10 +6,7 @@ import {
   TurnItemId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import {
-  makeThreadRequestsResolvedAnnouncer,
-  pendingRuntimeRequestIds,
-} from "@t3tools/client-runtime/state/thread-requests";
+import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/state/thread-requests";
 import { createElement, useLayoutEffect, useRef } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../test/render";
@@ -17,7 +14,7 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import { makeRetainedQuestionAnswerDraft } from "../../questionAnswerDrafts";
 import { questionAttachmentDraftId } from "../../questionAttachments";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
-import { usePendingThreadRequests } from "./usePendingThreadRequests";
+import { usePendingThreadRequests, usePendingUserInputDraft } from "./usePendingThreadRequests";
 
 vi.mock("../../state/use-orchestration-command", () => ({
   useOrchestrationCommand: () => vi.fn(),
@@ -84,7 +81,8 @@ function questionProjection(threadId: ThreadId, requestIds = ["first", "second"]
 }
 
 async function pendingRequestsHarness(projection: OrchestrationV2ThreadProjection) {
-  let current!: ReturnType<typeof usePendingThreadRequests>;
+  let current!: ReturnType<typeof usePendingThreadRequests> &
+    ReturnType<typeof usePendingUserInputDraft>;
   const requestAnnouncers = new Map<
     ThreadId,
     ReturnType<typeof makeThreadRequestsResolvedAnnouncer>
@@ -99,7 +97,7 @@ async function pendingRequestsHarness(projection: OrchestrationV2ThreadProjectio
     const promptRef = useRef("");
     const composerRef = useRef(null);
     const setComposerDraftPrompt = useComposerDraftStore((state) => state.setPrompt);
-    const state = usePendingThreadRequests({
+    const requests = usePendingThreadRequests({
       environmentId,
       activeThreadId: projection.thread.id,
       serverProjection: loading ? null : projection,
@@ -110,6 +108,13 @@ async function pendingRequestsHarness(projection: OrchestrationV2ThreadProjectio
       composerRef,
       setThreadError: () => {},
     });
+    const draft = usePendingUserInputDraft({
+      environmentId,
+      activeThreadId: projection.thread.id,
+      activePendingUserInput: requests.activePendingUserInput,
+      supportsQuestionAttachments: false,
+    });
+    const state = { ...requests, ...draft };
     useLayoutEffect(() => {
       current = state;
     });
@@ -120,7 +125,7 @@ async function pendingRequestsHarness(projection: OrchestrationV2ThreadProjectio
         announce = makeThreadRequestsResolvedAnnouncer(environmentId, projection.thread.id);
         requestAnnouncers.set(projection.thread.id, announce);
       }
-      announce(pendingRuntimeRequestIds(projection));
+      announce(projection.runtimeRequests);
     }, [loading, projection]);
     return null;
   }
