@@ -83,6 +83,9 @@ describe("V2 preview upgrade", () => {
         [101, "TurnStartReadIndexes"],
         [102, "DelegatedTaskReadIndexes"],
         [103, "ThreadItemCounts"],
+        [104, "IssueTrackerAdditionalScopes"],
+        [105, "ProjectionProjectsTrackedFolders"],
+        [106, "TaskFolders"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -209,6 +212,9 @@ describe("V2 preview upgrade", () => {
         [101, "TurnStartReadIndexes"],
         [102, "DelegatedTaskReadIndexes"],
         [103, "ThreadItemCounts"],
+        [104, "IssueTrackerAdditionalScopes"],
+        [105, "ProjectionProjectsTrackedFolders"],
+        [106, "TaskFolders"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

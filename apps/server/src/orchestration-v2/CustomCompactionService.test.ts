@@ -93,6 +93,7 @@ function makeHarness(
               title: "Compaction",
               hasCustomTitle: false,
               workspaceRoot: "/repo",
+              trackedFolders: [],
               defaultModelSelection: modelSelection,
               defaultThreadEnvMode: null,
               autoPull: false,
