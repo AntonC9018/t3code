@@ -26,6 +26,7 @@ import type {
   PreviewForwardedShortcut,
   PreviewAutomationLoadError,
 } from "@t3tools/contracts";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { matchesKeybindingShortcut } from "@t3tools/shared/keybindings";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
@@ -65,6 +66,7 @@ import { msg } from "gt-i18n";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { m } from "../i18n/messages.ts";
+import { revealDownload } from "../shell/revealDownload.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import {
   MENU_ACTION_CHANNEL,
@@ -4055,7 +4057,9 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   const downloadSessions = new WeakSet<Electron.Session>();
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const runForkDownload = Effect.runForkWith(yield* Effect.context<never>());
+  const runForkDownload = Effect.runForkWith(
+    yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>(),
+  );
   const copyToDownloads = Effect.fn("PreviewManager.copyToDownloads")(function* (
     source: string,
     fileName: string,
@@ -4081,7 +4085,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
         ),
       );
       if (!copied) continue;
-      shell.showItemInFolder(target);
+      yield* revealDownload(target, directory);
       return;
     }
   });

@@ -1,5 +1,6 @@
 import { it as effectIt } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeChildProcessSpawner from "@effect/platform-node/NodeChildProcessSpawner";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
   DesktopPreviewFindResultEvent,
@@ -242,6 +243,7 @@ const managerLayer = (platform: NodeJS.Platform = "darwin") =>
       }),
     ),
     Layer.provideMerge(DesktopBrowserHost.layer),
+    Layer.provideMerge(NodeChildProcessSpawner.layer),
     Layer.provideMerge(layerBrowserSession),
     Layer.provideMerge(
       Layer.mock(PreviewPasskeys.PreviewPasskeys)({
