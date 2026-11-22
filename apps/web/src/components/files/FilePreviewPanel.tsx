@@ -133,7 +133,7 @@ import {
   workspaceAssetResource,
 } from "./filePreviewMode";
 import { useFileScrollRestoration } from "./useFileScrollRestoration";
-import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 import { changeFileSaveSession, useFileSaveSession } from "./fileSaveSessions";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import {
@@ -352,6 +352,7 @@ export function WorkspaceBrowserPreview(props: {
       documentId={documentId}
       title={props.title}
       pdf={pdf}
+      threadRef={props.threadRef}
       pdfActions={
         <WorkspacePdfSaveAction
           environmentId={props.environmentId}
