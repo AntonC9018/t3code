@@ -9256,6 +9256,168 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect.each(["failed", "completed"] as const)(
+    "keeps a non-retry failure after a recovered retry on its own failure row ($terminalStatus)",
+    (terminalStatus) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = `native-post-recovery-non-retry-${terminalStatus}`;
+          const nativeTurnId = `turn-post-recovery-non-retry-${terminalStatus}`;
+          const message = "Provider quota reached after recovery.";
+          const transcript = makeCodexReplayTranscript({
+            scenario: `codex-post-recovery-non-retry-${terminalStatus}`,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+              {
+                type: "emit_inbound",
+                label: "error/retry",
+                frame: {
+                  method: "error",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    willRetry: true,
+                    error: {
+                      message: "Reconnecting... 1/5",
+                      additionalDetails: "The response stream disconnected.",
+                      codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 529 } },
+                    },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "item/started",
+                frame: {
+                  method: "item/started",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    startedAtMs: 1782622445000,
+                    item: {
+                      type: "commandExecution",
+                      id: "cmd-recovered",
+                      command: "pwd",
+                      cwd: "/workspace",
+                      processId: "42",
+                      source: "unifiedExecStartup",
+                      status: "inProgress",
+                      commandActions: [{ type: "unknown", command: "pwd" }],
+                      aggregatedOutput: null,
+                      exitCode: null,
+                      durationMs: null,
+                    },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "item/completed",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    completedAtMs: 1782622445010,
+                    item: {
+                      type: "commandExecution",
+                      id: "cmd-recovered",
+                      command: "pwd",
+                      cwd: "/workspace",
+                      processId: "42",
+                      source: "unifiedExecStartup",
+                      status: "completed",
+                      commandActions: [{ type: "unknown", command: "pwd" }],
+                      aggregatedOutput: "/workspace\n",
+                      exitCode: 0,
+                      durationMs: 10,
+                    },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "error/final",
+                frame: {
+                  method: "error",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    willRetry: false,
+                    error: {
+                      message,
+                      codexErrorInfo: "usageLimitExceeded",
+                      additionalDetails: null,
+                    },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: {
+                      ...makeCodexReplayTurn({ id: nativeTurnId, status: terminalStatus }),
+                      ...(terminalStatus === "failed"
+                        ? { error: { message, codexErrorInfo: "usageLimitExceeded" } }
+                        : {}),
+                    },
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              text: "Continue.",
+              attemptId: RunAttemptId.make(`attempt-post-recovery-${terminalStatus}`),
+            }),
+          );
+          yield* harness.firstTerminal;
+          const terminal = harness.events.find((event) => event.type === "turn.terminal");
+          assert.isDefined(terminal);
+          if (terminal?.type !== "turn.terminal") return;
+          const latestErrorById = new Map<
+            TurnItemId,
+            Extract<OrchestrationV2TurnItem, { type: "error" }>
+          >();
+          for (const event of harness.events) {
+            if (event.type === "turn_item.updated" && event.turnItem.type === "error") {
+              latestErrorById.set(event.turnItem.id, event.turnItem);
+            }
+          }
+          assert.equal(latestErrorById.size, 2);
+          const errorRows = [...latestErrorById.values()].toSorted((a, b) => a.ordinal - b.ordinal);
+          assert.equal(errorRows[0]?.status, "completed");
+          const postRecoveryRow = errorRows[1];
+          assert.isDefined(postRecoveryRow);
+          assert.notEqual(postRecoveryRow?.id, errorRows[0]?.id);
+          if (terminal.status === "failed") {
+            assert.equal(terminal.failureItemId, postRecoveryRow?.id);
+            assert.equal(terminal.failureItemOrdinal, postRecoveryRow?.ordinal);
+          } else {
+            assert.equal(postRecoveryRow?.status, "completed");
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
   // regression: #28032 an unlisted codexErrorInfo dropped the failed turn/completed
   it.effect("fails the turn when Codex reports an error info the schema does not list", () =>
     Effect.gen(function* () {

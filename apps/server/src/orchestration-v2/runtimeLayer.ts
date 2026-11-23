@@ -323,17 +323,6 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
     ).pipe(Layer.provideMerge(layerProjectService)),
   ),
 );
-const layerWorkflowsProvided = WorkflowRuntime.layer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      layerThreadLaunchProvided,
-      layerThreadManagementProvided,
-      ThreadIssueService.layer.pipe(Layer.provide(layerOrchestratorProvided)),
-    ).pipe(Layer.provideMerge(layerProjectService)),
-  ),
-  // Layers memoize by reference, so these are the links Settings and agents use.
-  Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),
-);
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
@@ -350,9 +339,20 @@ const layerCustomCompactionProvided = CustomCompactionService.layer.pipe(
     ),
   ),
 );
-/** The thread service agents and scheduled tasks see, with the cold-cache policy on sends. */
+/** The thread service agents, workflows, and scheduled tasks see, with the cold-cache policy on sends. */
 const layerAgentThreadManagementProvided = AgentColdCachePolicy.layer.pipe(
   Layer.provide(Layer.mergeAll(layerThreadManagementProvided, layerCustomCompactionProvided)),
+);
+const layerWorkflowsProvided = WorkflowRuntime.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerThreadLaunchProvided,
+      layerAgentThreadManagementProvided,
+      ThreadIssueService.layer.pipe(Layer.provide(layerOrchestratorProvided)),
+    ).pipe(Layer.provideMerge(layerProjectService)),
+  ),
+  // Layers memoize by reference, so these are the links Settings and agents use.
+  Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),
 );
 // Cards are shown from /mcp and answered over WebSocket; one instance serializes both.
 const layerFeedbackStoreProvided = FeedbackStore.layer.pipe(

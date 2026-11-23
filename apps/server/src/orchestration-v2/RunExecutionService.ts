@@ -1146,6 +1146,7 @@ export const layer: Layer.Layer<
         const makeFailedTerminalEvent = (
           failure: OrchestrationV2ProviderFailure,
           failureItemOrdinal: number,
+          failureItemId?: TurnItemId,
         ): ProviderTerminalEvent => ({
           type: "turn.terminal",
           driver: input.providerThread.driver,
@@ -1153,6 +1154,7 @@ export const layer: Layer.Layer<
           providerTurnId: failedProviderTurnId,
           runOrdinal: input.run.ordinal,
           failureItemOrdinal,
+          ...(failureItemId === undefined ? {} : { failureItemId }),
           status: "failed",
           failure,
           threadDisposition: "reusable",
@@ -1224,6 +1226,7 @@ export const layer: Layer.Layer<
         const latestProviderFailure = yield* Ref.make<{
           readonly failure: OrchestrationV2ProviderFailure;
           readonly itemOrdinal: number;
+          readonly itemId: TurnItemId;
         } | null>(null);
         const latestProviderThread = yield* Ref.make(input.providerThread);
         const latestRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(null);
@@ -2027,6 +2030,7 @@ export const layer: Layer.Layer<
                   ? {
                       failure: event.turnItem.failure,
                       itemOrdinal: event.turnItem.ordinal,
+                      itemId: event.turnItem.id,
                     }
                   : null,
               );
@@ -2241,6 +2245,7 @@ export const layer: Layer.Layer<
                             class: "unknown",
                           }),
                         providerFailure?.itemOrdinal ?? latestItemOrdinal + 1,
+                        providerFailure?.itemId,
                       ),
                       ...(droppedPrompt ? { promptDropped: true as const } : {}),
                     },

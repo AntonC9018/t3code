@@ -58,6 +58,7 @@ export function ChunkedMarkdown(props: {
       }}
     >
       <LegendList<ChunkItem>
+        data-file-scroll-viewport=""
         data={items}
         extraData={props.definitions}
         keyExtractor={(item) => String(item.index)}

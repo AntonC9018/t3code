@@ -83,6 +83,7 @@ const OUTPUT_ITEM_TYPES: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set(
   "subagent",
   "secret_request",
   "link_request",
+  "feedback_request",
   "fork",
   "thread_created",
   "handoff",

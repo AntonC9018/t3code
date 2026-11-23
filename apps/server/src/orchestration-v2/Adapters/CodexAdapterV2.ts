@@ -1426,6 +1426,7 @@ interface ActiveCodexTurnContext {
 }
 
 function makeCodexProviderFailureTurnItem(input: {
+  readonly id?: TurnItemId;
   readonly context: ActiveCodexTurnContext;
   readonly failure: OrchestrationV2ProviderFailure;
   readonly itemOrdinal: number;
@@ -1433,6 +1434,7 @@ function makeCodexProviderFailureTurnItem(input: {
   readonly status: Extract<OrchestrationV2TurnItem, { type: "error" }>["status"];
 }): Extract<OrchestrationV2TurnItem, { type: "error" }> {
   const item = makeProviderFailureTurnItem({
+    ...(input.id === undefined ? {} : { id: input.id }),
     driver: CODEX_PROVIDER,
     threadId: input.context.input.threadId,
     runId: input.context.input.runId,
@@ -5461,11 +5463,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               // retryCapacityFailure shows its own retry item for overloaded root turns.
               if (notificationCode === "serverOverloaded" && context.subagent === null) return;
               const occurredAt = yield* DateTime.now;
-              const itemOrdinal = yield* resolveItemOrdinal(
-                context,
-                `terminal-failure:${context.providerTurnId}`,
-              );
+              const itemOrdinal = yield* resolveItemOrdinal(context, codexFailureItemKey(context));
+              const failureItemId = codexFailureItemId(context);
               const failureItem = makeCodexProviderFailureTurnItem({
+                ...(failureItemId === undefined ? {} : { id: failureItemId }),
                 context,
                 failure,
                 itemOrdinal,
@@ -6746,11 +6747,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         ) {
           if (event.status !== "failed" && context.latestProviderFailure !== undefined) {
             const occurredAt = yield* DateTime.now;
-            const itemOrdinal = yield* resolveItemOrdinal(
-              context,
-              `terminal-failure:${context.providerTurnId}`,
-            );
+            const itemOrdinal = yield* resolveItemOrdinal(context, codexFailureItemKey(context));
+            const failureItemId = codexFailureItemId(context);
             const failureItem = makeCodexProviderFailureTurnItem({
+              ...(failureItemId === undefined ? {} : { id: failureItemId }),
               context,
               failure: context.latestProviderFailure.failure,
               itemOrdinal,
