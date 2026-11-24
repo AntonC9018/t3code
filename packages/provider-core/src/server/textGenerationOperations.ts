@@ -32,7 +32,13 @@ export interface Request<S extends Schema.Top> {
   readonly modelSelection: ModelSelection;
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
   /** Investigate cwd with read-only tools across turns; fail if the runner cannot guarantee read-only access. */
-  readonly investigate?: { readonly timeoutMs: number } | undefined;
+  readonly investigate?:
+    | {
+        readonly timeoutMs: number;
+        /** cwd holds the content under review; paths the user configured resolve here instead. */
+        readonly projectCwd: string;
+      }
+    | undefined;
   /** Accepts a reply that ignored the JSON format; runners without native schemas use it. */
   readonly plainTextReply?: ((text: string) => S["Type"] | undefined) | undefined;
 }
@@ -135,6 +141,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
         policy: input.policy,
         changeRequestTemplate: input.changeRequestTemplate,
         threadContext: input.threadContext,
+        producedBy: input.producedBy,
       }),
     });
     return { title: sanitizePrTitle(generated.title), body: generated.body.trim() };
@@ -199,7 +206,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       operation: "generateReviewGuide",
       cwd: input.cwd,
       modelSelection: input.modelSelection,
-      investigate: { timeoutMs: INVESTIGATION_TIMEOUT_MS },
+      investigate: { timeoutMs: INVESTIGATION_TIMEOUT_MS, projectCwd: input.projectCwd },
       ...buildReviewGuidePrompt(input),
     });
   });
