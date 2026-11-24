@@ -331,6 +331,7 @@ export function claudeProviderTurnTokenUsage(
   const outputTokens = optionalClaudeUsageTokenCount(sample.output_tokens) ?? 0;
   const cachedInputTokens = optionalClaudeUsageTokenCount(sample.cache_read_input_tokens) ?? 0;
   const promptCacheTtlMs =
+    claudePromptCacheTtlMs(sample.cache_creation) ??
     claudePromptCacheTtlMs(usage.cache_creation) ??
     (cachedInputTokens > 0 ? knownPromptCacheTtlMs : undefined);
   // The cache lifetime starts with the request, not when its response ends.

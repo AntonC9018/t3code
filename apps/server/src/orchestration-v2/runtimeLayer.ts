@@ -335,6 +335,7 @@ const layerCustomCompactionProvided = CustomCompactionService.layer.pipe(
       ProjectStore.layer,
       TextGeneration.layer.pipe(Layer.provide(ProviderInstallationGate.layer)),
       ThreadCommandExecutor.layer,
+      EffectOutbox.layer,
       layerEventSink,
       IdAllocator.layer,
       ProviderAdapterRegistry.layerFromProviderInstanceRegistry,

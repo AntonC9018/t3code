@@ -1082,6 +1082,43 @@ describe("ClaudeAdapterV2 context usage", () => {
     assert.strictEqual(usage.promptCacheExpiresAt, "2026-08-29T00:05:00.000Z");
   });
 
+  it("reads promptCacheTtlMs from the last main-model iteration before top-level cache_creation", () => {
+    const usage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+      {
+        input_tokens: 20,
+        output_tokens: 15,
+        cache_read_input_tokens: 500,
+        // Aggregated top-level usage includes an advisor iteration's 5m cache write.
+        cache_creation: { ephemeral_1h_input_tokens: 400, ephemeral_5m_input_tokens: 50 },
+        iterations: [
+          {
+            type: "message",
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_creation_input_tokens: 400,
+            cache_read_input_tokens: 500,
+            cache_creation: { ephemeral_1h_input_tokens: 400, ephemeral_5m_input_tokens: 0 },
+          },
+          {
+            type: "advisor_message",
+            input_tokens: 10,
+            output_tokens: 10,
+            cache_creation_input_tokens: 50,
+            cache_read_input_tokens: 0,
+            cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 50 },
+            model: "claude-opus-4-6",
+          },
+        ],
+      },
+      200_000,
+      "2026-08-29T00:03:00.000Z",
+      "",
+      DateTime.makeUnsafe("2026-08-29T00:00:00.000Z"),
+    );
+    assert.strictEqual(usage.promptCacheTtlMs, 3_600_000);
+    assert.strictEqual(usage.promptCacheExpiresAt, "2026-08-29T01:00:00.000Z");
+  });
+
   it("counts missing, negative, or non-finite usage fields as zero", () => {
     const partialUsage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
       {

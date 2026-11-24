@@ -347,7 +347,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           ...(operation === "generateContextSummary"
             ? [
                 "--safe-mode",
-                "--no-session-persistence",
                 "--system-prompt",
                 "You summarize only the historical transcript supplied in the user message. Return the requested JSON. Do not use tools or add facts from your own runtime environment.",
               ]

@@ -5,6 +5,7 @@ import {
   TurnItemId,
   type OrchestrationV2CompactionProgress,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2RpcSchemas,
 } from "@t3tools/contracts";
@@ -21,7 +22,8 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
+import { turnItemsSinceContextBoundary } from "./contextBoundary.ts";
 import {
   historicalMessage,
   historySinceCustomCompaction,
@@ -84,15 +86,23 @@ function snapshotIdentity(projection: OrchestrationV2ThreadProjection): string {
   });
 }
 
-/** Inherited fork history, then local history, from the latest compaction boundary on. */
+/** Inherited fork history, then local history, from the latest compaction or /clear boundary on. */
 function compactionHistory(projection: OrchestrationV2ThreadProjection) {
-  const local = historySinceCustomCompaction(projection.turnItems, projection.runs);
+  const { boundary, turnItems } = turnItemsSinceContextBoundary(projection);
+  const local = historySinceCustomCompaction(turnItems, projection.runs);
   const first = local[0];
   if (first?.type === "handoff" && first.compactionModelSelection !== undefined) return local;
+  if (boundary > 0) return local;
   const inherited = projection.visibleTurnItems
     .filter((row) => row.visibility === "inherited")
     .map((row) => row.item);
   return [...sinceLastCustomCompaction(inherited), ...local];
+}
+
+function latestRunOf(
+  runs: OrchestrationV2ThreadProjection["runs"],
+): OrchestrationV2Run | undefined {
+  return runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
 }
 
 function isBusy(projection: OrchestrationV2ThreadProjection): boolean {
@@ -174,10 +184,29 @@ export const layer = Layer.effect(
     const projects = yield* ProjectStore.ProjectStoreV2;
     const textGeneration = yield* TextGeneration.TextGeneration;
     const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
     const sink = yield* EventSink.EventSinkV2;
     const ids = yield* IdAllocator.IdAllocatorV2;
     const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
     const scope = yield* Effect.scope;
+    const awaitsCheckpointCapture = (run: OrchestrationV2Run | undefined) =>
+      run === undefined || run.status !== "completed" || run.checkpointId !== null
+        ? Effect.succeed(false)
+        : effectOutbox.get(`effect:checkpoint.capture:${run.id}`).pipe(
+            Effect.map(
+              Option.exists((effect) => effect.status === "pending" || effect.status === "running"),
+            ),
+            Effect.orElseSucceed(() => false),
+          );
+    const awaitLatestRunCapture = Effect.fn("CustomCompactionService.awaitLatestRunCapture")(
+      function* (threadId: Input["threadId"]) {
+        const { runs } = yield* threads.getThreadRecords(threadId, ["runs"]);
+        const latest = latestRunOf(runs);
+        if (latest === undefined || !(yield* awaitsCheckpointCapture(latest))) return;
+        yield* effectOutbox.awaitSettled(`effect:checkpoint.capture:${latest.id}`);
+      },
+      (effect) => Effect.ignore(effect),
+    );
     // At most one compaction per thread. It runs in the service scope, so a client that closes the
     // menu, navigates away or disconnects does not cancel it; callers only wait for its result.
     const running = yield* Ref.make(
@@ -223,7 +252,11 @@ export const layer = Layer.effect(
             const projection = yield* threads
               .getThreadProjection(input.threadId)
               .pipe(Effect.mapError(storage));
-            if (isBusy(projection)) return yield* compactError(input, "busy");
+            if (
+              isBusy(projection) ||
+              (yield* awaitsCheckpointCapture(latestRunOf(projection.runs)))
+            )
+              return yield* compactError(input, "busy");
             if (
               projection.thread.deletedAt !== null ||
               projection.thread.archivedAt !== null ||
@@ -300,12 +333,17 @@ export const layer = Layer.effect(
           const fresh = yield* threads
             .getThreadProjection(input.threadId)
             .pipe(Effect.mapError(storage));
-          if (isBusy(fresh) || snapshotIdentity(fresh) !== snapshotIdentity(original))
+          if (
+            isBusy(fresh) ||
+            (yield* awaitsCheckpointCapture(latestRunOf(fresh.runs))) ||
+            snapshotIdentity(fresh) !== snapshotIdentity(original)
+          )
             return yield* compactError(input, "changed");
           const currentProvider = fresh.providerThreads.find(
             (candidate) => candidate.id === fresh.thread.activeProviderThreadId,
           )!;
-          const latestRun = fresh.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0]!;
+          const latestRun = latestRunOf(fresh.runs)!;
+          const { boundary } = turnItemsSinceContextBoundary(fresh);
           const now = yield* DateTime.now;
           const nextRunId = ids.derive.run({
             threadId: input.threadId,
@@ -325,7 +363,7 @@ export const layer = Layer.effect(
               occurredAt: now,
             });
           });
-          const effects: PendingOrchestrationEffectV2[] = [];
+          const effects: EffectOutbox.PendingOrchestrationEffectV2[] = [];
           for (const previous of fresh.providerThreads.filter(
             (thread) => thread.ownerNodeId === null && thread.compactionSuperseded !== true,
           )) {
@@ -382,7 +420,7 @@ export const layer = Layer.effect(
               targetRunId: nextRunId,
               fromProviderThreadIds,
               toProviderThreadId: providerThreadId,
-              coveredRunOrdinals: { from: 1, to: latestRun.ordinal },
+              coveredRunOrdinals: { from: Math.max(1, boundary), to: latestRun.ordinal },
               strategy: "manual_context",
               status: "ready",
               summaryMessageId: null,
@@ -443,6 +481,7 @@ export const layer = Layer.effect(
     const runCompaction = Effect.fn("CustomCompactionService.run")(function* (input: Input) {
       const storage = (cause: unknown) => compactError(input, "storage", cause);
       if (yield* threads.hasReceipt(input.commandId).pipe(Effect.mapError(storage))) return;
+      yield* awaitLatestRunCapture(input.threadId);
       const original = yield* readCompactableThread(input);
       const hasProvider = original.providerThreads.some(
         (candidate) => candidate.id === original.thread.activeProviderThreadId,

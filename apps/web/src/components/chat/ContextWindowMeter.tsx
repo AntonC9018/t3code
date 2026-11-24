@@ -1,15 +1,17 @@
-import type { ReactNode } from "react";
+import { use, type ReactNode } from "react";
 import { T, useGT, useLocale, useMessages } from "gt-react";
 import { Button } from "../ui/button";
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import { formatContextWindowTokens } from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { HiddenThreadContext } from "./backgroundThread";
 import {
   formatContextWindowCompactionMessage,
   formatContextWindowCost,
 } from "./ContextWindowMeter.logic";
 import { Minimize2Icon } from "lucide-react";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { useComposerMenuState } from "./useComposerMenuState";
 
 function formatPercentage(value: number | null): string | null {
   if (value === null || !Number.isFinite(value)) {
@@ -33,6 +35,7 @@ export function ContextWindowMeter(props: {
   const gt = useGT();
   const messages = useMessages();
   const locale = useLocale();
+  const [open, setOpen] = useComposerMenuState(use(HiddenThreadContext));
   const { modelDisplayName, onCompact, compactDisabled, compactDisabledReason } = props;
   const usage = props.usage ?? {
     usedTokens: null,
@@ -56,7 +59,7 @@ export function ContextWindowMeter(props: {
     : "color-mix(in oklab, var(--color-muted-foreground) 72%, transparent)";
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         openOnHover
         delay={150}

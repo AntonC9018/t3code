@@ -3135,7 +3135,12 @@ export default function ChatView(props: ChatViewProps) {
   };
 
   const persistModelSelectionForNextTurn = async (modelSelection: ModelSelection) => {
-    if (!activeThread || !serverThread) return;
+    if (
+      !activeThread ||
+      !serverThread ||
+      modelSelection.instanceId !== serverThread.modelSelection.instanceId
+    )
+      return;
     const metadata = resolveThreadMetadataUpdateForNextTurn({
       currentModelSelection: serverThread.modelSelection,
       nextModelSelection: modelSelection,

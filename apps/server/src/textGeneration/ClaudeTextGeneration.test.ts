@@ -140,7 +140,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           },
         }),
         cwdMustNotBe: process.cwd(),
-        argsMustContain: "--safe-mode --no-session-persistence --system-prompt",
+        argsMustContain: "--safe-mode --system-prompt",
         argsMustNotContain: "--resume",
         stdinMustContain: "migration 007",
       },

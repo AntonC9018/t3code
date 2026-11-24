@@ -24,7 +24,8 @@ export const layer = Layer.effect(
     const serverSettings = yield* ServerSettings.ServerSettingsService;
 
     const sendToThread: Send = Effect.fn("AgentColdCachePolicy.sendToThread")(function* (input) {
-      if (input.allowUncachedRead === true) return yield* threads.sendToThread(input);
+      if (input.allowUncachedRead === true || input.freshContext === true)
+        return yield* threads.sendToThread(input);
       const records = yield* threads.getThreadRecords(input.threadId, [
         "providerThreads",
         "providerTurns",

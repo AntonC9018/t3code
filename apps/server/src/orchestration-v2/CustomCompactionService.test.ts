@@ -1,5 +1,6 @@
 import { assert, describe, it, vi } from "@effect/vitest";
 import {
+  CheckpointScopeId,
   CommandId,
   MessageId,
   ProjectId,
@@ -26,6 +27,7 @@ import * as CustomCompaction from "./CustomCompactionService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -114,7 +116,12 @@ function makeHarness(
 }
 
 /** Records a finished turn so the thread is idle with a native conversation to supersede. */
-const completeTurn = Effect.fn(function* (target: ThreadId, id: string, text: string) {
+const completeTurn = Effect.fn(function* (
+  target: ThreadId,
+  id: string,
+  text: string,
+  options?: { readonly freshContext?: boolean },
+) {
   const threads = yield* ThreadManagement.ThreadManagementService;
   yield* threads.dispatch({
     type: "message.dispatch",
@@ -124,6 +131,7 @@ const completeTurn = Effect.fn(function* (target: ThreadId, id: string, text: st
     text,
     attachments: [],
     dispatchMode: { type: "defer_start" },
+    ...(options?.freshContext === true ? { freshContext: true } : {}),
     createdBy: "user",
     creationSource: "web",
   });
@@ -525,6 +533,105 @@ describe("custom model compaction", () => {
         const after = yield* threads.getThreadProjection(threadId);
         assert.equal(after.thread.activeProviderThreadId, original.thread.activeProviderThreadId);
         assert.isEmpty(after.contextHandoffs);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("waits for a pending post-turn checkpoint capture before summarizing", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness();
+      yield* Effect.gen(function* () {
+        const seeded = yield* seed;
+        const latestRun = seeded.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0]!;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const service = yield* CustomCompaction.CustomCompactionService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const effectId = `effect:checkpoint.capture:${latestRun.id}`;
+        yield* outbox.enqueue([
+          {
+            id: effectId,
+            commandId: CommandId.make("capture:1"),
+            threadId,
+            request: {
+              type: "checkpoint.capture",
+              runId: latestRun.id,
+              scopeId: CheckpointScopeId.make("scope:1"),
+            },
+          },
+        ]);
+        const compaction = yield* service.compact(request).pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        assert.equal(harness.generateContextSummary.mock.calls.length, 0);
+
+        const now = yield* DateTime.now;
+        const checkpointOrdinal = latestRun.ordinal * 100 + 99;
+        yield* sink.write({
+          events: [
+            {
+              id: yield* ids.allocate.event({ threadId }),
+              threadId,
+              occurredAt: now,
+              type: "turn-item.updated",
+              runId: latestRun.id,
+              payload: {
+                id: TurnItemId.make(`checkpoint:${latestRun.id}`),
+                threadId,
+                runId: latestRun.id,
+                nodeId: latestRun.rootNodeId,
+                providerThreadId: latestRun.providerThreadId,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: checkpointOrdinal,
+                status: "completed",
+                title: "Checkpoint",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                type: "checkpoint",
+                checkpointId: latestRun.id as never,
+                scopeId: CheckpointScopeId.make("scope:1"),
+                files: [],
+              },
+            },
+          ],
+        });
+        const claimed = yield* outbox.claimNext({ workerId: "worker:test" });
+        assert.equal(claimed._tag, "Some");
+        yield* outbox.succeed({ effectId, workerId: "worker:test" });
+        yield* Fiber.join(compaction);
+
+        const after = yield* threads.getThreadProjection(threadId);
+        const handoff = after.turnItems.find((item) => item.type === "handoff");
+        assert.isDefined(handoff);
+        assert.isAbove(handoff!.ordinal, checkpointOrdinal);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("ignores history before a /clear context boundary", () =>
+    Effect.gen(function* () {
+      const transcripts: Array<string> = [];
+      const harness = makeHarness((input) => {
+        transcripts.push(input.transcript);
+        return Effect.succeed({ summary: "Post-clear summary" });
+      });
+      yield* Effect.gen(function* () {
+        yield* seed;
+        yield* completeTurn(threadId, "msg:after-clear", "Fresh objective after clear", {
+          freshContext: true,
+        });
+        const service = yield* CustomCompaction.CustomCompactionService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        yield* service.compact(request);
+
+        assert.equal(transcripts.length, 1);
+        assert.include(transcripts[0]!, "Fresh objective after clear");
+        assert.notInclude(transcripts[0]!, "Fix the parser edge case");
+        const after = yield* threads.getThreadProjection(threadId);
+        assert.deepEqual(after.contextHandoffs[0]?.coveredRunOrdinals, { from: 2, to: 2 });
       }).pipe(Effect.provide(harness.layer));
     }),
   );

@@ -107,7 +107,7 @@ function harness(options: {
 }
 
 describe("AgentColdCachePolicy", () => {
-  it.effect("passes warm and explicitly acknowledged sends through untouched", () =>
+  it.effect("passes warm, explicitly acknowledged, and fresh-context sends through untouched", () =>
     Effect.gen(function* () {
       const warm = harness({ policy: "block", cold: false });
       yield* warm.send();
@@ -115,6 +115,9 @@ describe("AgentColdCachePolicy", () => {
       const acknowledged = harness({ policy: "block" });
       yield* acknowledged.send({ ...input, allowUncachedRead: true });
       assert.equal(acknowledged.sends.length, 1);
+      const fresh = harness({ policy: "block" });
+      yield* fresh.send({ ...input, freshContext: true });
+      assert.equal(fresh.sends.length, 1);
     }),
   );
 
