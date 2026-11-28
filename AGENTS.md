@@ -155,3 +155,18 @@ Read the matching doc before changing code in that area; code review enforces th
 - No continuously repainting animations; they peg the GPU on high-refresh displays.
 - Security matters, but do not over-index on dev-mode or maintainer-only features. Read [SECURITY.md](SECURITY.md) before auditing or triaging reports.
 - If a rule here fights the task in front of you, say so loudly and get a human sign-off before breaking it.
+
+## Fork maintenance (feat/tailscale-handy)
+
+This fork carries its own SQLite migrations, so upstream migration ids do not match ours.
+`073_ForkStartupCompatibility` and `121_GuardAuthoredMessageIndex` are fork-only; upstream's
+73–119 became our 74–120. When syncing upstream:
+
+- Give each new upstream migration the next free id after our highest one, in upstream order.
+  Never reuse or reorder an id that has shipped; installed databases record it.
+- Rename the migration file and its tests, update the entry in
+  `apps/server/src/persistence/Migrations.ts`, and fix every import of the old path
+  (`git grep 'Migrations/<old id>_'`, including `apps/server/src/workflows` and `evals/`).
+- Add the new ids to both lists in `reconcileV2PreviewMigration.test.ts`.
+- Upstream tests may insert malformed rows. Fork-only indexes and triggers must tolerate them,
+  e.g. guard `json_extract` with `json_valid`, or inserts fail.
