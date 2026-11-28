@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { createAuthoredMessageIndex } from "../../orchestration-v2/authoredMessageIndex.ts";
+
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -33,9 +35,5 @@ export default Effect.gen(function* () {
   `;
   // The existing latest-user index covers server-written messages too.
   // Finding the last human message must not read those payloads one by one.
-  yield* sql`
-    CREATE INDEX IF NOT EXISTS orchestration_v2_projection_messages_authored_updated_idx
-    ON orchestration_v2_projection_messages(thread_id, updated_at DESC, message_id DESC)
-    WHERE role = 'user' AND json_extract(payload_json, '$.createdBy') = 'user'
-  `;
+  yield* createAuthoredMessageIndex(sql);
 });

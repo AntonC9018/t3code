@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { authoredMessageCondition } from "../../orchestration-v2/authoredMessageIndex.ts";
 import migration from "./startupQueryIndexes.ts";
 
 const query = (source: string, kind: string) => {
@@ -77,7 +78,7 @@ layer("startup query indexes", (it) => {
       for (const authored of [false, true]) {
         const lookup = `SELECT updated_at FROM orchestration_v2_projection_messages
           WHERE thread_id = 'thread' AND role = 'user'
-          ${authored ? "AND json_extract(payload_json, '$.createdBy') = 'user'" : ""}
+          ${authored ? `AND ${authoredMessageCondition()}` : ""}
           ORDER BY updated_at DESC, message_id DESC LIMIT 1`;
         const details = yield* plan(lookup);
         assert.include(

@@ -28,8 +28,10 @@ import {
   ProjectId,
   EnvironmentId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  type OrchestrationV2Checkpoint,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
+  type OrchestrationV2TurnItem,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -82,6 +84,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -213,6 +216,7 @@ function startWithMissingWorktree(
             Effect.succeedSome({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getForkSourceRunIds: () => Effect.succeed(projection.runs.map((run) => run.id)),
           getThreadRecords: () => {
             projectionReadCount += 1;
             return Effect.succeed(projection);
@@ -1416,8 +1420,10 @@ function makeLocalCommandHarness(input: {
             } as never),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getForkSourceRunIds: () => Effect.succeed(parentRecords.runs.map((run) => run.id)),
           getThreadRecords,
           getTurnStartContext,
+          getTurnItem: () => Effect.succeed(null),
           getRuntimeRecoveryProjection,
           getRun,
           getTurnStartHistory: () =>
@@ -1515,6 +1521,7 @@ function layerStartEffectWorker(
         Layer.mock(ThreadTitleRegenerationService.ThreadTitleRegenerationService)({}),
         Layer.mock(ThreadManagementService.ThreadManagementService)({}),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+        Layer.mock(ProjectionMaintenance.ProjectionMaintenanceV2)({}),
         ServerSettings.layerTest(),
       ),
     ),
@@ -2385,6 +2392,94 @@ it("finds abandoned turns in a long history reading each record a bounded number
   const records = runs.length + attempts.length + providerTurns.length;
   expect(reads).toBeLessThanOrEqual(4 * records);
 });
+
+const ran = { status: "completed", checkpoint: "ready" };
+const removed = { status: "cancelled", checkpoint: null };
+// A queued message whose prompt now belongs to the run at `ordinal`.
+const steeredInto = (ordinal: number) => ({ ...removed, steeredInto: `run-${ordinal}` });
+effectIt.effect.each([
+  { label: "a queued message steered into it", runs: [ran, steeredInto(1)], source: 1 },
+  { label: "several steered into it", runs: [ran, steeredInto(1), steeredInto(1)], source: 1 },
+  { label: "a removed queued message", runs: [ran, removed], source: undefined },
+  { label: "a queued message that ran", runs: [ran, ran], source: undefined },
+  {
+    label: "a message steered into the starting run",
+    runs: [ran, steeredInto(3)],
+    source: undefined,
+  },
+  {
+    label: "a turn whose checkpoint was not captured",
+    runs: [{ ...ran, checkpoint: "error" }, steeredInto(1)],
+    source: undefined,
+  },
+  {
+    label: "a failed run",
+    runs: [{ ...ran, status: "failed" }, steeredInto(1)],
+    source: undefined,
+  },
+  { label: "a missing row", runs: [ran, null, steeredInto(1)], source: undefined },
+])("starts a turn from the last turn's checkpoint after $label", (input) =>
+  Effect.gen(function* () {
+    const ordinal = input.runs.length + 1;
+    const runs = [
+      ...input.runs.flatMap((run, index) =>
+        run === null
+          ? []
+          : [
+              {
+                ...run,
+                id: `run-${index + 1}`,
+                userMessageId: `message-${index + 1}`,
+                ordinal: index + 1,
+                checkpointId: run.checkpoint === null ? null : `checkpoint-${index + 1}`,
+              },
+            ],
+      ),
+      {
+        id: `run-${ordinal}`,
+        userMessageId: "message-starting",
+        ordinal,
+        status: "starting",
+        checkpoint: null,
+        checkpointId: null,
+      },
+    ];
+
+    const source = yield* ProviderTurnStart.findBaselineSourceOrdinal(
+      runs as unknown as Parameters<typeof ProviderTurnStart.findBaselineSourceOrdinal>[0],
+      { ordinal },
+      (messageId) => {
+        const queued = runs.find((run) => run.userMessageId === messageId);
+        return Effect.succeed(
+          queued !== undefined && "steeredInto" in queued
+            ? ({
+                type: "user_message",
+                inputIntent: "promoted_queued_to_steer",
+                runId: queued.steeredInto,
+              } as OrchestrationV2TurnItem)
+            : null,
+        );
+      },
+      (checkpointId) => {
+        const owner = runs.find((run) => run.checkpointId === checkpointId);
+        return Effect.succeed({
+          checkpoints:
+            owner === undefined
+              ? []
+              : [
+                  {
+                    id: checkpointId,
+                    runId: owner.id,
+                    appRunOrdinal: owner.ordinal,
+                    status: owner.checkpoint,
+                  } as OrchestrationV2Checkpoint,
+                ],
+        });
+      },
+    );
+    expect(source).toBe(input.source);
+  }),
+);
 
 effectIt.effect("sends new steering text when restarting a manual continuation", () =>
   Effect.gen(function* () {

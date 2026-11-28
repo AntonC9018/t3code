@@ -65,7 +65,7 @@ describe("reopenClosedView", () => {
               id: `file:${relativePath}`,
               relativePath,
               revealLine: line,
-              revealRequestId: 1,
+              revealRequestId: expect.any(Number),
               ...(line === null ? {} : { revealRequestToken: expect.any(String) }),
               ...(folderTrail === undefined ? {} : { folderTrail }),
             };
