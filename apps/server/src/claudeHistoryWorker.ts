@@ -1,3 +1,4 @@
+import { forkSession, getSessionMessages } from "@anthropic-ai/claude-agent-sdk";
 import * as Schema from "effect/Schema";
 
 // Bundled import.meta.main is always true; imports must have no side effects.
@@ -16,7 +17,6 @@ export async function runClaudeHistoryWorker(
   sessionId: string | undefined,
   rawOptions: string | undefined,
 ): Promise<void> {
-  const { forkSession, getSessionMessages } = await import("@anthropic-ai/claude-agent-sdk");
   const options = decodeHistoryOptions(rawOptions ?? "{}");
   if (!sessionId) throw new Error("Claude history session id is required.");
   const result =
